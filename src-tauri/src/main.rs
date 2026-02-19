@@ -71,6 +71,11 @@ fn main() {
             commands::render_effect_thumbnail,
             commands::get_effect_detail,
             commands::update_effect_param,
+            commands::add_effect,
+            commands::add_track,
+            commands::delete_effects,
+            commands::update_effect_time_range,
+            commands::move_effect_to_track,
             commands::select_sequence,
             // Import
             commands::import_vixen,

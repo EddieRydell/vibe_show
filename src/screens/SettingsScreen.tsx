@@ -1,19 +1,24 @@
+import { Sun, Moon, Monitor, RotateCcw } from "lucide-react";
 import { useUISettings, type ThemeMode } from "../hooks/useUISettings";
 
 interface Props {
   onBack: () => void;
 }
 
+const THEME_OPTIONS: { mode: ThemeMode; label: string; Icon: typeof Sun }[] = [
+  { mode: "light", label: "Light", Icon: Sun },
+  { mode: "dark", label: "Dark", Icon: Moon },
+  { mode: "system", label: "System", Icon: Monitor },
+];
+
 const ACCENT_PRESETS = [
-  { label: "Violet", value: "#7C5CFF" },
   { label: "Blue", value: "#3B82F6" },
+  { label: "Violet", value: "#7C5CFF" },
   { label: "Teal", value: "#14B8A6" },
   { label: "Green", value: "#22C55E" },
   { label: "Orange", value: "#F97316" },
   { label: "Rose", value: "#F43F5E" },
 ];
-
-const SCALE_OPTIONS = [85, 90, 95, 100, 105, 110, 115, 120];
 
 export function SettingsScreen({ onBack }: Props) {
   const { settings, update, reset, defaults } = useUISettings();
@@ -37,17 +42,18 @@ export function SettingsScreen({ onBack }: Props) {
           {/* ── Theme ── */}
           <Section title="Theme">
             <div className="flex gap-2">
-              {(["light", "dark", "system"] as ThemeMode[]).map((mode) => (
+              {THEME_OPTIONS.map(({ mode, label, Icon }) => (
                 <button
                   key={mode}
                   onClick={() => update({ theme: mode })}
-                  className={`rounded-lg border px-4 py-2 text-sm font-medium capitalize transition-colors ${
+                  className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
                     settings.theme === mode
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text"
                   }`}
                 >
-                  {mode}
+                  <Icon size={14} />
+                  {label}
                 </button>
               ))}
             </div>
@@ -109,20 +115,19 @@ export function SettingsScreen({ onBack }: Props) {
 
           {/* ── UI Scale ── */}
           <Section title="UI Scale">
-            <div className="flex flex-wrap gap-1.5">
-              {SCALE_OPTIONS.map((scale) => (
-                <button
-                  key={scale}
-                  onClick={() => update({ uiScale: scale })}
-                  className={`rounded border px-3 py-1.5 text-xs font-medium transition-colors ${
-                    settings.uiScale === scale
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text"
-                  }`}
-                >
-                  {scale}%
-                </button>
-              ))}
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={75}
+                max={150}
+                step={5}
+                value={settings.uiScale}
+                onChange={(e) => update({ uiScale: Number(e.target.value) })}
+                className="accent-primary h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-surface-2"
+              />
+              <span className="text-text w-12 text-right text-sm font-medium tabular-nums">
+                {settings.uiScale}%
+              </span>
             </div>
             <p className="text-text-2 mt-2 text-xs">
               Scales the entire interface. Default is 100%.
@@ -133,8 +138,9 @@ export function SettingsScreen({ onBack }: Props) {
           <div className="border-border border-t pt-6">
             <button
               onClick={reset}
-              className="text-text-2 hover:text-text text-xs underline transition-colors"
+              className="text-text-2 hover:text-text flex items-center gap-1.5 text-xs transition-colors"
             >
+              <RotateCcw size={12} />
               Reset all settings to defaults
             </button>
             {settings.accentColor !== defaults.accentColor && (

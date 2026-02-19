@@ -665,6 +665,10 @@ impl VixenImporter {
                 name: node.name.clone(),
                 color_model: ColorModel::Rgb,
                 pixel_count: 1,
+                pixel_type: Default::default(),
+                bulb_shape: Default::default(),
+                display_radius_override: None,
+                channel_order: Default::default(),
             });
             Some(GroupMember::Fixture(FixtureId(id)))
         } else {
@@ -703,6 +707,10 @@ impl VixenImporter {
                     name: node.name.clone(),
                     color_model: ColorModel::Rgb,
                     pixel_count: pixel_count / 3, // Vixen typically has 3 channels per RGB pixel
+                    pixel_type: Default::default(),
+                    bulb_shape: Default::default(),
+                    display_radius_override: None,
+                    channel_order: Default::default(),
                 });
 
                 // Adjust: if pixel_count / 3 == 0, treat as single-channel fixtures

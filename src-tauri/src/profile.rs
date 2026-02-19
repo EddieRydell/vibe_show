@@ -670,6 +670,10 @@ mod tests {
             name: "Pixel String 1".into(),
             color_model: crate::model::fixture::ColorModel::Rgb,
             pixel_count: 50,
+            pixel_type: Default::default(),
+            bulb_shape: Default::default(),
+            display_radius_override: None,
+            channel_order: Default::default(),
         });
         save_profile(&data_dir, "test", &profile).unwrap();
 
@@ -729,6 +733,10 @@ mod tests {
                 name: "String".into(),
                 color_model: crate::model::fixture::ColorModel::Rgb,
                 pixel_count: 10,
+                pixel_type: Default::default(),
+                bulb_shape: Default::default(),
+                display_radius_override: None,
+                channel_order: Default::default(),
             }],
             groups: Vec::new(),
             controllers: Vec::new(),

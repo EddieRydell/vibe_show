@@ -134,6 +134,46 @@ pub struct Controller {
     pub protocol: ControllerProtocol,
 }
 
+// ── Pixel & Bulb Types ──────────────────────────────────────────────
+
+/// Whether a fixture uses individually-addressable (smart) or ganged (dumb) pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PixelType {
+    #[default]
+    Smart,
+    Dumb,
+}
+
+/// Physical bulb shape, affects display size in the preview renderer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum BulbShape {
+    #[default]
+    LED,
+    C9,
+    C7,
+    Mini,
+    Flood,
+    Icicle,
+    Globe,
+    Snowflake,
+}
+
+impl BulbShape {
+    /// Default display radius multiplier for this bulb shape.
+    pub fn default_display_radius(self) -> f32 {
+        match self {
+            BulbShape::Mini => 0.8,
+            BulbShape::LED => 1.0,
+            BulbShape::Icicle => 1.2,
+            BulbShape::C7 => 1.5,
+            BulbShape::Globe => 1.8,
+            BulbShape::C9 => 2.0,
+            BulbShape::Snowflake => 2.5,
+            BulbShape::Flood => 3.0,
+        }
+    }
+}
+
 // ── Fixtures ────────────────────────────────────────────────────────
 
 /// A fixture definition. Represents a logical light or string of lights.
@@ -146,12 +186,26 @@ pub struct FixtureDef {
     pub color_model: ColorModel,
     /// Number of individually addressable pixels. 1 for simple fixtures.
     pub pixel_count: u32,
+    #[serde(default)]
+    pub pixel_type: PixelType,
+    #[serde(default)]
+    pub bulb_shape: BulbShape,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_radius_override: Option<f32>,
+    #[serde(default)]
+    pub channel_order: ChannelOrder,
 }
 
 impl FixtureDef {
     /// Total DMX channels this fixture consumes.
     pub fn total_channels(&self) -> u32 {
         self.pixel_count * self.color_model.channels_per_pixel() as u32
+    }
+
+    /// Effective display radius multiplier (override or bulb shape default).
+    pub fn display_radius(&self) -> f32 {
+        self.display_radius_override
+            .unwrap_or_else(|| self.bulb_shape.default_display_radius())
     }
 }
 

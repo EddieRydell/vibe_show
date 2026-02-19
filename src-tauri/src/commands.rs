@@ -5,7 +5,10 @@ use tauri::State;
 
 use crate::effects::{self, resolve_effect};
 use crate::engine::{self, Frame};
-use crate::model::{BlendMode, EffectKind, EffectParams, ParamSchema, ParamValue, Show, TimeRange};
+use crate::model::{
+    BlendMode, EffectInstance, EffectKind, EffectParams, EffectTarget, ParamSchema, ParamValue,
+    Show, TimeRange, Track,
+};
 use crate::profile::{self, MediaFile, Profile, ProfileSummary, ShowData, ShowSummary};
 use crate::settings::{self, AppSettings};
 
@@ -573,6 +576,150 @@ pub fn update_effect_param(
     };
     effect_instance.params.set_mut(key, value);
     true
+}
+
+/// Add a new effect to a track with default params.
+#[tauri::command]
+pub fn add_effect(
+    state: State<AppState>,
+    sequence_index: usize,
+    track_index: usize,
+    kind: EffectKind,
+    start: f64,
+    end: f64,
+) -> Result<usize, String> {
+    let time_range = TimeRange::new(start, end).ok_or("Invalid time range")?;
+    let mut show = state.show.lock().unwrap();
+    let sequence = show
+        .sequences
+        .get_mut(sequence_index)
+        .ok_or("Invalid sequence index")?;
+    let track = sequence
+        .tracks
+        .get_mut(track_index)
+        .ok_or("Invalid track index")?;
+    let effect = EffectInstance {
+        kind,
+        params: EffectParams::new(),
+        time_range,
+    };
+    track.effects.push(effect);
+    Ok(track.effects.len() - 1)
+}
+
+/// Add a new track to a sequence.
+#[tauri::command]
+pub fn add_track(
+    state: State<AppState>,
+    sequence_index: usize,
+    name: String,
+    target: EffectTarget,
+    blend_mode: BlendMode,
+) -> Result<usize, String> {
+    let mut show = state.show.lock().unwrap();
+    let sequence = show
+        .sequences
+        .get_mut(sequence_index)
+        .ok_or("Invalid sequence index")?;
+    let track = Track {
+        name,
+        target,
+        effects: Vec::new(),
+        blend_mode,
+    };
+    sequence.tracks.push(track);
+    Ok(sequence.tracks.len() - 1)
+}
+
+/// Delete multiple effects across tracks. Targets are (track_index, effect_index) pairs.
+#[tauri::command]
+pub fn delete_effects(
+    state: State<AppState>,
+    sequence_index: usize,
+    targets: Vec<(usize, usize)>,
+) -> Result<(), String> {
+    let mut show = state.show.lock().unwrap();
+    let sequence = show
+        .sequences
+        .get_mut(sequence_index)
+        .ok_or("Invalid sequence index")?;
+
+    // Group by track index, then sort effect indices descending to preserve indices during removal
+    let mut by_track: std::collections::HashMap<usize, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (track_idx, effect_idx) in targets {
+        by_track.entry(track_idx).or_default().push(effect_idx);
+    }
+    for (track_idx, mut effect_indices) in by_track {
+        let track = sequence
+            .tracks
+            .get_mut(track_idx)
+            .ok_or(format!("Invalid track index {track_idx}"))?;
+        effect_indices.sort_unstable();
+        effect_indices.dedup();
+        // Remove from highest index first
+        for &idx in effect_indices.iter().rev() {
+            if idx < track.effects.len() {
+                track.effects.remove(idx);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Update the time range of an effect.
+#[tauri::command]
+pub fn update_effect_time_range(
+    state: State<AppState>,
+    sequence_index: usize,
+    track_index: usize,
+    effect_index: usize,
+    start: f64,
+    end: f64,
+) -> Result<bool, String> {
+    let time_range = TimeRange::new(start, end).ok_or("Invalid time range")?;
+    let mut show = state.show.lock().unwrap();
+    let Some(sequence) = show.sequences.get_mut(sequence_index) else {
+        return Ok(false);
+    };
+    let Some(track) = sequence.tracks.get_mut(track_index) else {
+        return Ok(false);
+    };
+    let Some(effect) = track.effects.get_mut(effect_index) else {
+        return Ok(false);
+    };
+    effect.time_range = time_range;
+    Ok(true)
+}
+
+/// Move an effect from one track to another. Returns the new effect index in the destination track.
+#[tauri::command]
+pub fn move_effect_to_track(
+    state: State<AppState>,
+    sequence_index: usize,
+    from_track: usize,
+    effect_index: usize,
+    to_track: usize,
+) -> Result<usize, String> {
+    let mut show = state.show.lock().unwrap();
+    let sequence = show
+        .sequences
+        .get_mut(sequence_index)
+        .ok_or("Invalid sequence index")?;
+
+    if from_track >= sequence.tracks.len() {
+        return Err(format!("Invalid source track index {from_track}"));
+    }
+    if to_track >= sequence.tracks.len() {
+        return Err(format!("Invalid destination track index {to_track}"));
+    }
+    if effect_index >= sequence.tracks[from_track].effects.len() {
+        return Err(format!("Invalid effect index {effect_index}"));
+    }
+
+    let effect = sequence.tracks[from_track].effects.remove(effect_index);
+    sequence.tracks[to_track].effects.push(effect);
+    Ok(sequence.tracks[to_track].effects.len() - 1)
 }
 
 /// Switch to a different sequence by index.

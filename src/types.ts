@@ -13,9 +13,32 @@ export interface Position2D {
   y: number;
 }
 
+export type PixelType = "Smart" | "Dumb";
+
+export type BulbShape = "LED" | "C9" | "C7" | "Mini" | "Flood" | "Icicle" | "Globe" | "Snowflake";
+
+export const BULB_SHAPE_RADIUS: Record<BulbShape, number> = {
+  Mini: 0.8,
+  LED: 1.0,
+  Icicle: 1.2,
+  C7: 1.5,
+  Globe: 1.8,
+  C9: 2.0,
+  Snowflake: 2.5,
+  Flood: 3.0,
+};
+
+export type LayoutShape =
+  | { Line: { start: Position2D; end: Position2D } }
+  | { Arc: { center: Position2D; radius: number; start_angle: number; end_angle: number } }
+  | { Rectangle: { top_left: Position2D; bottom_right: Position2D } }
+  | { Grid: { top_left: Position2D; bottom_right: Position2D; columns: number } }
+  | "Custom";
+
 export interface FixtureLayout {
   fixture_id: number;
   pixel_positions: Position2D[];
+  shape?: LayoutShape;
 }
 
 export interface Layout {
@@ -27,6 +50,10 @@ export interface FixtureDef {
   name: string;
   color_model: "Single" | "Rgb" | "Rgbw";
   pixel_count: number;
+  pixel_type?: PixelType;
+  bulb_shape?: BulbShape;
+  display_radius_override?: number | null;
+  channel_order?: ChannelOrder;
 }
 
 export type GroupMember = { Fixture: number } | { Group: number };

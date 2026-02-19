@@ -9,7 +9,7 @@ export interface UISettings {
 }
 
 const STORAGE_KEY = "ui-settings";
-const DEFAULT_ACCENT = "#7C5CFF";
+const DEFAULT_ACCENT = "#3B82F6";
 
 const DEFAULTS: UISettings = {
   theme: "system",

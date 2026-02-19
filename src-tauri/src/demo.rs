@@ -23,6 +23,10 @@ pub fn create_demo_show() -> Show {
             name: format!("String {}", row + 1),
             color_model: ColorModel::Rgb,
             pixel_count: cols,
+            pixel_type: Default::default(),
+            bulb_shape: Default::default(),
+            display_radius_override: None,
+            channel_order: Default::default(),
         });
 
         let pixel_positions: Vec<Position2D> = (0..cols)
@@ -35,6 +39,7 @@ pub fn create_demo_show() -> Show {
         layout_fixtures.push(FixtureLayout {
             fixture_id,
             pixel_positions,
+            shape: Default::default(),
         });
     }
 

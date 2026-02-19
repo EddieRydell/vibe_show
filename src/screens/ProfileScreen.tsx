@@ -1,12 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { Settings } from "lucide-react";
 import type {
   Profile,
   ShowSummary,
   MediaFile,
   EffectInfo,
+  FixtureDef,
+  FixtureGroup,
+  FixtureLayout,
 } from "../types";
+import { HouseTree } from "../components/house/HouseTree";
+import { FixtureEditor } from "../components/house/FixtureEditor";
+import { GroupEditor } from "../components/house/GroupEditor";
+import { LayoutCanvas } from "../components/layout/LayoutCanvas";
+import { LayoutToolbar } from "../components/layout/LayoutToolbar";
+import { ShapeConfigurator } from "../components/layout/ShapeConfigurator";
+import { FixturePlacer } from "../components/layout/FixturePlacer";
 
 type Tab = "shows" | "music" | "house" | "layout" | "effects";
 
@@ -14,9 +25,10 @@ interface Props {
   slug: string;
   onBack: () => void;
   onOpenShow: (showSlug: string) => void;
+  onOpenSettings: () => void;
 }
 
-export function ProfileScreen({ slug, onBack, onOpenShow }: Props) {
+export function ProfileScreen({ slug, onBack, onOpenShow, onOpenSettings }: Props) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [tab, setTab] = useState<Tab>("shows");
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +58,13 @@ export function ProfileScreen({ slug, onBack, onOpenShow }: Props) {
           &larr; Home
         </button>
         <h2 className="text-text text-lg font-bold">{profile?.name ?? "Loading..."}</h2>
+        <button
+          onClick={onOpenSettings}
+          className="text-text-2 hover:text-text ml-auto p-1.5 transition-colors"
+          title="Settings"
+        >
+          <Settings size={16} />
+        </button>
       </div>
 
       {/* Error */}
@@ -77,11 +96,15 @@ export function ProfileScreen({ slug, onBack, onOpenShow }: Props) {
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto">
-        {tab === "shows" && <ShowsTab onOpenShow={onOpenShow} setError={setError} />}
-        {tab === "music" && <MusicTab setError={setError} />}
-        {tab === "house" && <HouseSetupTab profile={profile} />}
-        {tab === "layout" && <LayoutTab profile={profile} />}
-        {tab === "effects" && <EffectsTab />}
+        {profile && tab === "shows" && <ShowsTab onOpenShow={onOpenShow} setError={setError} />}
+        {profile && tab === "music" && <MusicTab setError={setError} />}
+        {profile && tab === "house" && (
+          <HouseSetupTab profile={profile} onProfileUpdate={setProfile} setError={setError} />
+        )}
+        {profile && tab === "layout" && (
+          <LayoutTab profile={profile} onProfileUpdate={setProfile} setError={setError} />
+        )}
+        {profile && tab === "effects" && <EffectsTab />}
       </div>
     </div>
   );
@@ -287,56 +310,125 @@ function MusicTab({ setError }: { setError: (e: string | null) => void }) {
   );
 }
 
-// ── House Setup Tab (Read-only V1) ─────────────────────────────────
+// ── House Setup Tab ─────────────────────────────────────────────────
 
-function HouseSetupTab({ profile }: { profile: Profile | null }) {
-  if (!profile) return null;
+function HouseSetupTab({
+  profile,
+  onProfileUpdate,
+  setError,
+}: {
+  profile: Profile;
+  onProfileUpdate: (p: Profile) => void;
+  setError: (e: string | null) => void;
+}) {
+  const [fixtures, setFixtures] = useState<FixtureDef[]>(profile.fixtures);
+  const [groups, setGroups] = useState<FixtureGroup[]>(profile.groups);
+  const [dirty, setDirty] = useState(false);
+  const [editingFixture, setEditingFixture] = useState<FixtureDef | null | "new">(null);
+  const [editingGroup, setEditingGroup] = useState<FixtureGroup | null | "new">(null);
+
+  // Sync with profile when it changes externally
+  useEffect(() => {
+    setFixtures(profile.fixtures);
+    setGroups(profile.groups);
+    setDirty(false);
+  }, [profile]);
+
+  const nextFixtureId = Math.max(0, ...fixtures.map((f) => f.id)) + 1;
+  const nextGroupId = Math.max(0, ...groups.map((g) => g.id)) + 1;
+
+  const handleSaveFixture = (fixture: FixtureDef) => {
+    const exists = fixtures.some((f) => f.id === fixture.id);
+    const updated = exists
+      ? fixtures.map((f) => (f.id === fixture.id ? fixture : f))
+      : [...fixtures, fixture];
+    setFixtures(updated);
+    setEditingFixture(null);
+    setDirty(true);
+  };
+
+  const handleDeleteFixture = (id: number) => {
+    if (!confirm("Delete this fixture?")) return;
+    // Remove from fixtures
+    setFixtures((prev) => prev.filter((f) => f.id !== id));
+    // Remove from all group members
+    setGroups((prev) =>
+      prev.map((g) => ({
+        ...g,
+        members: g.members.filter((m) => !("Fixture" in m && m.Fixture === id)),
+      })),
+    );
+    setDirty(true);
+  };
+
+  const handleSaveGroup = (group: FixtureGroup) => {
+    const exists = groups.some((g) => g.id === group.id);
+    const updated = exists
+      ? groups.map((g) => (g.id === group.id ? group : g))
+      : [...groups, group];
+    setGroups(updated);
+    setEditingGroup(null);
+    setDirty(true);
+  };
+
+  const handleDeleteGroup = (id: number) => {
+    if (!confirm("Delete this group?")) return;
+    // Remove the group itself
+    setGroups((prev) => {
+      const without = prev.filter((g) => g.id !== id);
+      // Also remove from other group members
+      return without.map((g) => ({
+        ...g,
+        members: g.members.filter((m) => !("Group" in m && m.Group === id)),
+      }));
+    });
+    setDirty(true);
+  };
+
+  const handleSave = async () => {
+    try {
+      await invoke("update_profile_fixtures", { fixtures, groups });
+      const updated = { ...profile, fixtures, groups };
+      onProfileUpdate(updated);
+      setDirty(false);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   return (
     <div className="p-6 space-y-6">
-      {/* Fixtures */}
+      {/* Save bar */}
+      {dirty && (
+        <div className="bg-primary/10 border-primary/20 flex items-center justify-between rounded border px-4 py-2">
+          <span className="text-primary text-xs font-medium">Unsaved changes</span>
+          <button
+            onClick={handleSave}
+            className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white"
+          >
+            Save
+          </button>
+        </div>
+      )}
+
+      {/* Fixtures & Groups tree */}
       <section>
         <h3 className="text-text mb-3 text-sm font-medium">
-          Fixtures ({profile.fixtures.length})
+          Fixtures & Groups
         </h3>
-        {profile.fixtures.length === 0 ? (
-          <p className="text-text-2 text-xs">No fixtures configured.</p>
-        ) : (
-          <div className="border-border divide-border divide-y rounded border">
-            {profile.fixtures.map((f) => (
-              <div key={f.id} className="flex items-center justify-between px-4 py-2">
-                <span className="text-text text-sm">{f.name}</span>
-                <span className="text-text-2 text-xs">
-                  {f.color_model} &middot; {f.pixel_count}px
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+        <HouseTree
+          fixtures={fixtures}
+          groups={groups}
+          onEditFixture={(f) => setEditingFixture(f)}
+          onDeleteFixture={handleDeleteFixture}
+          onEditGroup={(g) => setEditingGroup(g)}
+          onDeleteGroup={handleDeleteGroup}
+          onAddFixture={() => setEditingFixture("new")}
+          onAddGroup={() => setEditingGroup("new")}
+        />
       </section>
 
-      {/* Groups */}
-      <section>
-        <h3 className="text-text mb-3 text-sm font-medium">
-          Groups ({profile.groups.length})
-        </h3>
-        {profile.groups.length === 0 ? (
-          <p className="text-text-2 text-xs">No groups configured.</p>
-        ) : (
-          <div className="border-border divide-border divide-y rounded border">
-            {profile.groups.map((g) => (
-              <div key={g.id} className="flex items-center justify-between px-4 py-2">
-                <span className="text-text text-sm">{g.name}</span>
-                <span className="text-text-2 text-xs">
-                  {g.members.length} member{g.members.length !== 1 ? "s" : ""}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Controllers */}
+      {/* Controllers (read-only for now) */}
       <section>
         <h3 className="text-text mb-3 text-sm font-medium">
           Controllers ({profile.controllers.length})
@@ -361,7 +453,7 @@ function HouseSetupTab({ profile }: { profile: Profile | null }) {
         )}
       </section>
 
-      {/* Patches */}
+      {/* Patches (read-only for now) */}
       <section>
         <h3 className="text-text mb-3 text-sm font-medium">
           Patches ({profile.patches.length})
@@ -383,47 +475,122 @@ function HouseSetupTab({ profile }: { profile: Profile | null }) {
           </div>
         )}
       </section>
+
+      {/* Fixture editor modal */}
+      {editingFixture !== null && (
+        <FixtureEditor
+          fixture={editingFixture === "new" ? null : editingFixture}
+          onSave={handleSaveFixture}
+          onCancel={() => setEditingFixture(null)}
+          nextId={nextFixtureId}
+        />
+      )}
+
+      {/* Group editor modal */}
+      {editingGroup !== null && (
+        <GroupEditor
+          group={editingGroup === "new" ? null : editingGroup}
+          fixtures={fixtures}
+          groups={groups}
+          onSave={handleSaveGroup}
+          onCancel={() => setEditingGroup(null)}
+          nextId={nextGroupId}
+        />
+      )}
     </div>
   );
 }
 
-// ── Layout Tab (Read-only V1) ──────────────────────────────────────
+// ── Layout Tab ─────────────────────────────────────────────────────
 
-function LayoutTab({ profile }: { profile: Profile | null }) {
-  if (!profile) return null;
+function LayoutTab({
+  profile,
+  onProfileUpdate,
+  setError,
+}: {
+  profile: Profile;
+  onProfileUpdate: (p: Profile) => void;
+  setError: (e: string | null) => void;
+}) {
+  const [layouts, setLayouts] = useState<FixtureLayout[]>(profile.layout.fixtures);
+  const [selectedFixtureId, setSelectedFixtureId] = useState<number | null>(null);
+  const [dirty, setDirty] = useState(false);
 
-  const fixtureCount = profile.layout.fixtures.length;
-  const totalPixels = profile.layout.fixtures.reduce(
-    (sum, f) => sum + f.pixel_positions.length,
-    0,
-  );
+  useEffect(() => {
+    setLayouts(profile.layout.fixtures);
+    setDirty(false);
+  }, [profile]);
+
+  const handleLayoutChange = (updated: FixtureLayout[]) => {
+    setLayouts(updated);
+    setDirty(true);
+  };
+
+  const handlePlace = (layout: FixtureLayout) => {
+    setLayouts((prev) => [...prev, layout]);
+    setSelectedFixtureId(layout.fixture_id);
+    setDirty(true);
+  };
+
+  const handleSave = async () => {
+    try {
+      const layout = { fixtures: layouts };
+      await invoke("update_profile_layout", { layout });
+      onProfileUpdate({ ...profile, layout });
+      setDirty(false);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   return (
-    <div className="p-6">
-      <h3 className="text-text mb-3 text-sm font-medium">Layout Preview</h3>
-      {fixtureCount === 0 ? (
-        <p className="text-text-2 text-xs">No fixture layout configured.</p>
-      ) : (
-        <>
-          <p className="text-text-2 mb-4 text-xs">
-            {fixtureCount} fixture{fixtureCount !== 1 ? "s" : ""}, {totalPixels} total pixels
-          </p>
-          <div className="border-border bg-surface relative h-80 overflow-hidden rounded border">
-            {profile.layout.fixtures.map((fl) =>
-              fl.pixel_positions.map((pos, pi) => (
-                <div
-                  key={`${fl.fixture_id}-${pi}`}
-                  className="bg-primary absolute h-2 w-2 rounded-full opacity-60"
-                  style={{
-                    left: `${pos.x * 100}%`,
-                    top: `${pos.y * 100}%`,
-                  }}
-                />
-              )),
-            )}
-          </div>
-        </>
+    <div className="flex h-full flex-col">
+      {/* Save bar */}
+      {dirty && (
+        <div className="bg-primary/10 border-primary/20 flex items-center justify-between border-b px-4 py-2">
+          <span className="text-primary text-xs font-medium">Unsaved layout changes</span>
+          <button
+            onClick={handleSave}
+            className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white"
+          >
+            Save
+          </button>
+        </div>
       )}
+
+      {/* Layout toolbar */}
+      <LayoutToolbar
+        selectedFixtureId={selectedFixtureId}
+        fixtures={profile.fixtures}
+        layouts={layouts}
+        onLayoutChange={handleLayoutChange}
+      />
+
+      {/* Main content: placer + canvas + shape config */}
+      <div className="flex flex-1 overflow-hidden">
+        <FixturePlacer
+          fixtures={profile.fixtures}
+          layouts={layouts}
+          onPlace={handlePlace}
+        />
+
+        <div className="flex-1 overflow-hidden">
+          <LayoutCanvas
+            layouts={layouts}
+            fixtures={profile.fixtures}
+            selectedFixtureId={selectedFixtureId}
+            onLayoutChange={handleLayoutChange}
+            onSelectFixture={setSelectedFixtureId}
+          />
+        </div>
+
+        <ShapeConfigurator
+          selectedFixtureId={selectedFixtureId}
+          fixtures={profile.fixtures}
+          layouts={layouts}
+          onLayoutChange={handleLayoutChange}
+        />
+      </div>
     </div>
   );
 }
@@ -439,15 +606,6 @@ function EffectsTab() {
       .catch(console.error);
   }, []);
 
-  const effectColors: Record<string, string> = {
-    Solid: "bg-fx-solid",
-    Chase: "bg-fx-chase",
-    Rainbow: "bg-fx-rainbow",
-    Strobe: "bg-fx-strobe",
-    Gradient: "bg-fx-gradient",
-    Twinkle: "bg-fx-twinkle",
-  };
-
   return (
     <div className="p-6">
       <h3 className="text-text mb-4 text-sm font-medium">Built-in Effects</h3>
@@ -457,10 +615,7 @@ function EffectsTab() {
             key={fx.name}
             className="border-border bg-surface rounded-lg border p-4"
           >
-            <div className="mb-2 flex items-center gap-2">
-              <div className={`h-3 w-3 rounded-full ${effectColors[fx.kind] ?? "bg-primary"}`} />
-              <h4 className="text-text text-sm font-medium">{fx.name}</h4>
-            </div>
+            <h4 className="text-text mb-2 text-sm font-medium">{fx.name}</h4>
             {fx.schema.length > 0 && (
               <div className="text-text-2 space-y-1 text-xs">
                 {fx.schema.map((param) => (
@@ -481,3 +636,4 @@ function EffectsTab() {
     </div>
   );
 }
+

@@ -1,20 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Settings } from "lucide-react";
 import { Preview } from "../components/Preview";
 import { Timeline } from "../components/Timeline";
 import { Toolbar } from "../components/Toolbar";
 import { FixtureList } from "../components/FixtureList";
 import { PropertyPanel } from "../components/PropertyPanel";
+import { EffectPicker } from "../components/EffectPicker";
 import { useEngine } from "../hooks/useEngine";
 import { useKeyboard } from "../hooks/useKeyboard";
+import type { EffectKind } from "../types";
 
 interface Props {
   profileSlug: string;
   showSlug: string;
   onBack: () => void;
+  onOpenSettings: () => void;
 }
 
-export function EditorScreen({ showSlug, onBack }: Props) {
+export function EditorScreen({ showSlug, onBack, onOpenSettings }: Props) {
   const {
     show,
     frame,
@@ -30,6 +34,11 @@ export function EditorScreen({ showSlug, onBack }: Props) {
   const [selectedEffects, setSelectedEffects] = useState<Set<string>>(new Set());
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [addEffectState, setAddEffectState] = useState<{
+    fixtureId: number;
+    time: number;
+    screenPos: { x: number; y: number };
+  } | null>(null);
 
   // Load the show into the engine on mount
   useEffect(() => {
@@ -67,10 +76,24 @@ export function EditorScreen({ showSlug, onBack }: Props) {
     setSelectedEffects(allKeys);
   }, [show, playback]);
 
-  const handleDeleteSelected = useCallback(() => {
-    console.log("[VibeShow] Delete requested for:", [...selectedEffects]);
-    setSelectedEffects(new Set());
-  }, [selectedEffects]);
+  const handleDeleteSelected = useCallback(async () => {
+    if (selectedEffects.size === 0 || !playback) return;
+    const targets = [...selectedEffects].map((key) => {
+      const [trackIndex, effectIndex] = key.split("-").map(Number);
+      return [trackIndex, effectIndex] as [number, number];
+    });
+    try {
+      await invoke("delete_effects", {
+        sequenceIndex: playback.sequence_index,
+        targets,
+      });
+      setSelectedEffects(new Set());
+      refreshAll();
+      setRefreshKey((k) => k + 1);
+    } catch (e) {
+      console.error("[VibeShow] Delete failed:", e);
+    }
+  }, [selectedEffects, playback, refreshAll]);
 
   const handleParamChange = useCallback(() => {
     setRefreshKey((k) => k + 1);
@@ -88,6 +111,156 @@ export function EditorScreen({ showSlug, onBack }: Props) {
       setSelectedEffects(new Set());
     },
     [selectSequence],
+  );
+
+  const handleRefresh = useCallback(() => {
+    refreshAll();
+    setRefreshKey((k) => k + 1);
+  }, [refreshAll]);
+
+  // ── Add effect flow ──────────────────────────────────────────────
+
+  const handleAddEffect = useCallback(
+    (fixtureId: number, time: number, screenPos: { x: number; y: number }) => {
+      setAddEffectState({ fixtureId, time, screenPos });
+    },
+    [],
+  );
+
+  const handleEffectTypeSelected = useCallback(
+    async (kind: EffectKind) => {
+      if (!addEffectState || !show || !playback) return;
+      const { fixtureId, time } = addEffectState;
+      const sequenceIndex = playback.sequence_index;
+      const sequence = show.sequences[sequenceIndex];
+      if (!sequence) return;
+
+      setAddEffectState(null);
+
+      try {
+        // Find existing track targeting this fixture, or create one
+        let trackIndex = sequence.tracks.findIndex((t) => {
+          const target = t.target;
+          return (
+            typeof target === "object" &&
+            "Fixtures" in target &&
+            target.Fixtures.length === 1 &&
+            target.Fixtures[0] === fixtureId
+          );
+        });
+
+        if (trackIndex === -1) {
+          const fixture = show.fixtures.find((f) => f.id === fixtureId);
+          const trackName = fixture ? fixture.name : `Fixture ${fixtureId}`;
+          trackIndex = await invoke<number>("add_track", {
+            sequenceIndex,
+            name: trackName,
+            target: { Fixtures: [fixtureId] },
+            blendMode: "Override",
+          });
+        }
+
+        const end = Math.min(time + 2.0, sequence.duration);
+        const start = Math.max(0, end - 2.0);
+        const effectIndex = await invoke<number>("add_effect", {
+          sequenceIndex,
+          trackIndex,
+          kind,
+          start,
+          end,
+        });
+
+        refreshAll();
+        setRefreshKey((k) => k + 1);
+        setSelectedEffects(new Set([`${trackIndex}-${effectIndex}`]));
+      } catch (e) {
+        console.error("[VibeShow] Add effect failed:", e);
+      }
+    },
+    [addEffectState, show, playback, refreshAll],
+  );
+
+  // ── Move effect flow ─────────────────────────────────────────────
+
+  const handleMoveEffect = useCallback(
+    async (
+      fromTrackIndex: number,
+      effectIndex: number,
+      targetFixtureId: number,
+      newStart: number,
+      newEnd: number,
+    ) => {
+      if (!show || !playback) return;
+      const sequenceIndex = playback.sequence_index;
+      const sequence = show.sequences[sequenceIndex];
+      if (!sequence) return;
+
+      const fromTrack = sequence.tracks[fromTrackIndex];
+      if (!fromTrack) return;
+
+      // Check if the effect is staying on a track that targets this fixture
+      const fromTarget = fromTrack.target;
+      const staysOnSameFixture =
+        fromTarget === "All" ||
+        (typeof fromTarget === "object" &&
+          "Fixtures" in fromTarget &&
+          fromTarget.Fixtures.includes(targetFixtureId));
+
+      if (staysOnSameFixture) {
+        // Just update time
+        await invoke("update_effect_time_range", {
+          sequenceIndex,
+          trackIndex: fromTrackIndex,
+          effectIndex,
+          start: newStart,
+          end: newEnd,
+        });
+        refreshAll();
+        setRefreshKey((k) => k + 1);
+      } else {
+        // Moving to a different fixture: find or create target track
+        let toTrackIndex = sequence.tracks.findIndex((t) => {
+          const target = t.target;
+          return (
+            typeof target === "object" &&
+            "Fixtures" in target &&
+            target.Fixtures.length === 1 &&
+            target.Fixtures[0] === targetFixtureId
+          );
+        });
+
+        if (toTrackIndex === -1) {
+          const fixture = show.fixtures.find((f) => f.id === targetFixtureId);
+          const trackName = fixture ? fixture.name : `Fixture ${targetFixtureId}`;
+          toTrackIndex = await invoke<number>("add_track", {
+            sequenceIndex,
+            name: trackName,
+            target: { Fixtures: [targetFixtureId] },
+            blendMode: fromTrack.blend_mode,
+          });
+        }
+
+        const newEffectIndex = await invoke<number>("move_effect_to_track", {
+          sequenceIndex,
+          fromTrack: fromTrackIndex,
+          effectIndex,
+          toTrack: toTrackIndex,
+        });
+
+        await invoke("update_effect_time_range", {
+          sequenceIndex,
+          trackIndex: toTrackIndex,
+          effectIndex: newEffectIndex,
+          start: newStart,
+          end: newEnd,
+        });
+
+        refreshAll();
+        setRefreshKey((k) => k + 1);
+        setSelectedEffects(new Set([`${toTrackIndex}-${newEffectIndex}`]));
+      }
+    },
+    [show, playback, refreshAll],
   );
 
   const keyboardActions = useMemo(
@@ -135,6 +308,13 @@ export function EditorScreen({ showSlug, onBack }: Props) {
             className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-2 py-0.5 text-[11px] transition-colors"
           >
             Save
+          </button>
+          <button
+            onClick={onOpenSettings}
+            className="text-text-2 hover:text-text p-1 transition-colors"
+            title="Settings"
+          >
+            <Settings size={14} />
           </button>
         </div>
       </div>
@@ -184,6 +364,9 @@ export function EditorScreen({ showSlug, onBack }: Props) {
           selectedEffects={selectedEffects}
           onSelectionChange={setSelectedEffects}
           refreshKey={refreshKey}
+          onAddEffect={handleAddEffect}
+          onRefresh={handleRefresh}
+          onMoveEffect={handleMoveEffect}
         />
         <PropertyPanel
           selectedEffect={singleSelected}
@@ -199,6 +382,15 @@ export function EditorScreen({ showSlug, onBack }: Props) {
         collapsed={previewCollapsed}
         onToggle={() => setPreviewCollapsed((c) => !c)}
       />
+
+      {/* Effect Picker popover */}
+      {addEffectState && (
+        <EffectPicker
+          position={addEffectState.screenPos}
+          onSelect={handleEffectTypeSelected}
+          onCancel={() => setAddEffectState(null)}
+        />
+      )}
     </div>
   );
 }

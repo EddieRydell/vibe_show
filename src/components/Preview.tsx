@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Application, Graphics } from "pixi.js";
 import type { Frame, Show } from "../types";
+import { BULB_SHAPE_RADIUS } from "../types";
 
 interface PreviewProps {
   show: Show | null;
@@ -9,7 +10,7 @@ interface PreviewProps {
   onToggle: () => void;
 }
 
-const PIXEL_RADIUS = 6;
+const BASE_RADIUS = 6;
 const PADDING = 24;
 
 export function Preview({ show, frame, collapsed, onToggle }: PreviewProps) {
@@ -56,6 +57,17 @@ export function Preview({ show, frame, collapsed, onToggle }: PreviewProps) {
     };
   }, [collapsed]);
 
+  // Build a map of fixture_id -> display radius multiplier
+  const fixtureRadiusMap = useMemo(() => {
+    if (!show) return new Map<number, number>();
+    const map = new Map<number, number>();
+    for (const f of show.fixtures) {
+      const multiplier = f.display_radius_override ?? BULB_SHAPE_RADIUS[f.bulb_shape ?? "LED"] ?? 1.0;
+      map.set(f.id, multiplier);
+    }
+    return map;
+  }, [show]);
+
   const draw = useCallback(() => {
     const graphics = graphicsRef.current;
     const app = appRef.current;
@@ -69,6 +81,8 @@ export function Preview({ show, frame, collapsed, onToggle }: PreviewProps) {
     for (const fixtureLayout of show.layout.fixtures) {
       const fixtureId = fixtureLayout.fixture_id;
       const pixelColors = frame?.fixtures[fixtureId];
+      const radiusMultiplier = fixtureRadiusMap.get(fixtureId) ?? 1.0;
+      const pixelRadius = BASE_RADIUS * radiusMultiplier;
 
       for (let i = 0; i < fixtureLayout.pixel_positions.length; i++) {
         const pos = fixtureLayout.pixel_positions[i];
@@ -81,19 +95,19 @@ export function Preview({ show, frame, collapsed, onToggle }: PreviewProps) {
           color = (r << 16) | (g << 8) | b;
         }
 
-        graphics.circle(x, y, PIXEL_RADIUS + 1);
+        graphics.circle(x, y, pixelRadius + 1);
         graphics.fill({ color: 0x1D1D1D });
 
-        graphics.circle(x, y, PIXEL_RADIUS);
+        graphics.circle(x, y, pixelRadius);
         graphics.fill({ color });
 
         if (color !== 0x000000) {
-          graphics.circle(x, y, PIXEL_RADIUS * 2.5);
+          graphics.circle(x, y, pixelRadius * 2.5);
           graphics.fill({ color, alpha: 0.15 });
         }
       }
     }
-  }, [show, frame]);
+  }, [show, frame, fixtureRadiusMap]);
 
   useEffect(() => {
     if (ready) draw();

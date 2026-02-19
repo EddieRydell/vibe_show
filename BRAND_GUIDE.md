@@ -78,7 +78,7 @@ Never use accent color for:
 
 | Token         | Value     | CSS Variable      | Tailwind Class         |
 |---------------|-----------|--------------------|------------------------|
-| Primary       | `#7C5CFF` | `--primary`        | `bg-primary`, `text-primary`, `border-primary`, `ring-primary` |
+| Primary       | `#3B82F6` | `--primary`        | `bg-primary`, `text-primary`, `border-primary`, `ring-primary` |
 | Primary Hover | `#6A4DE0` (light) / `#9178FF` (dark) | `--primary-hover` | `bg-primary-hover` |
 
 Rules:

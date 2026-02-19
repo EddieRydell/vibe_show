@@ -10,12 +10,170 @@ pub struct Position2D {
     pub y: f32,
 }
 
+/// Describes the geometric shape used to distribute fixture pixels in the layout.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub enum LayoutShape {
+    Line {
+        start: Position2D,
+        end: Position2D,
+    },
+    Arc {
+        center: Position2D,
+        radius: f32,
+        start_angle: f32,
+        end_angle: f32,
+    },
+    Rectangle {
+        top_left: Position2D,
+        bottom_right: Position2D,
+    },
+    Grid {
+        top_left: Position2D,
+        bottom_right: Position2D,
+        columns: u32,
+    },
+    #[default]
+    Custom,
+}
+
+impl LayoutShape {
+    /// Generate evenly-distributed positions for `pixel_count` pixels along this shape.
+    /// Returns `None` for `Custom` (positions are user-placed individually).
+    pub fn generate_positions(&self, pixel_count: usize) -> Option<Vec<Position2D>> {
+        if pixel_count == 0 {
+            return Some(Vec::new());
+        }
+        match self {
+            LayoutShape::Line { start, end } => {
+                let positions = (0..pixel_count)
+                    .map(|i| {
+                        let t = if pixel_count > 1 {
+                            i as f32 / (pixel_count - 1) as f32
+                        } else {
+                            0.5
+                        };
+                        Position2D {
+                            x: start.x + (end.x - start.x) * t,
+                            y: start.y + (end.y - start.y) * t,
+                        }
+                    })
+                    .collect();
+                Some(positions)
+            }
+            LayoutShape::Arc {
+                center,
+                radius,
+                start_angle,
+                end_angle,
+            } => {
+                let positions = (0..pixel_count)
+                    .map(|i| {
+                        let t = if pixel_count > 1 {
+                            i as f32 / (pixel_count - 1) as f32
+                        } else {
+                            0.5
+                        };
+                        let angle = start_angle + (end_angle - start_angle) * t;
+                        Position2D {
+                            x: center.x + radius * angle.cos(),
+                            y: center.y + radius * angle.sin(),
+                        }
+                    })
+                    .collect();
+                Some(positions)
+            }
+            LayoutShape::Rectangle {
+                top_left,
+                bottom_right,
+            } => {
+                // Distribute pixels evenly around the rectangle perimeter
+                let w = (bottom_right.x - top_left.x).abs();
+                let h = (bottom_right.y - top_left.y).abs();
+                let perimeter = 2.0 * (w + h);
+                if perimeter == 0.0 {
+                    return Some(vec![
+                        Position2D {
+                            x: top_left.x,
+                            y: top_left.y,
+                        };
+                        pixel_count
+                    ]);
+                }
+                let positions = (0..pixel_count)
+                    .map(|i| {
+                        let t = if pixel_count > 1 {
+                            i as f32 / pixel_count as f32
+                        } else {
+                            0.0
+                        };
+                        let d = t * perimeter;
+                        if d < w {
+                            Position2D {
+                                x: top_left.x + d,
+                                y: top_left.y,
+                            }
+                        } else if d < w + h {
+                            Position2D {
+                                x: bottom_right.x,
+                                y: top_left.y + (d - w),
+                            }
+                        } else if d < 2.0 * w + h {
+                            Position2D {
+                                x: bottom_right.x - (d - w - h),
+                                y: bottom_right.y,
+                            }
+                        } else {
+                            Position2D {
+                                x: top_left.x,
+                                y: bottom_right.y - (d - 2.0 * w - h),
+                            }
+                        }
+                    })
+                    .collect();
+                Some(positions)
+            }
+            LayoutShape::Grid {
+                top_left,
+                bottom_right,
+                columns,
+            } => {
+                let cols = (*columns).max(1) as usize;
+                let rows = pixel_count.div_ceil(cols);
+                let positions = (0..pixel_count)
+                    .map(|i| {
+                        let col = i % cols;
+                        let row = i / cols;
+                        let tx = if cols > 1 {
+                            col as f32 / (cols - 1) as f32
+                        } else {
+                            0.5
+                        };
+                        let ty = if rows > 1 {
+                            row as f32 / (rows - 1) as f32
+                        } else {
+                            0.5
+                        };
+                        Position2D {
+                            x: top_left.x + (bottom_right.x - top_left.x) * tx,
+                            y: top_left.y + (bottom_right.y - top_left.y) * ty,
+                        }
+                    })
+                    .collect();
+                Some(positions)
+            }
+            LayoutShape::Custom => None,
+        }
+    }
+}
+
 /// Maps a fixture's pixels to 2D positions for the preview renderer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FixtureLayout {
     pub fixture_id: FixtureId,
     /// One position per pixel. Length must equal the fixture's pixel_count.
     pub pixel_positions: Vec<Position2D>,
+    #[serde(default)]
+    pub shape: LayoutShape,
 }
 
 /// The spatial layout of all fixtures for preview rendering.

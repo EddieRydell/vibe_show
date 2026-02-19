@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { Settings } from "lucide-react";
 import type { ProfileSummary } from "../types";
 
 interface Props {
@@ -98,7 +99,7 @@ export function HomeScreen({ onOpenProfile, onOpenSettings }: Props) {
             className="text-text-2 hover:text-text ml-1 p-1.5 transition-colors"
             title="Settings"
           >
-            <GearIcon />
+            <Settings size={16} />
           </button>
         </div>
       </div>
@@ -191,3 +192,4 @@ export function HomeScreen({ onOpenProfile, onOpenSettings }: Props) {
     </div>
   );
 }
+
