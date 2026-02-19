@@ -150,6 +150,7 @@ export interface PlaybackInfo {
 export interface TickResult {
   frame: Frame;
   current_time: number;
+  playing: boolean;
 }
 
 export interface EffectThumbnail {

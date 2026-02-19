@@ -461,7 +461,7 @@ pub fn delete_show(
 
 const MEDIA_EXTENSIONS: &[&str] = &["mp3", "wav", "ogg", "flac", "m4a", "aac"];
 
-fn media_dir(data_dir: &Path, profile_slug: &str) -> std::path::PathBuf {
+pub fn media_dir(data_dir: &Path, profile_slug: &str) -> std::path::PathBuf {
     profile_dir(data_dir, profile_slug).join("media")
 }
 

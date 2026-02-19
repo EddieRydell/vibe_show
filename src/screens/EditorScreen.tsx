@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Settings } from "lucide-react";
+import { Settings, SlidersHorizontal } from "lucide-react";
 import { Preview } from "../components/Preview";
 import { Timeline } from "../components/Timeline";
 import { Toolbar } from "../components/Toolbar";
 import { FixtureList } from "../components/FixtureList";
 import { PropertyPanel } from "../components/PropertyPanel";
 import { EffectPicker } from "../components/EffectPicker";
+import { SequenceSettingsDialog } from "../components/SequenceSettingsDialog";
 import { useEngine } from "../hooks/useEngine";
+import { useAudio } from "../hooks/useAudio";
 import { useKeyboard } from "../hooks/useKeyboard";
 import type { EffectKind } from "../types";
 
@@ -19,21 +21,30 @@ interface Props {
 }
 
 export function EditorScreen({ showSlug, onBack, onOpenSettings }: Props) {
+  const audio = useAudio();
+
+  // Audio-master clock: returns audio time when audio is actively playing, null otherwise.
+  // When null, useEngine falls back to its tick(dt) mode.
+  const audioGetCurrentTime = useCallback((): number | null => {
+    return audio.getCurrentTime();
+  }, [audio]);
+
   const {
     show,
     frame,
     playback,
     error,
-    play,
-    pause,
-    seek,
+    play: enginePlay,
+    pause: enginePause,
+    seek: engineSeek,
     selectSequence,
     refreshAll,
-  } = useEngine();
+  } = useEngine(audioGetCurrentTime);
   const [previewCollapsed, setPreviewCollapsed] = useState(false);
   const [selectedEffects, setSelectedEffects] = useState<Set<string>>(new Set());
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [showSequenceSettings, setShowSequenceSettings] = useState(false);
   const [addEffectState, setAddEffectState] = useState<{
     fixtureId: number;
     time: number;
@@ -52,6 +63,40 @@ export function EditorScreen({ showSlug, onBack, onOpenSettings }: Props) {
         setLoading(false);
       });
   }, [showSlug, refreshAll]);
+
+  // Load audio when sequence changes
+  const currentSequence = show?.sequences[playback?.sequence_index ?? 0];
+  useEffect(() => {
+    audio.loadAudio(currentSequence?.audio_file ?? null);
+  }, [currentSequence?.audio_file, audio.loadAudio]);
+
+  // Audio ended handler — stop at end
+  useEffect(() => {
+    audio.onEnded.current = () => {
+      enginePause();
+      audio.pause();
+    };
+  }, [audio, enginePause]);
+
+  // ── Composed transport controls ────────────────────────────────────
+
+  const play = useCallback(() => {
+    enginePlay();
+    if (audio.ready) audio.play();
+  }, [enginePlay, audio]);
+
+  const pause = useCallback(() => {
+    enginePause();
+    if (audio.ready) audio.pause();
+  }, [enginePause, audio]);
+
+  const seek = useCallback(
+    (time: number) => {
+      engineSeek(time);
+      if (audio.ready) audio.seek(time);
+    },
+    [engineSeek, audio],
+  );
 
   const handleStop = useCallback(() => {
     pause();
@@ -100,9 +145,7 @@ export function EditorScreen({ showSlug, onBack, onOpenSettings }: Props) {
   }, []);
 
   const handleSave = useCallback(() => {
-    invoke("save_current_show").catch((e) =>
-      console.error("[VibeShow] Save failed:", e),
-    );
+    invoke("save_current_show").catch((e) => console.error("[VibeShow] Save failed:", e));
   }, []);
 
   const handleSequenceChange = useCallback(
@@ -114,6 +157,12 @@ export function EditorScreen({ showSlug, onBack, onOpenSettings }: Props) {
   );
 
   const handleRefresh = useCallback(() => {
+    refreshAll();
+    setRefreshKey((k) => k + 1);
+  }, [refreshAll]);
+
+  const handleSequenceSettingsSaved = useCallback(() => {
+    setShowSequenceSettings(false);
     refreshAll();
     setRefreshKey((k) => k + 1);
   }, [refreshAll]);
@@ -304,6 +353,13 @@ export function EditorScreen({ showSlug, onBack, onOpenSettings }: Props) {
         <span className="text-text-2 ml-2 text-xs">{show?.name ?? "Untitled"}</span>
         <div className="ml-auto flex items-center gap-1">
           <button
+            onClick={() => setShowSequenceSettings(true)}
+            className="text-text-2 hover:text-text p-1 transition-colors"
+            title="Sequence Settings"
+          >
+            <SlidersHorizontal size={14} />
+          </button>
+          <button
             onClick={handleSave}
             className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-2 py-0.5 text-[11px] transition-colors"
           >
@@ -367,6 +423,7 @@ export function EditorScreen({ showSlug, onBack, onOpenSettings }: Props) {
           onAddEffect={handleAddEffect}
           onRefresh={handleRefresh}
           onMoveEffect={handleMoveEffect}
+          waveform={audio.waveform}
         />
         <PropertyPanel
           selectedEffect={singleSelected}
@@ -389,6 +446,16 @@ export function EditorScreen({ showSlug, onBack, onOpenSettings }: Props) {
           position={addEffectState.screenPos}
           onSelect={handleEffectTypeSelected}
           onCancel={() => setAddEffectState(null)}
+        />
+      )}
+
+      {/* Sequence Settings Dialog */}
+      {showSequenceSettings && currentSequence && (
+        <SequenceSettingsDialog
+          sequence={currentSequence}
+          sequenceIndex={playback?.sequence_index ?? 0}
+          onSaved={handleSequenceSettingsSaved}
+          onCancel={() => setShowSequenceSettings(false)}
         />
       )}
     </div>

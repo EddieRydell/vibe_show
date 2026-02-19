@@ -14,13 +14,15 @@ export interface EngineState {
   refreshAll: () => void;
 }
 
-export function useEngine(): EngineState {
+export function useEngine(audioGetCurrentTime?: () => number | null): EngineState {
   const [show, setShow] = useState<Show | null>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
   const [playback, setPlayback] = useState<PlaybackInfo | null>(null);
   const [error] = useState<string | null>(null);
   const animFrameRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
+  const audioGetCurrentTimeRef = useRef(audioGetCurrentTime);
+  audioGetCurrentTimeRef.current = audioGetCurrentTime;
 
   /** Refresh show + playback + frame from backend after a state change. */
   const refreshAll = useCallback(() => {
@@ -32,19 +34,36 @@ export function useEngine(): EngineState {
   // Animation loop: tick the engine and receive frames.
   useEffect(() => {
     const loop_ = (timestamp: number) => {
-      const dt = lastTimeRef.current ? (timestamp - lastTimeRef.current) / 1000.0 : 0;
-      lastTimeRef.current = timestamp;
+      const audioTime = audioGetCurrentTimeRef.current?.();
 
-      invoke<TickResult | null>("tick", { dt })
-        .then((result) => {
-          if (result) {
-            setFrame(result.frame);
+      if (audioTime != null) {
+        // Audio-master mode: read time from audio element, get frame directly
+        invoke<Frame>("get_frame", { time: audioTime })
+          .then((f) => {
+            setFrame(f);
             setPlayback((prev) =>
-              prev ? { ...prev, current_time: result.current_time, playing: true } : prev,
+              prev ? { ...prev, current_time: audioTime, playing: true } : prev,
             );
-          }
-        })
-        .catch(() => {});
+          })
+          .catch(() => {});
+      } else {
+        // Existing tick mode
+        const dt = lastTimeRef.current ? (timestamp - lastTimeRef.current) / 1000.0 : 0;
+        lastTimeRef.current = timestamp;
+
+        invoke<TickResult | null>("tick", { dt })
+          .then((result) => {
+            if (result) {
+              setFrame(result.frame);
+              setPlayback((prev) =>
+                prev
+                  ? { ...prev, current_time: result.current_time, playing: result.playing }
+                  : prev,
+              );
+            }
+          })
+          .catch(() => {});
+      }
 
       animFrameRef.current = requestAnimationFrame(loop_);
     };

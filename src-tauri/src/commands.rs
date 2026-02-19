@@ -344,6 +344,64 @@ pub fn delete_media(state: State<AppState>, filename: String) -> Result<(), Stri
     profile::delete_media(&data_dir, &profile_slug, &filename).map_err(|e| e.to_string())
 }
 
+// ── Media path resolution ──────────────────────────────────────────
+
+/// Resolve a media filename to its absolute filesystem path.
+#[tauri::command]
+pub fn resolve_media_path(state: State<AppState>, filename: String) -> Result<String, String> {
+    let data_dir = get_data_dir(&state)?;
+    let profile_slug = state
+        .current_profile
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No profile open")?;
+    let path = profile::media_dir(&data_dir, &profile_slug).join(&filename);
+    if !path.exists() {
+        return Err(format!("Media file not found: {}", filename));
+    }
+    Ok(path.to_string_lossy().to_string())
+}
+
+// ── Sequence settings ─────────────────────────────────────────────
+
+/// Partial update of sequence settings. Only provided fields are changed.
+#[tauri::command]
+pub fn update_sequence_settings(
+    state: State<AppState>,
+    sequence_index: usize,
+    name: Option<String>,
+    audio_file: Option<Option<String>>,
+    duration: Option<f64>,
+    frame_rate: Option<f64>,
+) -> Result<(), String> {
+    let mut show = state.show.lock().unwrap();
+    let sequence = show
+        .sequences
+        .get_mut(sequence_index)
+        .ok_or("Invalid sequence index")?;
+
+    if let Some(n) = name {
+        sequence.name = n;
+    }
+    if let Some(af) = audio_file {
+        sequence.audio_file = af;
+    }
+    if let Some(d) = duration {
+        if d <= 0.0 {
+            return Err("Duration must be positive".into());
+        }
+        sequence.duration = d;
+    }
+    if let Some(fr) = frame_rate {
+        if fr <= 0.0 {
+            return Err("Frame rate must be positive".into());
+        }
+        sequence.frame_rate = fr;
+    }
+    Ok(())
+}
+
 // ── Effects listing ────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]
@@ -449,13 +507,15 @@ pub fn tick(state: State<AppState>, dt: f64) -> Option<TickResult> {
 
     playback.current_time += dt;
     if playback.current_time >= duration {
-        playback.current_time = 0.0;
+        playback.current_time = duration;
+        playback.playing = false;
     }
 
     let frame = engine::evaluate(&show, playback.sequence_index, playback.current_time);
     Some(TickResult {
         frame,
         current_time: playback.current_time,
+        playing: playback.playing,
     })
 }
 
@@ -463,6 +523,7 @@ pub fn tick(state: State<AppState>, dt: f64) -> Option<TickResult> {
 pub struct TickResult {
     pub frame: Frame,
     pub current_time: f64,
+    pub playing: bool,
 }
 
 /// Pre-render an effect as a thumbnail image for the timeline.

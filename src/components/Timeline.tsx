@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EffectBlock } from "./EffectBlock";
 import type { BlendMode, PlaybackInfo, Show, Track } from "../types";
+import type { WaveformData } from "../hooks/useAudio";
 
 interface TimelineProps {
   show: Show | null;
@@ -18,6 +19,7 @@ interface TimelineProps {
     newStart: number,
     newEnd: number,
   ) => Promise<void>;
+  waveform?: WaveformData | null;
 }
 
 const LABEL_WIDTH = 160;
@@ -49,7 +51,8 @@ function resolveGroupFixtures(groupId: number, show: Show, visited?: Set<number>
   const ids: number[] = [];
   for (const m of group.members) {
     if ("Fixture" in m) ids.push((m as { Fixture: number }).Fixture);
-    else if ("Group" in m) ids.push(...resolveGroupFixtures((m as { Group: number }).Group, show, seen));
+    else if ("Group" in m)
+      ids.push(...resolveGroupFixtures((m as { Group: number }).Group, show, seen));
   }
   return ids;
 }
@@ -191,6 +194,7 @@ export function Timeline({
   onAddEffect,
   onRefresh,
   onMoveEffect,
+  waveform,
 }: TimelineProps) {
   const duration = playback?.duration ?? 0;
   const currentTime = playback?.current_time ?? 0;
@@ -203,6 +207,7 @@ export function Timeline({
   const dragStateRef = useRef<DragState | null>(null);
   const pxPerSecRef = useRef(pxPerSec);
   pxPerSecRef.current = pxPerSec;
+  const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const contentWidth = duration * pxPerSec;
 
@@ -397,7 +402,8 @@ export function Timeline({
         newEnd = Math.min(duration, newEnd);
         setDragPreview({ key: ds.key, start: newStart, end: newEnd });
       } else if (ds.type === "move") {
-        const totalDelta = Math.abs(e.clientX - ds.startClientX) + Math.abs(e.clientY - ds.startClientY);
+        const totalDelta =
+          Math.abs(e.clientX - ds.startClientX) + Math.abs(e.clientY - ds.startClientY);
         if (!ds.didDrag && totalDelta < DRAG_THRESHOLD) return;
         ds.didDrag = true;
 
@@ -483,7 +489,61 @@ export function Timeline({
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [duration, playback?.sequence_index, onRefresh, onMoveEffect, getFixtureIdFromClientY, selectedEffects, onSelectionChange]);
+  }, [
+    duration,
+    playback?.sequence_index,
+    onRefresh,
+    onMoveEffect,
+    getFixtureIdFromClientY,
+    selectedEffects,
+    onSelectionChange,
+  ]);
+
+  // Waveform canvas drawing
+  const totalRowHeight = useMemo(
+    () => stackedRows.reduce((sum, r) => sum + r.rowHeight, 0),
+    [stackedRows],
+  );
+
+  useEffect(() => {
+    const canvas = waveformCanvasRef.current;
+    if (!canvas || !waveform) return;
+
+    const width = Math.ceil(contentWidth);
+    const height = totalRowHeight;
+    if (width <= 0 || height <= 0) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, width, height);
+
+    const { peaks, duration: audioDuration } = waveform;
+    if (audioDuration <= 0 || peaks.length === 0) return;
+
+    ctx.fillStyle = "var(--primary)";
+    ctx.globalAlpha = 0.12;
+
+    const centerY = height / 2;
+    const maxBarHeight = height / 2;
+
+    for (let px = 0; px < width; px++) {
+      const timeSec = px / pxPerSec;
+      const peakIndex = Math.floor((timeSec / audioDuration) * peaks.length);
+      if (peakIndex < 0 || peakIndex >= peaks.length) continue;
+      const amplitude = peaks[peakIndex];
+      const barH = amplitude * maxBarHeight;
+      if (barH < 0.5) continue;
+      ctx.fillRect(px, centerY - barH, 1, barH * 2);
+    }
+  }, [waveform, contentWidth, totalRowHeight, pxPerSec]);
 
   // Ruler tick calculation.
   const idealTickSpacingPx = 80;
@@ -523,9 +583,7 @@ export function Timeline({
         <span className="text-text-2 ml-1 text-[10px]">{pxPerSec.toFixed(0)}px/s</span>
 
         {selectedEffects.size > 0 && (
-          <span className="text-primary ml-auto text-[10px]">
-            {selectedEffects.size} selected
-          </span>
+          <span className="text-primary ml-auto text-[10px]">{selectedEffects.size} selected</span>
         )}
       </div>
 
@@ -546,9 +604,7 @@ export function Timeline({
                 className="border-border/40 flex flex-col justify-center border-b px-3"
                 style={{ height: row?.rowHeight ?? MIN_ROW_HEIGHT }}
               >
-                <span className="text-text-2 truncate text-xs font-medium">
-                  {fixture.name}
-                </span>
+                <span className="text-text-2 truncate text-xs font-medium">{fixture.name}</span>
                 <span className="text-text-2 mt-0.5 text-[10px]">{fixture.pixel_count}px</span>
               </div>
             );
@@ -582,7 +638,18 @@ export function Timeline({
             </div>
 
             {/* Fixture rows */}
-            <div onClick={handleTrackAreaClick} onDoubleClick={handleTrackAreaDoubleClick}>
+            <div
+              className="relative"
+              onClick={handleTrackAreaClick}
+              onDoubleClick={handleTrackAreaDoubleClick}
+            >
+              {/* Waveform canvas backdrop */}
+              {waveform && (
+                <canvas
+                  ref={waveformCanvasRef}
+                  className="pointer-events-none absolute top-0 left-0 z-0"
+                />
+              )}
               {stackedRows.map((row) => {
                 // Check if there's a move-drag ghost targeting this row
                 const moveGhost =
@@ -590,7 +657,8 @@ export function Timeline({
                   dragState?.type === "move" &&
                   (dragState as Extract<DragState, { type: "move" }>).didDrag &&
                   dragPreview.targetFixtureId === row.fixtureId &&
-                  dragPreview.targetFixtureId !== (dragState as Extract<DragState, { type: "move" }>).originalFixtureId
+                  dragPreview.targetFixtureId !==
+                    (dragState as Extract<DragState, { type: "move" }>).originalFixtureId
                     ? dragPreview
                     : null;
 
@@ -626,7 +694,8 @@ export function Timeline({
                         dragState?.type === "move" &&
                         (dragState as Extract<DragState, { type: "move" }>).didDrag &&
                         preview?.targetFixtureId != null &&
-                        preview.targetFixtureId !== (dragState as Extract<DragState, { type: "move" }>).originalFixtureId;
+                        preview.targetFixtureId !==
+                          (dragState as Extract<DragState, { type: "move" }>).originalFixtureId;
 
                       const displayStart = preview ? preview.start : placed.startSec;
                       const displayDuration = preview

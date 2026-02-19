@@ -58,6 +58,9 @@ fn main() {
             commands::list_media,
             commands::import_media,
             commands::delete_media,
+            commands::resolve_media_path,
+            // Sequence settings
+            commands::update_sequence_settings,
             // Effects
             commands::list_effects,
             // Engine / playback
