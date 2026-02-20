@@ -7,6 +7,7 @@ pub mod describe;
 pub mod dispatcher;
 pub mod effects;
 pub mod engine;
+pub mod error;
 pub mod import;
 pub mod model;
 pub mod profile;

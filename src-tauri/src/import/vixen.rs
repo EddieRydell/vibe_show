@@ -18,7 +18,8 @@ use crate::model::fixture::{
 };
 use crate::model::show::{FixtureLayout, Layout, Show};
 use crate::model::timeline::{
-    BlendMode, EffectInstance, EffectKind, EffectParams, ParamValue, Sequence, TimeRange, Track,
+    BlendMode, ColorMode, EffectInstance, EffectKind, EffectParams, ParamKey, ParamValue, Sequence,
+    TimeRange, Track,
 };
 
 use super::vixen_preview;
@@ -234,183 +235,433 @@ fn build_gradient_param(stops: &[(f64, Color)]) -> Option<ParamValue> {
     ColorGradient::new(color_stops).map(ParamValue::ColorGradient)
 }
 
-/// Map Vixen color handling string to our color_mode param value.
-fn map_color_handling(handling: Option<&str>) -> &'static str {
+/// Map Vixen color handling string to our ColorMode enum.
+///
+/// The `default` parameter controls the fallback for `StaticColor` and `None`,
+/// which varies by effect type:
+/// - Chase/Wipe/Spin: `GradientPerPulse` (gradient defines pulse shape, e.g. white head → colored tail)
+/// - Fade/Pulse/ColorWash: `GradientThroughEffect` (gradient animates over the effect duration)
+/// - Garlands/PinWheel: `GradientAcrossItems` (gradient spreads across pixels)
+fn map_color_handling(handling: Option<&str>, default: ColorMode) -> ColorMode {
     match handling {
-        Some("GradientThroughWholeEffect") => "gradient_through_effect",
-        Some("GradientAcrossItems") | Some("ColorAcrossItems") => "gradient_across_items",
+        Some("GradientThroughWholeEffect") => ColorMode::GradientThroughEffect,
+        Some("GradientAcrossItems") | Some("ColorAcrossItems") => ColorMode::GradientAcrossItems,
         Some("GradientForEachPulse") | Some("GradientOverEachPulse")
-        | Some("GradientPerPulse") => "gradient_per_pulse",
-        Some("StaticColor") => "static",
-        _ => "static",
+        | Some("GradientPerPulse") => ColorMode::GradientPerPulse,
+        // StaticColor and None: use per-effect-type default
+        _ => default,
+    }
+}
+
+/// Helper: populate gradient param from parsed stops or single color.
+fn set_gradient(params: EffectParams, effect: &VixenEffect) -> EffectParams {
+    let base_color = effect.color.unwrap_or(Color::WHITE);
+    if let Some(stops) = effect.gradient_colors.as_ref() {
+        if let Some(grad_val) = build_gradient_param(stops) {
+            return params.set(ParamKey::Gradient, grad_val);
+        }
+    }
+    params.set(
+        ParamKey::Gradient,
+        ParamValue::ColorGradient(ColorGradient::solid(base_color)),
+    )
+}
+
+/// Helper: check if direction indicates reverse.
+fn is_reverse_direction(direction: Option<&str>) -> bool {
+    match direction {
+        Some(d) => matches!(d, "Reverse" | "Right" | "Down" | "Out" | "1"),
+        None => false,
+    }
+}
+
+/// Map a Vixen wipe direction string to our direction vocabulary + reverse flag.
+fn map_wipe_direction(direction: Option<&str>) -> (&'static str, bool) {
+    match direction {
+        Some("Horizontal") | Some("Left") => ("horizontal", false),
+        Some("Right") => ("horizontal", true),
+        Some("Vertical") | Some("Up") => ("vertical", false),
+        Some("Down") => ("vertical", true),
+        Some("DiagonalUp") => ("diagonal_up", false),
+        Some("DiagonalDown") => ("diagonal_down", false),
+        Some("Burst") | Some("BurstIn") => ("burst", false),
+        Some("BurstOut") | Some("Out") => ("burst", true),
+        Some("Circle") | Some("CircleIn") => ("circle", false),
+        Some("CircleOut") => ("circle", true),
+        Some("Diamond") | Some("DiamondIn") => ("diamond", false),
+        Some("DiamondOut") => ("diamond", true),
+        Some("Reverse") => ("horizontal", true),
+        // Numeric directions from Vixen data model
+        Some("0") => ("horizontal", false),
+        Some("1") => ("horizontal", true),
+        _ => ("horizontal", false),
     }
 }
 
 /// Map a Vixen effect type name to a VibeLights EffectKind + default params.
+///
+/// Effects that can't be mapped print a LOUD warning for easy debugging.
 fn map_vixen_effect(effect: &VixenEffect) -> (EffectKind, EffectParams) {
     let type_name = effect.type_name.as_str();
-    let color = effect.color;
+    let intensity_curve = effect.intensity_curve.as_ref();
     let movement_curve = effect.movement_curve.as_ref();
     let pulse_curve = effect.pulse_curve.as_ref();
-    let intensity_curve = effect.intensity_curve.as_ref();
-    let gradient_colors = effect.gradient_colors.as_ref();
     let color_handling = effect.color_handling.as_deref();
     let level = effect.level;
-    let base_color = color.unwrap_or(Color::WHITE);
+    let base_color = effect.color.unwrap_or(Color::WHITE);
 
     match type_name {
+        // ── Pulse / SetLevel → Fade ──────────────────────────────
         "Pulse" | "SetLevel" => {
             let mut params = EffectParams::new();
-            // Pulse maps to our Fade effect with the parsed intensity curve.
-            // SetLevel uses a constant intensity at the given level.
             if let Some(pts) = intensity_curve {
                 if let Some(curve_val) = build_curve_param(pts) {
-                    params = params.set("intensity_curve", curve_val);
+                    params = params.set(ParamKey::IntensityCurve, curve_val);
                 }
             } else {
-                // No curve data: use constant intensity at the given level (default 1.0 = full on)
                 let intensity = level.unwrap_or(1.0).clamp(0.0, 1.0);
                 params = params.set(
-                    "intensity_curve",
+                    ParamKey::IntensityCurve,
                     ParamValue::Curve(Curve::constant(intensity)),
                 );
             }
-            // Build gradient from gradient data or single color
-            if let Some(stops) = gradient_colors {
-                if let Some(grad_val) = build_gradient_param(stops) {
-                    params = params.set("gradient", grad_val);
-                }
-            } else {
-                params = params.set(
-                    "gradient",
-                    ParamValue::ColorGradient(ColorGradient::solid(base_color)),
-                );
-            }
-            let color_mode = map_color_handling(color_handling);
-            params = params.set("color_mode", ParamValue::Text(color_mode.into()));
+            params = set_gradient(params, effect);
+            let color_mode = map_color_handling(color_handling, ColorMode::GradientThroughEffect);
+            params = params.set(ParamKey::ColorMode, ParamValue::ColorMode(color_mode));
             (EffectKind::Fade, params)
         }
+
+        // ── Chase → Chase ────────────────────────────────────────
         "Chase" => {
-            let mut params = EffectParams::new();
-            // Build gradient
-            if let Some(stops) = gradient_colors {
-                if let Some(grad_val) = build_gradient_param(stops) {
-                    params = params.set("gradient", grad_val);
-                }
-            } else {
-                params = params.set(
-                    "gradient",
-                    ParamValue::ColorGradient(ColorGradient::solid(base_color)),
-                );
-            }
-            // Movement curve (ChaseMovement — head position over time)
+            let mut params = set_gradient(EffectParams::new(), effect);
             if let Some(pts) = movement_curve {
                 if let Some(curve_val) = build_curve_param(pts) {
-                    params = params.set("movement_curve", curve_val);
+                    params = params.set(ParamKey::MovementCurve, curve_val);
                 }
             }
-            // Pulse curve (PulseCurve — intensity envelope per pulse)
             if let Some(pts) = pulse_curve {
                 if let Some(curve_val) = build_curve_param(pts) {
-                    params = params.set("pulse_curve", curve_val);
+                    params = params.set(ParamKey::PulseCurve, curve_val);
                 }
             }
-            let color_mode = map_color_handling(color_handling);
+            let color_mode = map_color_handling(color_handling, ColorMode::GradientPerPulse);
             params = params
-                .set("color_mode", ParamValue::Text(color_mode.into()))
-                .set("speed", ParamValue::Float(1.0))
-                .set("pulse_width", ParamValue::Float(0.3));
+                .set(ParamKey::ColorMode, ParamValue::ColorMode(color_mode))
+                .set(ParamKey::Speed, ParamValue::Float(1.0))
+                .set(ParamKey::PulseWidth, ParamValue::Float(0.3));
             (EffectKind::Chase, params)
         }
-        "ColorWash" => (
-            EffectKind::Gradient,
-            EffectParams::new().set(
-                "colors",
-                ParamValue::ColorList(vec![base_color, Color::BLACK]),
-            ),
-        ),
+
+        // ── Spin → Chase (continuous rotation) ───────────────────
+        "Spin" => {
+            let mut params = set_gradient(EffectParams::new(), effect);
+            if let Some(pts) = pulse_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::PulseCurve, curve_val);
+                }
+            }
+            let speed = effect.revolution_count.unwrap_or(4.0);
+            let pulse_width = effect
+                .pulse_percentage
+                .map_or(0.1, |p| (p / 100.0).clamp(0.01, 1.0));
+            let reverse = effect.reverse_spin.unwrap_or(false);
+            let color_mode = map_color_handling(color_handling, ColorMode::GradientPerPulse);
+            params = params
+                .set(ParamKey::ColorMode, ParamValue::ColorMode(color_mode))
+                .set(ParamKey::Speed, ParamValue::Float(speed))
+                .set(ParamKey::PulseWidth, ParamValue::Float(pulse_width))
+                .set(ParamKey::Reverse, ParamValue::Bool(reverse));
+            (EffectKind::Chase, params)
+        }
+
+        // ── Wipe → Wipe (spatial sweep) ─────────────────────────
+        // Vixen Wipe is a 2D spatial effect that sweeps across fixtures
+        // based on their physical positions with 7 direction modes.
+        "Wipe" => {
+            let mut params = set_gradient(EffectParams::new(), effect);
+            if let Some(pts) = movement_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::MovementCurve, curve_val);
+                }
+            }
+            if let Some(pts) = pulse_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::PulseCurve, curve_val);
+                }
+            }
+            // Map Vixen direction strings to our direction vocabulary
+            let (direction, reverse) = map_wipe_direction(effect.direction.as_deref());
+            let color_mode = map_color_handling(color_handling, ColorMode::GradientPerPulse);
+            params = params
+                .set(ParamKey::Direction, ParamValue::Text(direction.into()))
+                .set(ParamKey::ColorMode, ParamValue::ColorMode(color_mode))
+                .set(ParamKey::Speed, ParamValue::Float(1.0))
+                .set(ParamKey::PulseWidth, ParamValue::Float(1.0))
+                .set(ParamKey::Reverse, ParamValue::Bool(reverse));
+            (EffectKind::Wipe, params)
+        }
+
+        // ── Alternating → Chase (50/50 split) ───────────────────
+        "Alternating" => {
+            let mut params = set_gradient(EffectParams::new(), effect);
+            if let Some(pts) = intensity_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::PulseCurve, curve_val);
+                }
+            }
+            let color_mode = map_color_handling(color_handling, ColorMode::GradientPerPulse);
+            params = params
+                .set(ParamKey::ColorMode, ParamValue::ColorMode(color_mode))
+                .set(ParamKey::Speed, ParamValue::Float(1.0))
+                .set(ParamKey::PulseWidth, ParamValue::Float(0.5));
+            (EffectKind::Chase, params)
+        }
+
+        // ── Shockwave → Chase (radial wave approximated as linear) ──
+        // Shockwave is a 2D radial wave from a center point.
+        // We approximate it as a fast narrow chase pulse.
+        "Shockwave" => {
+            let mut params = set_gradient(EffectParams::new(), effect);
+            // AccelerationCurve maps to movement (head position)
+            if let Some(pts) = intensity_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::MovementCurve, curve_val);
+                }
+            }
+            let color_mode = map_color_handling(color_handling, ColorMode::GradientPerPulse);
+            params = params
+                .set(ParamKey::ColorMode, ParamValue::ColorMode(color_mode))
+                .set(ParamKey::Speed, ParamValue::Float(2.0))
+                .set(ParamKey::PulseWidth, ParamValue::Float(0.15));
+            (EffectKind::Chase, params)
+        }
+
+        // ── Garlands → Chase (multi-color segment pattern) ──────
+        // Garlands creates alternating colored segments.
+        // Best approximation: chase with gradient_across_items and wide pulse.
+        "Garlands" => {
+            let mut params = set_gradient(EffectParams::new(), effect);
+            if let Some(pts) = movement_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::MovementCurve, curve_val);
+                }
+            }
+            if let Some(pts) = intensity_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::PulseCurve, curve_val);
+                }
+            }
+            let color_mode = map_color_handling(color_handling, ColorMode::GradientAcrossItems);
+            params = params
+                .set(ParamKey::ColorMode, ParamValue::ColorMode(color_mode))
+                .set(ParamKey::Speed, ParamValue::Float(1.0))
+                .set(ParamKey::PulseWidth, ParamValue::Float(0.5));
+            (EffectKind::Chase, params)
+        }
+
+        // ── PinWheel → Chase (rotating color pattern) ───────────
+        // PinWheel creates rotating "arms" of color from a center point.
+        // Approximated as a chase with gradient spread across items.
+        "PinWheel" => {
+            let mut params = set_gradient(EffectParams::new(), effect);
+            if let Some(pts) = movement_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::MovementCurve, curve_val);
+                }
+            }
+            if let Some(pts) = intensity_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::PulseCurve, curve_val);
+                }
+            }
+            let color_mode = map_color_handling(color_handling, ColorMode::GradientAcrossItems);
+            let reverse = is_reverse_direction(effect.direction.as_deref());
+            params = params
+                .set(ParamKey::ColorMode, ParamValue::ColorMode(color_mode))
+                .set(ParamKey::Speed, ParamValue::Float(2.0))
+                .set(ParamKey::PulseWidth, ParamValue::Float(0.3))
+                .set(ParamKey::Reverse, ParamValue::Bool(reverse));
+            (EffectKind::Chase, params)
+        }
+
+        // ── Butterfly → Chase (color wave pattern) ──────────────
+        // Butterfly creates mirrored color waves.
+        // Approximated as a chase with gradient_through_effect.
+        "Butterfly" => {
+            let mut params = set_gradient(EffectParams::new(), effect);
+            if let Some(pts) = intensity_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::PulseCurve, curve_val);
+                }
+            }
+            let color_mode = map_color_handling(color_handling, ColorMode::GradientPerPulse);
+            let reverse = is_reverse_direction(effect.direction.as_deref());
+            params = params
+                .set(ParamKey::ColorMode, ParamValue::ColorMode(color_mode))
+                .set(ParamKey::Speed, ParamValue::Float(2.0))
+                .set(ParamKey::PulseWidth, ParamValue::Float(0.5))
+                .set(ParamKey::Reverse, ParamValue::Bool(reverse));
+            (EffectKind::Chase, params)
+        }
+
+        // ── Dissolve → Twinkle (random pixel on/off) ────────────
+        // Dissolve randomly turns pixels on/off over time.
+        // Approximated as twinkle with matched color.
+        "Dissolve" => {
+            let mut params = EffectParams::new();
+            params = params
+                .set(ParamKey::Color, ParamValue::Color(base_color))
+                .set(ParamKey::Density, ParamValue::Float(0.5))
+                .set(ParamKey::Speed, ParamValue::Float(4.0));
+            (EffectKind::Twinkle, params)
+        }
+
+        // ── ColorWash → Fade (was Gradient, but Fade is closer) ─
+        // ColorWash in Vixen is a smooth color envelope — basically a fade
+        // with gradient over time.
+        "ColorWash" => {
+            let mut params = set_gradient(EffectParams::new(), effect);
+            if let Some(pts) = intensity_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::IntensityCurve, curve_val);
+                }
+            }
+            let color_mode = map_color_handling(color_handling, ColorMode::GradientThroughEffect);
+            params = params.set(ParamKey::ColorMode, ParamValue::ColorMode(color_mode));
+            (EffectKind::Fade, params)
+        }
+
+        // ── Twinkle ─────────────────────────────────────────────
         "Twinkle" => (
             EffectKind::Twinkle,
             EffectParams::new()
-                .set("color", ParamValue::Color(base_color))
-                .set("density", ParamValue::Float(0.4))
-                .set("speed", ParamValue::Float(6.0)),
+                .set(ParamKey::Color, ParamValue::Color(base_color))
+                .set(ParamKey::Density, ParamValue::Float(0.4))
+                .set(ParamKey::Speed, ParamValue::Float(6.0)),
         ),
+
+        // ── Strobe ──────────────────────────────────────────────
         "Strobe" => (
             EffectKind::Strobe,
             EffectParams::new()
-                .set("color", ParamValue::Color(base_color))
-                .set("rate", ParamValue::Float(10.0))
-                .set("duty_cycle", ParamValue::Float(0.5)),
+                .set(ParamKey::Color, ParamValue::Color(base_color))
+                .set(ParamKey::Rate, ParamValue::Float(10.0))
+                .set(ParamKey::DutyCycle, ParamValue::Float(0.5)),
         ),
-        "Alternating" => (
-            EffectKind::Chase,
-            EffectParams::new()
-                .set(
-                    "gradient",
-                    ParamValue::ColorGradient(ColorGradient::solid(base_color)),
-                )
-                .set("speed", ParamValue::Float(1.0))
-                .set("pulse_width", ParamValue::Float(0.5)),
-        ),
-        "PinWheel" => (
-            EffectKind::Rainbow,
-            EffectParams::new()
-                .set("speed", ParamValue::Float(1.5))
-                .set("spread", ParamValue::Float(1.0)),
-        ),
-        "Spin" => {
-            let mut params = EffectParams::new();
-            // Build gradient
-            if let Some(stops) = gradient_colors {
-                if let Some(grad_val) = build_gradient_param(stops) {
-                    params = params.set("gradient", grad_val);
-                }
-            } else {
-                params = params.set(
-                    "gradient",
-                    ParamValue::ColorGradient(ColorGradient::solid(base_color)),
-                );
-            }
-            // Pulse curve (PulseCurve — same as Chase)
-            if let Some(pts) = pulse_curve {
-                if let Some(curve_val) = build_curve_param(pts) {
-                    params = params.set("pulse_curve", curve_val);
-                }
-            }
-            // Speed: RevolutionCount = number of passes over the effect's duration
-            let speed = effect.revolution_count.unwrap_or(4.0);
-            // Pulse width: PulsePercentage is 0-100, convert to 0-1 fraction
-            let pulse_width = effect.pulse_percentage.map_or(0.1, |p| (p / 100.0).clamp(0.01, 1.0));
-            let reverse = effect.reverse_spin.unwrap_or(false);
-            let color_mode = map_color_handling(color_handling);
-            params = params
-                .set("color_mode", ParamValue::Text(color_mode.into()))
-                .set("speed", ParamValue::Float(speed))
-                .set("pulse_width", ParamValue::Float(pulse_width))
-                .set("reverse", ParamValue::Bool(reverse));
-            (EffectKind::Chase, params)
-        }
-        "Wipe" => (
-            EffectKind::Chase,
-            EffectParams::new()
-                .set(
-                    "gradient",
-                    ParamValue::ColorGradient(ColorGradient::solid(base_color)),
-                )
-                .set("speed", ParamValue::Float(2.0))
-                .set("pulse_width", ParamValue::Float(0.6)),
-        ),
+
+        // ── Rainbow ─────────────────────────────────────────────
         "Rainbow" => (
             EffectKind::Rainbow,
             EffectParams::new()
-                .set("speed", ParamValue::Float(1.0))
-                .set("spread", ParamValue::Float(2.0)),
+                .set(ParamKey::Speed, ParamValue::Float(1.0))
+                .set(ParamKey::Spread, ParamValue::Float(2.0)),
         ),
-        _ => (
-            EffectKind::Solid,
-            EffectParams::new().set("color", ParamValue::Color(Color::rgb(128, 128, 128))),
+
+        // ── Fire → Fade (warm color flicker) ────────────────────
+        // Fire is simulated with a warm gradient and intensity modulation.
+        "Fire" => {
+            let mut params = EffectParams::new();
+            // Use a warm gradient: red → orange → yellow
+            let warm_gradient = ColorGradient::new(vec![
+                ColorStop { position: 0.0, color: Color::rgb(180, 30, 0) },
+                ColorStop { position: 0.4, color: Color::rgb(255, 100, 0) },
+                ColorStop { position: 1.0, color: Color::rgb(255, 200, 50) },
+            ])
+            .unwrap_or_else(|| ColorGradient::solid(Color::rgb(255, 100, 0)));
+            params = params.set(ParamKey::Gradient, ParamValue::ColorGradient(warm_gradient));
+            if let Some(pts) = intensity_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::IntensityCurve, curve_val);
+                }
+            }
+            params = params.set(
+                ParamKey::ColorMode,
+                ParamValue::ColorMode(ColorMode::GradientThroughEffect),
+            );
+            (EffectKind::Fade, params)
+        }
+
+        // ── Fireworks → Twinkle (bright random bursts) ──────────
+        // Fireworks are particle bursts — approximated as bright twinkle.
+        "Fireworks" => (
+            EffectKind::Twinkle,
+            EffectParams::new()
+                .set(ParamKey::Color, ParamValue::Color(base_color))
+                .set(ParamKey::Density, ParamValue::Float(0.3))
+                .set(ParamKey::Speed, ParamValue::Float(10.0)),
         ),
+
+        // ── Snowflakes / Meteor → Twinkle ───────────────────────
+        "Snowflakes" | "Meteor" | "Meteors" => (
+            EffectKind::Twinkle,
+            EffectParams::new()
+                .set(ParamKey::Color, ParamValue::Color(base_color))
+                .set(ParamKey::Density, ParamValue::Float(0.3))
+                .set(ParamKey::Speed, ParamValue::Float(5.0)),
+        ),
+
+        // ── Candle → Fade (warm flicker) ────────────────────────
+        "Candle" => {
+            let mut params = EffectParams::new();
+            params = params
+                .set(
+                    ParamKey::Gradient,
+                    ParamValue::ColorGradient(ColorGradient::solid(
+                        Color::rgb(255, 180, 50),
+                    )),
+                )
+                .set(ParamKey::ColorMode, ParamValue::ColorMode(ColorMode::Static));
+            if let Some(pts) = intensity_curve {
+                if let Some(curve_val) = build_curve_param(pts) {
+                    params = params.set(ParamKey::IntensityCurve, curve_val);
+                }
+            }
+            (EffectKind::Fade, params)
+        }
+
+        // ── LipSync / CountDown / Launcher / Video / Nutcracker → skip ──
+        // These are audio-reactive, timing, or video effects with no light equivalent.
+        "LipSync" | "CountDown" | "Launcher" | "Video" | "NutcrackerModule" | "Audio" => {
+            eprintln!(
+                "[VibeLights] WARNING: Skipping unsupported effect type '{}' (no light equivalent)",
+                type_name
+            );
+            (
+                EffectKind::Solid,
+                EffectParams::new().set(ParamKey::Color, ParamValue::Color(Color::BLACK)),
+            )
+        }
+
+        // ── MaskAndFill → Solid (masking not supported) ─────────
+        "MaskAndFill" | "Mask" | "Fill" => {
+            eprintln!(
+                "[VibeLights] WARNING: Effect type '{}' mapped to Solid (masking not supported)",
+                type_name
+            );
+            (
+                EffectKind::Solid,
+                EffectParams::new().set(ParamKey::Color, ParamValue::Color(base_color)),
+            )
+        }
+
+        // ── Unknown effect → Solid + LOUD WARNING ───────────────
+        _ => {
+            eprintln!(
+                "\n[VibeLights] !!! UNHANDLED EFFECT TYPE: '{}' !!!\n\
+                 [VibeLights]     Mapped to Solid gray as fallback.\n\
+                 [VibeLights]     Color: {:?}, Gradient: {}, Curves: m={} p={} i={}\n",
+                type_name,
+                effect.color,
+                effect.gradient_colors.is_some(),
+                effect.movement_curve.is_some(),
+                effect.pulse_curve.is_some(),
+                effect.intensity_curve.is_some(),
+            );
+            (
+                EffectKind::Solid,
+                EffectParams::new().set(ParamKey::Color, ParamValue::Color(Color::rgb(128, 128, 128))),
+            )
+        }
     }
 }
 
@@ -432,11 +683,11 @@ struct VixenEffect {
     duration: f64,
     target_node_guids: Vec<String>,
     color: Option<Color>,
-    /// ChaseMovement curve (position over time for Chase effects)
+    /// ChaseMovement / MovementCurve (position over time for Chase/Wipe effects)
     movement_curve: Option<Vec<(f64, f64)>>,
     /// PulseCurve (intensity envelope per pulse for Chase/Spin effects)
     pulse_curve: Option<Vec<(f64, f64)>>,
-    /// LevelCurve / IntensityCurve (brightness envelope for Pulse/SetLevel)
+    /// LevelCurve / IntensityCurve / DissolveCurve / etc. (brightness envelope)
     intensity_curve: Option<Vec<(f64, f64)>>,
     gradient_colors: Option<Vec<(f64, Color)>>,
     color_handling: Option<String>,
@@ -446,9 +697,12 @@ struct VixenEffect {
     /// Spin-specific: pulse width as percentage of revolution (0-100)
     pulse_percentage: Option<f64>,
     /// Spin-specific: pulse time in milliseconds (used when PulseLengthFormat=FixedTime)
+    #[allow(dead_code)]
     pulse_time_ms: Option<f64>,
     /// Spin-specific: whether the spin direction is reversed
     reverse_spin: Option<bool>,
+    /// Direction for Wipe/Butterfly/etc. (e.g. "Up", "Down", "Left", "Right")
+    direction: Option<String>,
 }
 
 // ── VixenImporter ───────────────────────────────────────────────────
@@ -668,7 +922,9 @@ impl VixenImporter {
 
                     match name.as_str() {
                         "Node" | "ElementNode" | "ChannelNode" if !node_stack.is_empty() => {
-                            let node = node_stack.pop().unwrap();
+                            let Some(node) = node_stack.pop() else {
+                                continue;
+                            };
                             if !node.guid.is_empty() {
                                 let guid = node.guid.clone();
                                 self.nodes.insert(guid.clone(), node);
@@ -1041,6 +1297,8 @@ impl VixenImporter {
         let mut data_model_pulse_percentage: HashMap<String, f64> = HashMap::new();
         let mut data_model_pulse_time_ms: HashMap<String, f64> = HashMap::new();
         let mut data_model_reverse_spin: HashMap<String, bool> = HashMap::new();
+        // Direction data keyed by ModuleInstanceId (for Wipe, Butterfly, etc.)
+        let mut data_model_direction: HashMap<String, String> = HashMap::new();
 
         // For effect node surrogates
         let mut in_effect_node_entry = false;
@@ -1154,7 +1412,7 @@ impl VixenImporter {
                     if in_data_model_entry {
                         let local_tag = tag.rsplit(':').next().unwrap_or(&tag);
                         match local_tag {
-                            "ChaseMovement" => {
+                            "ChaseMovement" | "MovementCurve" | "WipeMovement" => {
                                 in_curve_element = true;
                                 current_curve_kind = "movement".to_string();
                                 current_curve_points.clear();
@@ -1164,7 +1422,9 @@ impl VixenImporter {
                                 current_curve_kind = "pulse".to_string();
                                 current_curve_points.clear();
                             }
-                            "LevelCurve" | "IntensityCurve" | "Curve" => {
+                            "LevelCurve" | "IntensityCurve" | "Curve"
+                            | "DissolveCurve" | "AccelerationCurve"
+                            | "SpeedCurve" | "Height" => {
                                 in_curve_element = true;
                                 current_curve_kind = "intensity".to_string();
                                 current_curve_points.clear();
@@ -1316,6 +1576,10 @@ impl VixenImporter {
                                         data_model_reverse_spin.insert(id.clone(), v);
                                     }
                                 }
+                                // Direction for Wipe, Butterfly, etc.
+                                "Direction" | "WipeDirection" => {
+                                    data_model_direction.insert(id.clone(), text.clone());
+                                }
                                 _ => {}
                             }
                         }
@@ -1458,8 +1722,11 @@ impl VixenImporter {
 
                         // End of curve container
                         match local_tag {
-                            "ChaseMovement" | "PulseCurve" | "LevelCurve"
+                            "ChaseMovement" | "MovementCurve" | "WipeMovement"
+                            | "PulseCurve" | "LevelCurve"
                             | "IntensityCurve" | "Curve"
+                            | "DissolveCurve" | "AccelerationCurve"
+                            | "SpeedCurve" | "Height"
                                 if in_curve_element =>
                             {
                                 if !current_curve_points.is_empty()
@@ -1619,6 +1886,10 @@ impl VixenImporter {
                             .get(&current_effect_instance_id)
                             .or_else(|| data_model_reverse_spin.get(&current_module_id))
                             .copied();
+                        let resolved_direction = data_model_direction
+                            .get(&current_effect_instance_id)
+                            .or_else(|| data_model_direction.get(&current_module_id))
+                            .cloned();
 
                         if effect_duration > 0.0 {
                             effects.push(VixenEffect {
@@ -1637,6 +1908,7 @@ impl VixenImporter {
                                 pulse_percentage: resolved_pulse_pct,
                                 pulse_time_ms: resolved_pulse_time,
                                 reverse_spin: resolved_reverse,
+                                direction: resolved_direction,
                             });
                         }
 
@@ -1837,6 +2109,8 @@ impl VixenImporter {
                             kind,
                             params,
                             time_range,
+                            blend_mode: BlendMode::Override,
+                            opacity: 1.0,
                         })
                     })
                     .collect();
@@ -1854,7 +2128,6 @@ impl VixenImporter {
                     tracks.push(Track {
                         name: format!("{}{}", target_name, lane_suffix),
                         target: target.clone(),
-                        blend_mode: BlendMode::Override,
                         effects: effect_instances,
                     });
                 }
@@ -1908,6 +2181,7 @@ impl VixenImporter {
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1976,11 +2250,13 @@ mod tests {
             pulse_percentage: None,
             pulse_time_ms: None,
             reverse_spin: None,
+            direction: None,
         }
     }
 
     #[test]
     fn test_effect_mapping() {
+        // Core effects
         let (kind, _) = map_vixen_effect(&test_effect("Pulse"));
         assert!(matches!(kind, EffectKind::Fade));
 
@@ -1993,7 +2269,7 @@ mod tests {
         assert!(matches!(kind, EffectKind::Chase));
 
         let (kind, _) = map_vixen_effect(&test_effect("ColorWash"));
-        assert!(matches!(kind, EffectKind::Gradient));
+        assert!(matches!(kind, EffectKind::Fade));
 
         let (kind, _) = map_vixen_effect(&test_effect("Twinkle"));
         assert!(matches!(kind, EffectKind::Twinkle));
@@ -2001,24 +2277,83 @@ mod tests {
         let (kind, _) = map_vixen_effect(&test_effect("Strobe"));
         assert!(matches!(kind, EffectKind::Strobe));
 
-        let (kind, _) = map_vixen_effect(&test_effect("PinWheel"));
+        let (kind, _) = map_vixen_effect(&test_effect("Rainbow"));
         assert!(matches!(kind, EffectKind::Rainbow));
+
+        // Movement-based effects → Chase
+        let (kind, _) = map_vixen_effect(&test_effect("Spin"));
+        assert!(matches!(kind, EffectKind::Chase));
+
+        let (kind, _) = map_vixen_effect(&test_effect("Wipe"));
+        assert!(matches!(kind, EffectKind::Wipe));
 
         let (kind, _) = map_vixen_effect(&test_effect("Alternating"));
         assert!(matches!(kind, EffectKind::Chase));
 
-        let (kind, _) = map_vixen_effect(&test_effect("Wipe"));
+        let (kind, _) = map_vixen_effect(&test_effect("PinWheel"));
         assert!(matches!(kind, EffectKind::Chase));
 
-        let (kind, _) = map_vixen_effect(&test_effect("Spin"));
+        let (kind, _) = map_vixen_effect(&test_effect("Shockwave"));
         assert!(matches!(kind, EffectKind::Chase));
 
-        let (kind, _) = map_vixen_effect(&test_effect("Rainbow"));
-        assert!(matches!(kind, EffectKind::Rainbow));
+        let (kind, _) = map_vixen_effect(&test_effect("Garlands"));
+        assert!(matches!(kind, EffectKind::Chase));
 
-        // Unknown effect falls back to Solid
+        let (kind, _) = map_vixen_effect(&test_effect("Butterfly"));
+        assert!(matches!(kind, EffectKind::Chase));
+
+        // Random/particle effects → Twinkle
+        let (kind, _) = map_vixen_effect(&test_effect("Dissolve"));
+        assert!(matches!(kind, EffectKind::Twinkle));
+
+        let (kind, _) = map_vixen_effect(&test_effect("Fireworks"));
+        assert!(matches!(kind, EffectKind::Twinkle));
+
+        let (kind, _) = map_vixen_effect(&test_effect("Snowflakes"));
+        assert!(matches!(kind, EffectKind::Twinkle));
+
+        let (kind, _) = map_vixen_effect(&test_effect("Meteor"));
+        assert!(matches!(kind, EffectKind::Twinkle));
+
+        // Flame/warm effects → Fade
+        let (kind, _) = map_vixen_effect(&test_effect("Fire"));
+        assert!(matches!(kind, EffectKind::Fade));
+
+        let (kind, _) = map_vixen_effect(&test_effect("Candle"));
+        assert!(matches!(kind, EffectKind::Fade));
+
+        // Skip effects → Solid
+        let (kind, _) = map_vixen_effect(&test_effect("Audio"));
+        assert!(matches!(kind, EffectKind::Solid));
+
+        let (kind, _) = map_vixen_effect(&test_effect("MaskAndFill"));
+        assert!(matches!(kind, EffectKind::Solid));
+
+        // Unknown effect falls back to Solid with loud warning
         let (kind, _) = map_vixen_effect(&test_effect("SomeUnknownEffect"));
         assert!(matches!(kind, EffectKind::Solid));
+    }
+
+    #[test]
+    fn test_wipe_direction_reverse() {
+        let mut wipe = test_effect("Wipe");
+        wipe.direction = Some("Reverse".to_string());
+        let (kind, params) = map_vixen_effect(&wipe);
+        assert!(matches!(kind, EffectKind::Wipe));
+        assert_eq!(params.bool_or(ParamKey::Reverse, false), true);
+
+        // Default (no direction) should not be reversed
+        let wipe_default = test_effect("Wipe");
+        let (_, params) = map_vixen_effect(&wipe_default);
+        assert_eq!(params.bool_or(ParamKey::Reverse, true), false);
+    }
+
+    #[test]
+    fn test_wipe_full_width_pulse() {
+        let wipe = test_effect("Wipe");
+        let (_, params) = map_vixen_effect(&wipe);
+        // Wipe should have pulse_width=1.0 (full sweep)
+        assert!((params.float_or(ParamKey::PulseWidth, 0.0) - 1.0).abs() < 0.001);
     }
 
     /// Verify that when leaf nodes are merged into a multi-pixel parent fixture,
@@ -2168,14 +2503,14 @@ mod tests {
                 match effect.kind {
                     EffectKind::Fade => {
                         fade_count += 1;
-                        if effect.params.get("gradient").is_some() {
+                        if effect.params.get(ParamKey::Gradient).is_some() {
                             has_gradient += 1;
                         }
-                        if effect.params.get("intensity_curve").is_some() {
+                        if effect.params.get(ParamKey::IntensityCurve).is_some() {
                             has_curve += 1;
                         }
                         // Check if gradient has non-white color
-                        if let Some(ParamValue::ColorGradient(g)) = effect.params.get("gradient") {
+                        if let Some(ParamValue::ColorGradient(g)) = effect.params.get(ParamKey::Gradient) {
                             let c = g.evaluate(0.0);
                             if c.r != 255 || c.g != 255 || c.b != 255 {
                                 non_white_gradient += 1;
@@ -2241,8 +2576,8 @@ mod tests {
                             for track in &seq.tracks {
                                 for effect in &track.effects {
                                     if matches!(effect.kind, EffectKind::Chase) {
-                                        let has_move = effect.params.get("movement_curve").is_some();
-                                        let has_pulse = effect.params.get("pulse_curve").is_some();
+                                        let has_move = effect.params.get(ParamKey::MovementCurve).is_some();
+                                        let has_pulse = effect.params.get(ParamKey::PulseCurve).is_some();
                                         eprintln!(
                                             "  Chase effect: movement_curve={}, pulse_curve={}",
                                             has_move, has_pulse
@@ -2271,10 +2606,10 @@ mod tests {
                 for effect in &track.effects {
                     if matches!(effect.kind, EffectKind::Chase) {
                         chase_count += 1;
-                        if effect.params.get("movement_curve").is_some() {
+                        if effect.params.get(ParamKey::MovementCurve).is_some() {
                             chase_with_movement += 1;
                         }
-                        if effect.params.get("pulse_curve").is_some() {
+                        if effect.params.get(ParamKey::PulseCurve).is_some() {
                             chase_with_pulse += 1;
                         }
                     }
@@ -2291,6 +2626,491 @@ mod tests {
                 chase_with_movement > 0,
                 "Expected at least one Chase with movement_curve (found {chase_count} chases)"
             );
+        }
+    }
+
+    fn base64_decode(input: &str) -> Vec<u8> {
+        const DECODE: [u8; 256] = {
+            let mut table = [255u8; 256];
+            let chars = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            let mut i = 0;
+            while i < 64 {
+                table[chars[i] as usize] = i as u8;
+                i += 1;
+            }
+            table
+        };
+        let bytes: Vec<u8> = input.bytes().filter(|b| DECODE[*b as usize] != 255).collect();
+        let mut result = Vec::with_capacity(bytes.len() * 3 / 4);
+        for chunk in bytes.chunks(4) {
+            if chunk.len() < 2 { break; }
+            let a = DECODE[chunk[0] as usize] as u32;
+            let b = DECODE[chunk[1] as usize] as u32;
+            let c = if chunk.len() > 2 { DECODE[chunk[2] as usize] as u32 } else { 0 };
+            let d = if chunk.len() > 3 { DECODE[chunk[3] as usize] as u32 } else { 0 };
+            let triple = (a << 18) | (b << 12) | (c << 6) | d;
+            result.push((triple >> 16) as u8);
+            if chunk.len() > 2 { result.push((triple >> 8) as u8); }
+            if chunk.len() > 3 { result.push(triple as u8); }
+        }
+        result
+    }
+
+    /// Diagnostic: decode base64 RGBA pixel data and print actual colors.
+    #[test]
+    fn test_frame_color_diagnostic() {
+        use crate::engine;
+
+        let config_path = std::path::Path::new(
+            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3\SystemData\SystemConfig.xml",
+        );
+        let seq_path = std::path::Path::new(
+            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3\Sequence\All We Are.tim",
+        );
+        if !config_path.exists() || !seq_path.exists() {
+            eprintln!("Skipping: All We Are.tim not found");
+            return;
+        }
+
+        let mut importer = VixenImporter::new();
+        importer.parse_system_config(config_path).unwrap();
+        importer.parse_sequence(seq_path).unwrap();
+        let show = importer.into_show();
+
+        // Build fixture name map
+        let fixture_names: HashMap<u32, &str> = show
+            .fixtures
+            .iter()
+            .map(|f| (f.id.0, f.name.as_str()))
+            .collect();
+
+        eprintln!("\n=== Frame Color Diagnostic (fresh import) ===");
+        for t in [60.0, 62.0, 65.0, 155.0, 160.0] {
+            let frame = engine::evaluate(&show, 0, t, None);
+            eprintln!("\nt={:.0}: {} lit fixtures", t, frame.fixtures.len());
+
+            // Decode a few fixtures' pixel data
+            let mut entries: Vec<_> = frame.fixtures.iter().collect();
+            entries.sort_by_key(|(id, _)| *id);
+            for (fixture_id, b64) in entries.iter().take(8) {
+                let name = fixture_names.get(fixture_id).unwrap_or(&"???");
+                // Decode base64
+                let bytes = base64_decode(b64);
+                let pixel_count = bytes.len() / 4;
+                // Show first few pixels
+                let pixels: Vec<String> = bytes
+                    .chunks(4)
+                    .take(4)
+                    .map(|c| format!("({},{},{},{})", c[0], c[1], c[2], c[3]))
+                    .collect();
+                let more = if pixel_count > 4 {
+                    format!(" +{} more", pixel_count - 4)
+                } else {
+                    String::new()
+                };
+                eprintln!(
+                    "  fixture {fixture_id} ({name}): {pixel_count} pixels [{}]{more}",
+                    pixels.join(" ")
+                );
+            }
+        }
+    }
+
+    /// Diagnostic: check what color/gradient data VixenEffects actually have before mapping.
+    #[test]
+    fn test_vixen_effect_color_data() {
+        let config_path = std::path::Path::new(
+            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3\SystemData\SystemConfig.xml",
+        );
+        let seq_path = std::path::Path::new(
+            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3\Sequence\All We Are.tim",
+        );
+        if !config_path.exists() || !seq_path.exists() {
+            eprintln!("Skipping: files not found");
+            return;
+        }
+
+        // We need to intercept VixenEffects before they're mapped.
+        // Easiest way: add temp instrumentation to build_tracks. Instead,
+        // we'll parse the XML manually and inspect the data model maps.
+
+        let file = std::fs::File::open(seq_path).unwrap();
+        let reader = std::io::BufReader::new(file);
+        let mut xml = quick_xml::Reader::from_reader(reader);
+        xml.config_mut().trim_text(true);
+        let mut buf = Vec::new();
+
+        let mut color_count = 0usize;
+        let mut gradient_count = 0usize;
+        let mut color_handling_count = 0usize;
+        let mut data_model_count = 0usize;
+        let mut in_data_models = false;
+        let mut in_entry = false;
+        let mut depth = 0u32;
+        let mut entry_depth = 0u32;
+        let mut has_color_in_entry = false;
+        let mut has_gradient_in_entry = false;
+        let mut entry_type = String::new();
+        let mut type_colors: HashMap<String, usize> = HashMap::new();
+        let mut type_gradients: HashMap<String, usize> = HashMap::new();
+
+        loop {
+            match xml.read_event_into(&mut buf) {
+                Ok(quick_xml::events::Event::Eof) => break,
+                Ok(quick_xml::events::Event::Start(ref e)) => {
+                    depth += 1;
+                    let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let local = tag.rsplit(':').next().unwrap_or(&tag);
+
+                    if tag == "_dataModels" || tag == "DataModels" {
+                        in_data_models = true;
+                    }
+
+                    if in_data_models && !in_entry && (local == "anyType" || tag.contains("DataModel")) {
+                        in_entry = true;
+                        entry_depth = depth;
+                        has_color_in_entry = false;
+                        has_gradient_in_entry = false;
+                        entry_type.clear();
+                        data_model_count += 1;
+                        for attr in e.attributes().flatten() {
+                            let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                            let val = String::from_utf8_lossy(&attr.value).to_string();
+                            let local_key = key.rsplit(':').next().unwrap_or(&key);
+                            if local_key == "type" || local_key == "Type" {
+                                let raw = val.rsplit(':').next().unwrap_or(&val);
+                                let cleaned = raw.rsplit('.').next().unwrap_or(raw);
+                                let cleaned = cleaned.strip_suffix("Module")
+                                    .or_else(|| cleaned.strip_suffix("Data"))
+                                    .unwrap_or(cleaned);
+                                entry_type = cleaned.to_string();
+                            }
+                        }
+                    }
+
+                    if in_entry {
+                        if local == "ColorGradient" || local == "_colors" {
+                            has_gradient_in_entry = true;
+                        }
+                        if local == "color" || local == "Color" || local == "_color" {
+                            has_color_in_entry = true;
+                        }
+                    }
+                }
+                Ok(quick_xml::events::Event::End(ref e)) => {
+                    let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    depth = depth.saturating_sub(1);
+
+                    if tag == "_dataModels" || tag == "DataModels" {
+                        in_data_models = false;
+                    }
+
+                    if in_entry && depth < entry_depth {
+                        if has_color_in_entry { color_count += 1; }
+                        if has_gradient_in_entry { gradient_count += 1; }
+                        if !entry_type.is_empty() {
+                            if has_color_in_entry {
+                                *type_colors.entry(entry_type.clone()).or_insert(0) += 1;
+                            }
+                            if has_gradient_in_entry {
+                                *type_gradients.entry(entry_type.clone()).or_insert(0) += 1;
+                            }
+                        }
+                        in_entry = false;
+                    }
+                }
+                Ok(quick_xml::events::Event::Text(ref e)) => {
+                    if in_entry {
+                        let text = e.unescape().unwrap_or_default().to_string();
+                        if text == "StaticColor" || text == "GradientThroughWholeEffect"
+                            || text == "GradientForEachPulse" || text == "ColorAcrossItems"
+                        {
+                            color_handling_count += 1;
+                        }
+                    }
+                }
+                Err(_) => break,
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        eprintln!("\n=== Vixen Effect Color Data Analysis ===");
+        eprintln!("Total data model entries: {data_model_count}");
+        eprintln!("  with any color element: {color_count}");
+        eprintln!("  with ColorGradient: {gradient_count}");
+        eprintln!("  with ColorHandling: {color_handling_count}");
+        eprintln!("\nColor by effect type:");
+        let mut sorted: Vec<_> = type_colors.iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(a.1));
+        for (t, c) in &sorted {
+            let g = type_gradients.get(*t).unwrap_or(&0);
+            eprintln!("  {t}: {c} with color, {g} with gradient");
+        }
+    }
+
+    /// Check what colors our parsed gradients actually produce.
+    #[test]
+    fn test_parsed_gradient_colors() {
+        let config_path = std::path::Path::new(
+            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3\SystemData\SystemConfig.xml",
+        );
+        let seq_path = std::path::Path::new(
+            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3\Sequence\All We Are.tim",
+        );
+        if !config_path.exists() || !seq_path.exists() {
+            eprintln!("Skipping: files not found");
+            return;
+        }
+
+        let mut importer = VixenImporter::new();
+        importer.parse_system_config(config_path).unwrap();
+        importer.parse_sequence(seq_path).unwrap();
+
+        let show = importer.into_show();
+        let seq = &show.sequences[0];
+
+        let mut white_gradient = 0usize;
+        let mut colored_gradient = 0usize;
+        let mut no_gradient = 0usize;
+        let mut white_color = 0usize;
+        let mut colored_color = 0usize;
+        let mut sample_colors: Vec<String> = Vec::new();
+
+        for track in &seq.tracks {
+            for effect in &track.effects {
+                if let Some(ParamValue::ColorGradient(g)) = effect.params.get(ParamKey::Gradient) {
+                    let c0 = g.evaluate(0.0);
+                    let c5 = g.evaluate(0.5);
+                    if c0.r == c0.g && c0.g == c0.b && c5.r == c5.g && c5.g == c5.b {
+                        white_gradient += 1;
+                    } else {
+                        colored_gradient += 1;
+                        if sample_colors.len() < 10 {
+                            sample_colors.push(format!(
+                                "{:?}@0.0=({},{},{}) @0.5=({},{},{})",
+                                effect.kind, c0.r, c0.g, c0.b, c5.r, c5.g, c5.b
+                            ));
+                        }
+                    }
+                } else if let Some(ParamValue::Color(c)) = effect.params.get(ParamKey::Color) {
+                    if c.r == c.g && c.g == c.b {
+                        white_color += 1;
+                    } else {
+                        colored_color += 1;
+                    }
+                } else {
+                    no_gradient += 1;
+                }
+            }
+        }
+
+        eprintln!("\n=== Parsed Gradient Color Analysis ===");
+        eprintln!("  White/gray gradients: {white_gradient}");
+        eprintln!("  Colored gradients: {colored_gradient}");
+        eprintln!("  White/gray single color: {white_color}");
+        eprintln!("  Colored single color: {colored_color}");
+        eprintln!("  No gradient/color: {no_gradient}");
+        if !sample_colors.is_empty() {
+            eprintln!("\nSample colored gradients:");
+            for s in &sample_colors {
+                eprintln!("  {s}");
+            }
+        }
+
+        assert!(
+            colored_gradient + colored_color > 0,
+            "Expected at least some non-white colors in the imported effects!"
+        );
+    }
+
+    /// Diagnostic test: fresh import of All We Are, evaluate frames, check for non-black output.
+    #[test]
+    fn test_all_we_are_frame_evaluation() {
+        let config_path = std::path::Path::new(
+            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3\SystemData\SystemConfig.xml",
+        );
+        let seq_path = std::path::Path::new(
+            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3\Sequence\All We Are.tim",
+        );
+        if !config_path.exists() || !seq_path.exists() {
+            eprintln!("Skipping: All We Are.tim not found");
+            return;
+        }
+
+        let mut importer = VixenImporter::new();
+        importer.parse_system_config(config_path).unwrap();
+        importer.parse_sequence(seq_path).unwrap();
+
+        let show = importer.into_show();
+        let seq = &show.sequences[0];
+
+        eprintln!("\n=== All We Are Frame Evaluation ===");
+        eprintln!("Fixtures: {}, Tracks: {}", show.fixtures.len(), seq.tracks.len());
+
+        let total_effects: usize = seq.tracks.iter().map(|t| t.effects.len()).sum();
+        eprintln!("Total effects after track building: {total_effects}");
+
+        // Check frame output at various times
+        let mut any_lit = false;
+        for t in [1.0, 10.0, 30.0, 60.0, 90.0, 120.0, 150.0, 180.0, 210.0, 240.0] {
+            let active: usize = seq.tracks.iter().map(|track| {
+                track.effects.iter().filter(|e| e.time_range.contains(t)).count()
+            }).sum();
+            let frame = crate::engine::evaluate(&show, 0, t, None);
+            let lit = frame.fixtures.len();
+            if lit > 0 { any_lit = true; }
+            eprintln!("  t={:>6.1}: {:>3} active effects, {:>3} lit fixtures", t, active, lit);
+        }
+
+        assert!(any_lit, "Expected at least some non-black fixtures across the sequence");
+
+        // Check first few tracks for sanity
+        eprintln!("\nFirst 10 tracks:");
+        for (i, track) in seq.tracks.iter().take(10).enumerate() {
+            let effects_summary: Vec<String> = track.effects.iter().take(3).map(|e| {
+                format!("{:?}@{:.1}-{:.1}", e.kind, e.time_range.start(), e.time_range.end())
+            }).collect();
+            let more = if track.effects.len() > 3 {
+                format!(" +{} more", track.effects.len() - 3)
+            } else {
+                String::new()
+            };
+            eprintln!("  Track {i}: {} ({} effects) - [{}]{more}",
+                track.name, track.effects.len(), effects_summary.join(", "));
+        }
+    }
+
+    /// Integration test: import "All We Are.tim" and verify all effect types are handled.
+    /// Counts effects by kind and checks that no effects fell through to the unknown handler.
+    #[test]
+    fn test_all_we_are_effect_coverage() {
+        let config_path = std::path::Path::new(
+            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3\SystemData\SystemConfig.xml",
+        );
+        let seq_path = std::path::Path::new(
+            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3\Sequence\All We Are.tim",
+        );
+        if !config_path.exists() || !seq_path.exists() {
+            eprintln!("Skipping: All We Are.tim not found");
+            return;
+        }
+
+        let mut importer = VixenImporter::new();
+        importer.parse_system_config(config_path).unwrap();
+        importer.parse_sequence(seq_path).unwrap();
+
+        let sequences = importer.into_sequences();
+        assert!(!sequences.is_empty());
+        let seq = &sequences[0];
+
+        let mut by_kind: HashMap<String, usize> = HashMap::new();
+        let mut total = 0usize;
+        let mut with_gradient = 0usize;
+        let mut with_movement = 0usize;
+        let mut with_pulse = 0usize;
+        let mut with_intensity = 0usize;
+
+        for track in &seq.tracks {
+            for effect in &track.effects {
+                total += 1;
+                let kind_name = format!("{:?}", effect.kind);
+                *by_kind.entry(kind_name).or_insert(0) += 1;
+                if effect.params.get(ParamKey::Gradient).is_some() {
+                    with_gradient += 1;
+                }
+                if effect.params.get(ParamKey::MovementCurve).is_some() {
+                    with_movement += 1;
+                }
+                if effect.params.get(ParamKey::PulseCurve).is_some() {
+                    with_pulse += 1;
+                }
+                if effect.params.get(ParamKey::IntensityCurve).is_some() {
+                    with_intensity += 1;
+                }
+            }
+        }
+
+        eprintln!("\n=== All We Are Effect Coverage ===");
+        eprintln!("Total effects: {total}");
+        eprintln!("  with gradient: {with_gradient}");
+        eprintln!("  with movement_curve: {with_movement}");
+        eprintln!("  with pulse_curve: {with_pulse}");
+        eprintln!("  with intensity_curve: {with_intensity}");
+        eprintln!("By kind:");
+        let mut sorted: Vec<_> = by_kind.iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(a.1));
+        for (kind, count) in &sorted {
+            eprintln!("  {kind}: {count}");
+        }
+
+        // All effects should map to real types (Chase, Fade, Twinkle, Strobe, Rainbow, Gradient)
+        // If any fell to Solid (gray fallback), that's unexpected for this file.
+        assert!(total > 0, "Expected effects in All We Are.tim");
+    }
+
+    /// Diagnostic: what color_mode values do effects actually get, and what does gradient.evaluate return?
+    #[test]
+    fn test_color_mode_diagnostic() {
+        let config_path = std::path::Path::new(
+            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3\SystemData\SystemConfig.xml",
+        );
+        let seq_path = std::path::Path::new(
+            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3\Sequence\All We Are.tim",
+        );
+        if !config_path.exists() || !seq_path.exists() {
+            eprintln!("Skipping: files not found");
+            return;
+        }
+
+        let mut importer = VixenImporter::new();
+        importer.parse_system_config(config_path).unwrap();
+        importer.parse_sequence(seq_path).unwrap();
+        let show = importer.into_show();
+        let seq = &show.sequences[0];
+
+        let mut mode_counts: HashMap<String, usize> = HashMap::new();
+        let mut static_with_colored_gradient = 0usize;
+        let mut static_gradient_at_0: Vec<String> = Vec::new();
+
+        for track in &seq.tracks {
+            for effect in &track.effects {
+                let mode = effect.params.color_mode_or(ParamKey::ColorMode, ColorMode::Static);
+                let mode_str = format!("{:?}", mode);
+                *mode_counts.entry(mode_str).or_insert(0) += 1;
+
+                // Check static mode + colored gradient
+                if mode == ColorMode::Static {
+                    if let Some(ParamValue::ColorGradient(g)) = effect.params.get(ParamKey::Gradient) {
+                        let c0 = g.evaluate(0.0);
+                        let c5 = g.evaluate(0.5);
+                        let c1 = g.evaluate(1.0);
+                        if !(c0.r == c0.g && c0.g == c0.b && c5.r == c5.g && c5.g == c5.b) {
+                            static_with_colored_gradient += 1;
+                            if static_gradient_at_0.len() < 5 {
+                                static_gradient_at_0.push(format!(
+                                    "{:?}: @0.0=({},{},{}) @0.5=({},{},{}) @1.0=({},{},{})",
+                                    effect.kind,
+                                    c0.r, c0.g, c0.b,
+                                    c5.r, c5.g, c5.b,
+                                    c1.r, c1.g, c1.b,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        eprintln!("\n=== Color Mode Distribution ===");
+        let mut sorted: Vec<_> = mode_counts.iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(a.1));
+        for (mode, count) in &sorted {
+            eprintln!("  {mode}: {count}");
+        }
+        eprintln!("\nStatic mode with colored gradient: {static_with_colored_gradient}");
+        for s in &static_gradient_at_0 {
+            eprintln!("  {s}");
         }
     }
 }

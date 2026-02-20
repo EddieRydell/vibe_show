@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
+import { emit } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { MessageSquare, Settings, SlidersHorizontal } from "lucide-react";
-import { Preview } from "../components/Preview";
 import { Timeline } from "../components/Timeline";
 import { Toolbar } from "../components/Toolbar";
 import { PropertyPanel } from "../components/PropertyPanel";
 import { EffectPicker } from "../components/EffectPicker";
 import { SequenceSettingsDialog } from "../components/SequenceSettingsDialog";
 import { ChatPanel } from "../components/ChatPanel";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { AppBar } from "../components/AppBar";
 import { useEngine } from "../hooks/useEngine";
 import { useAudio } from "../hooks/useAudio";
@@ -36,7 +36,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
 
   const {
     show,
-    frame,
     playback,
     undoState,
     error,
@@ -47,14 +46,14 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
     redo: engineRedo,
     refreshAll,
   } = useEngine(audioGetCurrentTime);
-  const [previewCollapsed, setPreviewCollapsed] = useState(false);
-  const [previewDetached, setPreviewDetached] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const previewWindowRef = useRef<WebviewWindow | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [selectedEffects, setSelectedEffects] = useState<Set<string>>(new Set());
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showSequenceSettings, setShowSequenceSettings] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [addEffectState, setAddEffectState] = useState<{
     fixtureId: number;
     time: number;
@@ -92,6 +91,24 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
     };
   }, [audio, enginePause]);
 
+  // ── Emit selection-changed to preview window ────────────────────────
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    // Deduplicate: multiple visual keys (fixture-specific) may map to the same logical effect
+    const seen = new Set<string>();
+    const effects: [number, number][] = [];
+    for (const key of selectedEffects) {
+      const logical = key.includes(":") ? key.split(":")[1] : key;
+      if (!seen.has(logical)) {
+        seen.add(logical);
+        const [t, e] = logical.split("-").map(Number);
+        effects.push([t, e]);
+      }
+    }
+    emit("selection-changed", { effects });
+  }, [selectedEffects, previewOpen]);
+
   // ── Composed transport controls ────────────────────────────────────
 
   const play = useCallback(() => {
@@ -127,9 +144,23 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
     const sequence = show.sequences[playback.sequence_index];
     if (!sequence) return;
     const allKeys = new Set<string>();
+    // Build fixture-specific visual keys (matching Timeline's key format)
+    const allFixtureIds = show.fixtures.map((f) => f.id);
     for (let tIdx = 0; tIdx < sequence.tracks.length; tIdx++) {
-      for (let eIdx = 0; eIdx < sequence.tracks[tIdx].effects.length; eIdx++) {
-        allKeys.add(`${tIdx}-${eIdx}`);
+      const target = sequence.tracks[tIdx].target;
+      let fixtureIds: number[];
+      if (target === "All") {
+        fixtureIds = allFixtureIds;
+      } else if (typeof target === "object" && "Fixtures" in target) {
+        fixtureIds = target.Fixtures;
+      } else {
+        // For groups, just use the first fixture as representative — select-all is approximate
+        fixtureIds = allFixtureIds;
+      }
+      for (const fid of fixtureIds) {
+        for (let eIdx = 0; eIdx < sequence.tracks[tIdx].effects.length; eIdx++) {
+          allKeys.add(`${fid}:${tIdx}-${eIdx}`);
+        }
       }
     }
     setSelectedEffects(allKeys);
@@ -137,10 +168,17 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
 
   const handleDeleteSelected = useCallback(async () => {
     if (selectedEffects.size === 0 || !playback) return;
-    const targets = [...selectedEffects].map((key) => {
-      const [trackIndex, effectIndex] = key.split("-").map(Number);
-      return [trackIndex, effectIndex] as [number, number];
-    });
+    // Deduplicate: multiple visual keys may map to the same logical effect
+    const seen = new Set<string>();
+    const targets: [number, number][] = [];
+    for (const key of selectedEffects) {
+      const logical = key.includes(":") ? key.split(":")[1] : key;
+      if (!seen.has(logical)) {
+        seen.add(logical);
+        const [trackIndex, effectIndex] = logical.split("-").map(Number);
+        targets.push([trackIndex, effectIndex]);
+      }
+    }
     try {
       await invoke("delete_effects", {
         sequenceIndex: playback.sequence_index,
@@ -150,16 +188,17 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
       setDirty(true);
       refreshAll();
       setRefreshKey((k) => k + 1);
-      if (previewDetached) emit("show-refreshed");
+      if (previewOpen) emit("show-refreshed");
     } catch (e) {
       console.error("[VibeLights] Delete failed:", e);
     }
-  }, [selectedEffects, playback, refreshAll, previewDetached]);
+  }, [selectedEffects, playback, refreshAll, previewOpen]);
 
   const handleParamChange = useCallback(() => {
     setDirty(true);
     setRefreshKey((k) => k + 1);
-  }, []);
+    if (previewOpen) emit("show-refreshed");
+  }, [previewOpen]);
 
   const handleSave = useCallback(async () => {
     if (saveState === "saving") return;
@@ -179,18 +218,18 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
   // Cleanup saved timer on unmount
   useEffect(() => () => clearTimeout(savedTimerRef.current), []);
 
-  // ── Detachable preview ────────────────────────────────────────────
+  // ── Preview window toggle ──────────────────────────────────────────
 
-  const handleDetachPreview = useCallback(async () => {
-    // If already detached, just focus the existing window
+  const handleTogglePreview = useCallback(async () => {
     if (previewWindowRef.current) {
       try {
-        await previewWindowRef.current.setFocus();
+        await previewWindowRef.current.destroy();
       } catch {
-        // Window may have been destroyed — fall through to create new one
-        previewWindowRef.current = null;
+        // Already destroyed
       }
-      if (previewWindowRef.current) return;
+      previewWindowRef.current = null;
+      setPreviewOpen(false);
+      return;
     }
 
     const previewWin = new WebviewWindow("preview", {
@@ -203,38 +242,15 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
     });
 
     previewWindowRef.current = previewWin;
-    setPreviewDetached(true);
+    setPreviewOpen(true);
 
     previewWin.onCloseRequested(() => {
       previewWindowRef.current = null;
-      setPreviewDetached(false);
+      setPreviewOpen(false);
     });
   }, []);
 
-  const handleFocusDetachedPreview = useCallback(async () => {
-    if (previewWindowRef.current) {
-      try {
-        await previewWindowRef.current.setFocus();
-      } catch {
-        // Window gone
-        previewWindowRef.current = null;
-        setPreviewDetached(false);
-      }
-    }
-  }, []);
-
-  // Listen for reattach event from detached preview
-  useEffect(() => {
-    const unlisten = listen("preview-reattach", () => {
-      previewWindowRef.current = null;
-      setPreviewDetached(false);
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  // Clean up detached preview on unmount
+  // Clean up preview window on unmount
   useEffect(() => {
     return () => {
       if (previewWindowRef.current) {
@@ -246,7 +262,8 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
 
   const handleBack = useCallback(() => {
     if (dirty) {
-      if (!confirm("You have unsaved changes. Leave without saving?")) return;
+      setShowLeaveConfirm(true);
+      return;
     }
     onBack();
   }, [dirty, onBack]);
@@ -254,16 +271,16 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
   const handleRefresh = useCallback(() => {
     refreshAll();
     setRefreshKey((k) => k + 1);
-    if (previewDetached) emit("show-refreshed");
-  }, [refreshAll, previewDetached]);
+    if (previewOpen) emit("show-refreshed");
+  }, [refreshAll, previewOpen]);
 
   const handleSequenceSettingsSaved = useCallback(() => {
     setShowSequenceSettings(false);
     setDirty(true);
     refreshAll();
     setRefreshKey((k) => k + 1);
-    if (previewDetached) emit("show-refreshed");
-  }, [refreshAll, previewDetached]);
+    if (previewOpen) emit("show-refreshed");
+  }, [refreshAll, previewOpen]);
 
   // ── Add effect flow ──────────────────────────────────────────────
 
@@ -303,7 +320,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
             sequenceIndex,
             name: trackName,
             target: { Fixtures: [fixtureId] },
-            blendMode: "Override",
           });
         }
 
@@ -321,12 +337,12 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
         refreshAll();
         setRefreshKey((k) => k + 1);
         setSelectedEffects(new Set([`${trackIndex}-${effectIndex}`]));
-        if (previewDetached) emit("show-refreshed");
+        if (previewOpen) emit("show-refreshed");
       } catch (e) {
         console.error("[VibeLights] Add effect failed:", e);
       }
     },
-    [addEffectState, show, playback, refreshAll, previewDetached],
+    [addEffectState, show, playback, refreshAll, previewOpen],
   );
 
   // ── Move effect flow ─────────────────────────────────────────────
@@ -367,7 +383,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
         setDirty(true);
         refreshAll();
         setRefreshKey((k) => k + 1);
-        if (previewDetached) emit("show-refreshed");
+        if (previewOpen) emit("show-refreshed");
       } else {
         // Moving to a different fixture: find or create target track
         let toTrackIndex = sequence.tracks.findIndex((t) => {
@@ -387,7 +403,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
             sequenceIndex,
             name: trackName,
             target: { Fixtures: [targetFixtureId] },
-            blendMode: fromTrack.blend_mode,
           });
         }
 
@@ -410,25 +425,25 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
         refreshAll();
         setRefreshKey((k) => k + 1);
         setSelectedEffects(new Set([`${toTrackIndex}-${newEffectIndex}`]));
-        if (previewDetached) emit("show-refreshed");
+        if (previewOpen) emit("show-refreshed");
       }
     },
-    [show, playback, refreshAll, previewDetached],
+    [show, playback, refreshAll, previewOpen],
   );
 
   const handleUndo = useCallback(async () => {
     await engineUndo();
     setDirty(true);
     setRefreshKey((k) => k + 1);
-    if (previewDetached) emit("show-refreshed");
-  }, [engineUndo, previewDetached]);
+    if (previewOpen) emit("show-refreshed");
+  }, [engineUndo, previewOpen]);
 
   const handleRedo = useCallback(async () => {
     await engineRedo();
     setDirty(true);
     setRefreshKey((k) => k + 1);
-    if (previewDetached) emit("show-refreshed");
-  }, [engineRedo, previewDetached]);
+    if (previewOpen) emit("show-refreshed");
+  }, [engineRedo, previewOpen]);
 
   const keyboardActions = useMemo(
     () => ({
@@ -542,6 +557,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
       <Toolbar
         playback={playback}
         undoState={undoState}
+        previewOpen={previewOpen}
         onPlay={play}
         onPause={pause}
         onStop={handleStop}
@@ -549,6 +565,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
         onSkipForward={() => seek(playback?.duration ?? 0)}
         onUndo={handleUndo}
         onRedo={handleRedo}
+        onTogglePreview={handleTogglePreview}
       />
 
       {/* Error banner */}
@@ -587,17 +604,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
         />
       </div>
 
-      {/* Preview */}
-      <Preview
-        show={show}
-        frame={frame}
-        collapsed={previewCollapsed}
-        onToggle={() => setPreviewCollapsed((c) => !c)}
-        detached={previewDetached}
-        onDetach={handleDetachPreview}
-        onFocusDetached={handleFocusDetachedPreview}
-      />
-
       {/* Effect Picker popover */}
       {addEffectState && (
         <EffectPicker
@@ -614,6 +620,18 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
           sequenceIndex={playback?.sequence_index ?? 0}
           onSaved={handleSequenceSettingsSaved}
           onCancel={() => setShowSequenceSettings(false)}
+        />
+      )}
+
+      {/* Unsaved changes confirmation */}
+      {showLeaveConfirm && (
+        <ConfirmDialog
+          title="Unsaved changes"
+          message="You have unsaved changes. Leave without saving?"
+          confirmLabel="Leave"
+          destructive
+          onConfirm={() => { setShowLeaveConfirm(false); onBack(); }}
+          onCancel={() => setShowLeaveConfirm(false)}
         />
       )}
     </div>

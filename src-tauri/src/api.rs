@@ -72,7 +72,6 @@ fn require_profile(state: &AppState) -> Result<String, (StatusCode, Json<ApiResp
     state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or_else(|| error_response("No profile open".into()))
 }
@@ -81,7 +80,6 @@ fn require_sequence(state: &AppState) -> Result<String, (StatusCode, Json<ApiRes
     state
         .current_sequence
         .lock()
-        .unwrap()
         .clone()
         .ok_or_else(|| error_response("No sequence open".into()))
 }
@@ -91,7 +89,7 @@ fn require_sequence(state: &AppState) -> Result<String, (StatusCode, Json<ApiRes
 // ══════════════════════════════════════════════════════════════════
 
 async fn get_show(AxumState(state): AppArc) -> Json<ApiResponse<Show>> {
-    let show = state.show.lock().unwrap().clone();
+    let show = state.show.lock().clone();
     ApiResponse::success(show)
 }
 
@@ -110,6 +108,8 @@ async fn get_effects(_: AppArc) -> Json<ApiResponse<Vec<EffectInfo>>> {
         crate::model::EffectKind::Strobe,
         crate::model::EffectKind::Gradient,
         crate::model::EffectKind::Twinkle,
+        crate::model::EffectKind::Fade,
+        crate::model::EffectKind::Wipe,
     ];
     let effects: Vec<EffectInfo> = kinds
         .into_iter()
@@ -134,8 +134,8 @@ struct PlaybackResponse {
 }
 
 async fn get_playback(AxumState(state): AppArc) -> Json<ApiResponse<PlaybackResponse>> {
-    let playback = state.playback.lock().unwrap();
-    let show = state.show.lock().unwrap();
+    let playback = state.playback.lock();
+    let show = state.show.lock();
     let duration = show
         .sequences
         .get(playback.sequence_index)
@@ -153,7 +153,7 @@ async fn get_effect_detail(
     AxumState(state): AppArc,
     Path((seq, track, idx)): Path<(usize, usize, usize)>,
 ) -> ApiResult<EffectDetail> {
-    let show = state.show.lock().unwrap();
+    let show = state.show.lock();
     let sequence = show.sequences.get(seq).ok_or_else(|| error_response("Invalid sequence index".into()))?;
     let t = sequence.tracks.get(track).ok_or_else(|| error_response("Invalid track index".into()))?;
     let effect_instance = t.effects.get(idx).ok_or_else(|| error_response("Invalid effect index".into()))?;
@@ -164,12 +164,13 @@ async fn get_effect_detail(
         params: effect_instance.params.clone(),
         time_range: effect_instance.time_range,
         track_name: t.name.clone(),
-        blend_mode: t.blend_mode,
+        blend_mode: effect_instance.blend_mode,
+        opacity: effect_instance.opacity,
     }))
 }
 
 async fn get_undo_state(AxumState(state): AppArc) -> Json<ApiResponse<UndoState>> {
-    let dispatcher = state.dispatcher.lock().unwrap();
+    let dispatcher = state.dispatcher.lock();
     ApiResponse::success(dispatcher.undo_state())
 }
 
@@ -187,11 +188,11 @@ async fn post_command(
     Json(cmd): Json<EditCommand>,
 ) -> ApiResult<CommandResponse> {
     let description = cmd.description();
-    let mut dispatcher = state.dispatcher.lock().unwrap();
-    let mut show = state.show.lock().unwrap();
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
     let result = dispatcher
         .execute(&mut show, cmd)
-        .map_err(error_response)?;
+        .map_err(|e| error_response(e.to_string()))?;
     let result_str = match result {
         CommandResult::Index(i) => format!("{}", i),
         CommandResult::Bool(b) => format!("{}", b),
@@ -204,26 +205,26 @@ async fn post_command(
 }
 
 async fn post_undo(AxumState(state): AppArc) -> ApiResult<String> {
-    let mut dispatcher = state.dispatcher.lock().unwrap();
-    let mut show = state.show.lock().unwrap();
-    let desc = dispatcher.undo(&mut show).map_err(error_response)?;
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    let desc = dispatcher.undo(&mut show).map_err(|e| error_response(e.to_string()))?;
     Ok(ApiResponse::success(desc))
 }
 
 async fn post_redo(AxumState(state): AppArc) -> ApiResult<String> {
-    let mut dispatcher = state.dispatcher.lock().unwrap();
-    let mut show = state.show.lock().unwrap();
-    let desc = dispatcher.redo(&mut show).map_err(error_response)?;
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    let desc = dispatcher.redo(&mut show).map_err(|e| error_response(e.to_string()))?;
     Ok(ApiResponse::success(desc))
 }
 
 async fn post_play(AxumState(state): AppArc) -> Json<ApiResponse<()>> {
-    state.playback.lock().unwrap().playing = true;
+    state.playback.lock().playing = true;
     ApiResponse::success(())
 }
 
 async fn post_pause(AxumState(state): AppArc) -> Json<ApiResponse<()>> {
-    state.playback.lock().unwrap().playing = false;
+    state.playback.lock().playing = false;
     ApiResponse::success(())
 }
 
@@ -236,7 +237,7 @@ async fn post_seek(
     AxumState(state): AppArc,
     Json(body): Json<SeekBody>,
 ) -> Json<ApiResponse<()>> {
-    state.playback.lock().unwrap().current_time = body.time.max(0.0);
+    state.playback.lock().current_time = body.time.max(0.0);
     ApiResponse::success(())
 }
 
@@ -244,7 +245,7 @@ async fn post_save(AxumState(state): AppArc) -> ApiResult<()> {
     let data_dir = get_data_dir(&state)?;
     let profile_slug = require_profile(&state)?;
     let seq_slug = require_sequence(&state)?;
-    let show = state.show.lock().unwrap();
+    let show = state.show.lock();
     let sequence = show
         .sequences
         .first()
@@ -259,7 +260,7 @@ async fn post_save(AxumState(state): AppArc) -> ApiResult<()> {
 // ══════════════════════════════════════════════════════════════════
 
 async fn get_settings(AxumState(state): AppArc) -> Json<ApiResponse<Option<AppSettings>>> {
-    let s = state.settings.lock().unwrap().clone();
+    let s = state.settings.lock().clone();
     ApiResponse::success(s)
 }
 
@@ -277,7 +278,7 @@ async fn post_initialize(
     let new_settings = AppSettings::new(data_path);
     settings::save_settings(&state.app_config_dir, &new_settings)
         .map_err(|e| error_response(e.to_string()))?;
-    *state.settings.lock().unwrap() = Some(new_settings.clone());
+    *state.settings.lock() = Some(new_settings.clone());
     Ok(ApiResponse::success(new_settings))
 }
 
@@ -311,11 +312,11 @@ async fn get_profile(
 ) -> ApiResult<crate::profile::Profile> {
     let data_dir = get_data_dir(&state)?;
     let loaded = profile::load_profile(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
-    *state.current_profile.lock().unwrap() = Some(slug.clone());
-    *state.current_sequence.lock().unwrap() = None;
+    *state.current_profile.lock() = Some(slug.clone());
+    *state.current_sequence.lock() = None;
 
     // Update last_profile
-    let mut settings_guard = state.settings.lock().unwrap();
+    let mut settings_guard = state.settings.lock();
     if let Some(ref mut s) = *settings_guard {
         s.last_profile = Some(slug);
         let _ = settings::save_settings(&state.app_config_dir, s);
@@ -331,10 +332,10 @@ async fn delete_profile_handler(
     let data_dir = get_data_dir(&state)?;
     profile::delete_profile(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
 
-    let mut current = state.current_profile.lock().unwrap();
+    let mut current = state.current_profile.lock();
     if current.as_deref() == Some(&slug) {
         *current = None;
-        *state.current_sequence.lock().unwrap() = None;
+        *state.current_sequence.lock() = None;
     }
 
     Ok(ApiResponse::success(()))
@@ -428,16 +429,16 @@ async fn get_sequence(
         .map_err(|e| error_response(e.to_string()))?;
     let assembled = profile::assemble_show(&profile_data, &sequence);
 
-    *state.show.lock().unwrap() = assembled.clone();
-    state.dispatcher.lock().unwrap().clear();
+    *state.show.lock() = assembled.clone();
+    state.dispatcher.lock().clear();
     {
-        let mut playback = state.playback.lock().unwrap();
+        let mut playback = state.playback.lock();
         playback.playing = false;
         playback.current_time = 0.0;
         playback.sequence_index = 0;
     }
-    *state.current_profile.lock().unwrap() = Some(profile_slug);
-    *state.current_sequence.lock().unwrap() = Some(seq_slug);
+    *state.current_profile.lock() = Some(profile_slug);
+    *state.current_sequence.lock() = Some(seq_slug);
 
     Ok(ApiResponse::success(assembled))
 }
@@ -450,7 +451,7 @@ async fn delete_sequence_handler(
     profile::delete_sequence(&data_dir, &profile_slug, &seq_slug)
         .map_err(|e| error_response(e.to_string()))?;
 
-    let mut current = state.current_sequence.lock().unwrap();
+    let mut current = state.current_sequence.lock();
     if current.as_deref() == Some(&seq_slug) {
         *current = None;
     }
@@ -509,9 +510,9 @@ async fn get_frame(
     AxumState(state): AppArc,
     Query(q): Query<FrameQuery>,
 ) -> Json<ApiResponse<Frame>> {
-    let show = state.show.lock().unwrap();
-    let playback = state.playback.lock().unwrap();
-    let frame = engine::evaluate(&show, playback.sequence_index, q.time);
+    let show = state.show.lock();
+    let playback = state.playback.lock();
+    let frame = engine::evaluate(&show, playback.sequence_index, q.time, None);
     ApiResponse::success(frame)
 }
 
@@ -524,7 +525,7 @@ async fn get_describe(
     AxumState(state): AppArc,
     Query(q): Query<DescribeQuery>,
 ) -> Json<ApiResponse<String>> {
-    let show = state.show.lock().unwrap();
+    let show = state.show.lock();
     let mut text = describe::describe_show(&show);
 
     if let Some(seq) = show.sequences.first() {
@@ -533,8 +534,8 @@ async fn get_describe(
     }
 
     if let Some(t) = q.frame_time {
-        let playback = state.playback.lock().unwrap();
-        let frame = engine::evaluate(&show, playback.sequence_index, t);
+        let playback = state.playback.lock();
+        let frame = engine::evaluate(&show, playback.sequence_index, t, None);
         text.push_str("\n\n");
         text.push_str(&describe::describe_frame(&show, &frame));
     }
@@ -564,22 +565,22 @@ async fn post_chat(
     ChatManager::send_message(state.clone(), &emitter, body.message)
         .await
         .map_err(error_response)?;
-    let response = state.chat.lock().unwrap().last_assistant_text();
+    let response = state.chat.lock().last_assistant_text();
     Ok(ApiResponse::success(ChatResponse { response }))
 }
 
 async fn get_chat_history(AxumState(state): AppArc) -> Json<ApiResponse<Vec<ChatHistoryEntry>>> {
-    let history = state.chat.lock().unwrap().history_for_display();
+    let history = state.chat.lock().history_for_display();
     ApiResponse::success(history)
 }
 
 async fn post_chat_clear(AxumState(state): AppArc) -> Json<ApiResponse<()>> {
-    state.chat.lock().unwrap().clear();
+    state.chat.lock().clear();
     ApiResponse::success(())
 }
 
 async fn post_chat_stop(AxumState(state): AppArc) -> Json<ApiResponse<()>> {
-    state.chat.lock().unwrap().cancel();
+    state.chat.lock().cancel();
     ApiResponse::success(())
 }
 
@@ -592,7 +593,7 @@ async fn put_chat_api_key(
     AxumState(state): AppArc,
     Json(body): Json<ApiKeyBody>,
 ) -> ApiResult<()> {
-    let mut settings_guard = state.settings.lock().unwrap();
+    let mut settings_guard = state.settings.lock();
     if let Some(ref mut s) = *settings_guard {
         s.claude_api_key = if body.api_key.is_empty() {
             None
@@ -842,12 +843,14 @@ async fn post_vixen_execute(
 
 /// Build the router with all API endpoints.
 pub fn build_router(state: Arc<AppState>) -> Router {
+    #[allow(clippy::unwrap_used)] // compile-time string literals always parse
+    let origins = [
+        "http://localhost:1420".parse().unwrap(),
+        "tauri://localhost".parse().unwrap(),
+        "http://tauri.localhost".parse().unwrap(),
+    ];
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list([
-            "http://localhost:1420".parse().unwrap(),
-            "tauri://localhost".parse().unwrap(),
-            "http://tauri.localhost".parse().unwrap(),
-        ]))
+        .allow_origin(AllowOrigin::list(origins))
         .allow_methods(tower_http::cors::Any)
         .allow_headers(tower_http::cors::Any);
 
@@ -898,6 +901,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 }
 
 /// Start the API server on a random available port. Returns the bound port.
+///
+/// # Panics
+/// Panics if the TCP listener cannot bind (OS out of ephemeral ports) or the
+/// server fails to start. These are unrecoverable — the app cannot function
+/// without an API server.
+#[allow(clippy::unwrap_used)]
 pub async fn start_api_server(state: Arc<AppState>) -> u16 {
     let app = build_router(state);
 
@@ -913,6 +922,10 @@ pub async fn start_api_server(state: Arc<AppState>) -> u16 {
 
 /// Start the API server on a specific port. Returns the bound port.
 /// Used by the CLI binary.
+///
+/// # Panics
+/// Panics if the TCP listener cannot bind or the server fails to start.
+#[allow(clippy::unwrap_used)]
 pub async fn start_api_server_on_port(state: Arc<AppState>, port: u16) -> u16 {
     let app = build_router(state);
 

@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use crate::model::{BlendMode, Color, ColorGradient, Curve, EffectParams, ParamSchema, ParamType, ParamValue};
+use crate::model::{BlendMode, Color, ColorGradient, ColorMode, Curve, EffectParams, ParamKey, ParamSchema, ParamType, ParamValue};
 
 use super::Effect;
 
@@ -17,23 +17,16 @@ pub fn evaluate_pixels_batch(
     total_pixels: usize,
     params: &EffectParams,
     blend_mode: BlendMode,
+    opacity: f64,
 ) {
-    let fallback_gradient;
-    let gradient_default = if params.get("color").is_some() {
-        fallback_gradient = default_gradient(params);
-        &fallback_gradient
-    } else {
-        &*DEFAULT_WHITE_GRADIENT
-    };
-
-    let gradient = params.gradient_or("gradient", gradient_default);
-    let movement_curve = params.curve_or("movement_curve", &DEFAULT_MOVEMENT);
-    let pulse_curve = params.curve_or("pulse_curve", &DEFAULT_PULSE);
-    let color_mode = params.text_or("color_mode", "static");
-    let speed = params.float_or("speed", 1.0);
-    let pulse_width = params.float_or("pulse_width", 0.3).clamp(0.01, 1.0);
-    let background_level = params.float_or("background_level", 0.0).clamp(0.0, 1.0);
-    let reverse = params.bool_or("reverse", false);
+    let gradient = params.gradient_or(ParamKey::Gradient, &DEFAULT_WHITE_GRADIENT);
+    let movement_curve = params.curve_or(ParamKey::MovementCurve, &DEFAULT_MOVEMENT);
+    let pulse_curve = params.curve_or(ParamKey::PulseCurve, &DEFAULT_PULSE);
+    let color_mode = params.color_mode_or(ParamKey::ColorMode, ColorMode::Static);
+    let speed = params.float_or(ParamKey::Speed, 1.0);
+    let pulse_width = params.float_or(ParamKey::PulseWidth, 0.3).clamp(0.01, 1.0);
+    let background_level = params.float_or(ParamKey::BackgroundLevel, 0.0).clamp(0.0, 1.0);
+    let reverse = params.bool_or(ParamKey::Reverse, false);
 
     if total_pixels == 0 {
         return;
@@ -62,25 +55,18 @@ pub fn evaluate_pixels_batch(
 
         // Sample color based on color mode
         let color = match color_mode {
-            "gradient_per_pulse" if dist < pulse_width => {
+            ColorMode::GradientPerPulse if dist < pulse_width => {
                 gradient.evaluate(dist * inv_pulse)
             }
-            "gradient_through_effect" => gradient.evaluate(t),
-            "gradient_across_items" => gradient.evaluate(pos),
-            _ => gradient.evaluate(0.0), // "static"
+            ColorMode::GradientThroughEffect => gradient.evaluate(t),
+            ColorMode::GradientAcrossItems => gradient.evaluate(pos),
+            ColorMode::Static => gradient.evaluate(0.0),
+            // GradientPerPulse when outside the pulse — fall back to static
+            ColorMode::GradientPerPulse => gradient.evaluate(0.0),
         };
 
-        let effect_color = color.scale(intensity);
+        let effect_color = color.scale(intensity * opacity);
         *pixel = pixel.blend(effect_color, blend_mode);
-    }
-}
-
-/// Backward compat: if no `gradient` param, construct from old `color` param.
-fn default_gradient(params: &EffectParams) -> ColorGradient {
-    if let Some(ParamValue::Color(c)) = params.get("color") {
-        ColorGradient::solid(*c)
-    } else {
-        ColorGradient::solid(Color::WHITE)
     }
 }
 
@@ -96,22 +82,14 @@ impl Effect for ChaseEffect {
         pixel_count: usize,
         params: &EffectParams,
     ) -> Color {
-        let fallback_gradient;
-        let gradient_default = if params.get("color").is_some() {
-            fallback_gradient = default_gradient(params);
-            &fallback_gradient
-        } else {
-            &*DEFAULT_WHITE_GRADIENT
-        };
-
-        let gradient = params.gradient_or("gradient", gradient_default);
-        let movement_curve = params.curve_or("movement_curve", &DEFAULT_MOVEMENT);
-        let pulse_curve = params.curve_or("pulse_curve", &DEFAULT_PULSE);
-        let color_mode = params.text_or("color_mode", "static");
-        let speed = params.float_or("speed", 1.0);
-        let pulse_width = params.float_or("pulse_width", 0.3).clamp(0.01, 1.0);
-        let background_level = params.float_or("background_level", 0.0).clamp(0.0, 1.0);
-        let reverse = params.bool_or("reverse", false);
+        let gradient = params.gradient_or(ParamKey::Gradient, &DEFAULT_WHITE_GRADIENT);
+        let movement_curve = params.curve_or(ParamKey::MovementCurve, &DEFAULT_MOVEMENT);
+        let pulse_curve = params.curve_or(ParamKey::PulseCurve, &DEFAULT_PULSE);
+        let color_mode = params.color_mode_or(ParamKey::ColorMode, ColorMode::Static);
+        let speed = params.float_or(ParamKey::Speed, 1.0);
+        let pulse_width = params.float_or(ParamKey::PulseWidth, 0.3).clamp(0.01, 1.0);
+        let background_level = params.float_or(ParamKey::BackgroundLevel, 0.0).clamp(0.0, 1.0);
+        let reverse = params.bool_or(ParamKey::Reverse, false);
 
         if pixel_count == 0 {
             return Color::BLACK;
@@ -134,12 +112,14 @@ impl Effect for ChaseEffect {
         };
 
         let color = match color_mode {
-            "gradient_per_pulse" if dist < pulse_width => {
+            ColorMode::GradientPerPulse if dist < pulse_width => {
                 gradient.evaluate(dist / pulse_width)
             }
-            "gradient_through_effect" => gradient.evaluate(t),
-            "gradient_across_items" => gradient.evaluate(pos),
-            _ => gradient.evaluate(0.0),
+            ColorMode::GradientThroughEffect => gradient.evaluate(t),
+            ColorMode::GradientAcrossItems => gradient.evaluate(pos),
+            ColorMode::Static => gradient.evaluate(0.0),
+            // GradientPerPulse when outside the pulse — fall back to static
+            ColorMode::GradientPerPulse => gradient.evaluate(0.0),
         };
 
         color.scale(intensity)
@@ -152,7 +132,7 @@ impl Effect for ChaseEffect {
     fn param_schema(&self) -> Vec<ParamSchema> {
         vec![
             ParamSchema {
-                key: "gradient".into(),
+                key: ParamKey::Gradient,
                 label: "Color Gradient".into(),
                 param_type: ParamType::ColorGradient {
                     min_stops: 1,
@@ -161,32 +141,25 @@ impl Effect for ChaseEffect {
                 default: ParamValue::ColorGradient(ColorGradient::solid(Color::WHITE)),
             },
             ParamSchema {
-                key: "color_mode".into(),
+                key: ParamKey::ColorMode,
                 label: "Color Mode".into(),
-                param_type: ParamType::Select {
-                    options: vec![
-                        "static".into(),
-                        "gradient_per_pulse".into(),
-                        "gradient_through_effect".into(),
-                        "gradient_across_items".into(),
-                    ],
-                },
-                default: ParamValue::Text("static".into()),
+                param_type: ParamType::ColorMode,
+                default: ParamValue::ColorMode(ColorMode::Static),
             },
             ParamSchema {
-                key: "movement_curve".into(),
+                key: ParamKey::MovementCurve,
                 label: "Movement Curve".into(),
                 param_type: ParamType::Curve,
                 default: ParamValue::Curve(Curve::linear()),
             },
             ParamSchema {
-                key: "pulse_curve".into(),
+                key: ParamKey::PulseCurve,
                 label: "Pulse Curve".into(),
                 param_type: ParamType::Curve,
                 default: ParamValue::Curve(Curve::triangle()),
             },
             ParamSchema {
-                key: "speed".into(),
+                key: ParamKey::Speed,
                 label: "Speed".into(),
                 param_type: ParamType::Float {
                     min: 0.1,
@@ -196,7 +169,7 @@ impl Effect for ChaseEffect {
                 default: ParamValue::Float(1.0),
             },
             ParamSchema {
-                key: "pulse_width".into(),
+                key: ParamKey::PulseWidth,
                 label: "Pulse Width".into(),
                 param_type: ParamType::Float {
                     min: 0.01,
@@ -206,7 +179,7 @@ impl Effect for ChaseEffect {
                 default: ParamValue::Float(0.3),
             },
             ParamSchema {
-                key: "background_level".into(),
+                key: ParamKey::BackgroundLevel,
                 label: "Background Level".into(),
                 param_type: ParamType::Float {
                     min: 0.0,
@@ -216,11 +189,42 @@ impl Effect for ChaseEffect {
                 default: ParamValue::Float(0.0),
             },
             ParamSchema {
-                key: "reverse".into(),
+                key: ParamKey::Reverse,
                 label: "Reverse".into(),
                 param_type: ParamType::Bool,
                 default: ParamValue::Bool(false),
             },
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pulse_bright_in_middle() {
+        let effect = ChaseEffect;
+        // At t=0, head at 0.0 (linear curve), pulse_width=0.3.
+        // The default triangle pulse peaks at pulse_pos=0.5 → dist=0.15.
+        // A pixel at pos=0.85 has dist = 0.0 - 0.85 + 1.0 = 0.15 → peak brightness.
+        let params = EffectParams::new()
+            .set(ParamKey::Speed, ParamValue::Float(1.0))
+            .set(ParamKey::PulseWidth, ParamValue::Float(0.3))
+            .set(ParamKey::BackgroundLevel, ParamValue::Float(0.0));
+        let mid_pulse = effect.evaluate(0.0, 85, 100, &params);
+        assert!(mid_pulse.r > 0 || mid_pulse.g > 0 || mid_pulse.b > 0);
+    }
+
+    #[test]
+    fn background_level_outside_pulse() {
+        let effect = ChaseEffect;
+        // At t=0, head at 0.0, pulse_width=0.1. Pixel at pos=0.5 is outside pulse.
+        let params = EffectParams::new()
+            .set(ParamKey::Speed, ParamValue::Float(1.0))
+            .set(ParamKey::PulseWidth, ParamValue::Float(0.1))
+            .set(ParamKey::BackgroundLevel, ParamValue::Float(0.0));
+        let far_away = effect.evaluate(0.0, 50, 100, &params);
+        assert_eq!(far_away, Color::BLACK);
     }
 }

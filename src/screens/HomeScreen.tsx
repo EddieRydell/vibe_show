@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ProfileSummary } from "../types";
 import { Settings } from "lucide-react";
 import { AppBar } from "../components/AppBar";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ImportWizard } from "../components/ImportWizard";
 
 interface Props {
@@ -35,15 +36,22 @@ export function HomeScreen({ onOpenProfile, onOpenSettings }: Props) {
       .catch((e) => setError(String(e)));
   }, [newName, refresh]);
 
+  const [deleteTarget, setDeleteTarget] = useState<{ slug: string; name: string } | null>(null);
+
   const handleDelete = useCallback(
     (slug: string, name: string) => {
-      if (!confirm(`Delete profile "${name}" and all its data?`)) return;
-      invoke("delete_profile", { slug })
-        .then(refresh)
-        .catch((e) => setError(String(e)));
+      setDeleteTarget({ slug, name });
     },
-    [refresh],
+    [],
   );
+
+  const confirmDelete = useCallback(() => {
+    if (!deleteTarget) return;
+    invoke("delete_profile", { slug: deleteTarget.slug })
+      .then(refresh)
+      .catch((e) => setError(String(e)));
+    setDeleteTarget(null);
+  }, [deleteTarget, refresh]);
 
   const [showImportWizard, setShowImportWizard] = useState(false);
 
@@ -175,6 +183,17 @@ export function HomeScreen({ onOpenProfile, onOpenSettings }: Props) {
         <ImportWizard
           onComplete={handleImportComplete}
           onCancel={() => setShowImportWizard(false)}
+        />
+      )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete profile"
+          message={`Delete profile "${deleteTarget.name}" and all its data? This cannot be undone.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
         />
       )}
     </div>

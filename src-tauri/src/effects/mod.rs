@@ -5,7 +5,9 @@ pub mod rainbow;
 pub mod solid;
 pub mod strobe;
 pub mod twinkle;
+pub mod wipe;
 
+use crate::model::show::Position2D;
 use crate::model::{BlendMode, Color, EffectKind, EffectParams, ParamSchema};
 
 /// The core effect abstraction. An effect is a pure function from
@@ -48,55 +50,42 @@ pub fn resolve_effect(kind: &EffectKind) -> Box<dyn Effect> {
         EffectKind::Gradient => Box::new(gradient::GradientEffect),
         EffectKind::Twinkle => Box::new(twinkle::TwinkleEffect),
         EffectKind::Fade => Box::new(fade::FadeEffect),
+        EffectKind::Wipe => Box::new(wipe::WipeEffect),
     }
 }
 
-/// Enum dispatch for built-in effects. Zero-allocation, inlineable.
-/// The `Effect` trait remains for future user-defined effects.
-#[derive(Debug, Clone, Copy)]
-pub enum BuiltinEffect {
-    Solid,
-    Chase,
-    Rainbow,
-    Strobe,
-    Gradient,
-    Twinkle,
-    Fade,
+/// Returns true if the given effect kind requires spatial position data.
+pub fn needs_positions(kind: &EffectKind) -> bool {
+    matches!(kind, EffectKind::Wipe)
 }
 
-impl BuiltinEffect {
-    pub fn from_kind(kind: &EffectKind) -> Self {
-        match kind {
-            EffectKind::Solid => Self::Solid,
-            EffectKind::Chase => Self::Chase,
-            EffectKind::Rainbow => Self::Rainbow,
-            EffectKind::Strobe => Self::Strobe,
-            EffectKind::Gradient => Self::Gradient,
-            EffectKind::Twinkle => Self::Twinkle,
-            EffectKind::Fade => Self::Fade,
-        }
-    }
-
-    /// Evaluate all pixels in a fixture in bulk.
-    /// Extracts params once, then loops over pixels, blending in-place.
-    #[inline]
-    pub fn evaluate_pixels(
-        &self,
-        t: f64,
-        dest: &mut [Color],
-        global_offset: usize,
-        total_pixels: usize,
-        params: &EffectParams,
-        blend_mode: BlendMode,
-    ) {
-        match self {
-            Self::Solid => solid::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
-            Self::Chase => chase::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
-            Self::Rainbow => rainbow::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
-            Self::Strobe => strobe::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
-            Self::Gradient => gradient::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
-            Self::Twinkle => twinkle::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
-            Self::Fade => fade::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
-        }
+/// Evaluate all pixels in a fixture in bulk via enum dispatch on EffectKind.
+/// Extracts params once, then loops over pixels, blending in-place.
+/// Zero-allocation, inlineable. The `Effect` trait remains for future user-defined effects.
+///
+/// `positions` is only populated for spatial effects (e.g. Wipe). Non-spatial effects
+/// ignore it entirely (zero overhead).
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_pixels(
+    kind: &EffectKind,
+    t: f64,
+    dest: &mut [Color],
+    global_offset: usize,
+    total_pixels: usize,
+    params: &EffectParams,
+    blend_mode: BlendMode,
+    opacity: f64,
+    positions: Option<&[Position2D]>,
+) {
+    match kind {
+        EffectKind::Solid => solid::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
+        EffectKind::Chase => chase::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
+        EffectKind::Rainbow => rainbow::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
+        EffectKind::Strobe => strobe::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
+        EffectKind::Gradient => gradient::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
+        EffectKind::Twinkle => twinkle::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
+        EffectKind::Fade => fade::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
+        EffectKind::Wipe => wipe::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity, positions),
     }
 }

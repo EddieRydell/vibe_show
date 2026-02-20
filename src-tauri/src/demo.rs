@@ -3,10 +3,11 @@ use crate::model::show::{FixtureLayout, Layout, Position2D};
 use crate::model::timeline::TimeRange;
 use crate::model::{
     BlendMode, Color, EffectInstance, EffectKind, EffectParams, FixtureDef, FixtureId, GroupId,
-    ParamValue, Sequence, Show, Track,
+    ParamKey, ParamValue, Sequence, Show, Track,
 };
 
 /// Creates a demo show with 100 RGB pixels in a grid, multiple tracks with different effects.
+#[allow(clippy::unwrap_used)] // hardcoded valid TimeRange constants
 pub fn create_demo_show() -> Show {
     let pixel_count = 100u32;
     let cols = 20u32;
@@ -60,78 +61,83 @@ pub fn create_demo_show() -> Show {
             Track {
                 name: "Rainbow Base".into(),
                 target: EffectTarget::Group(GroupId(0)),
-                blend_mode: BlendMode::Override,
                 effects: vec![EffectInstance {
                     kind: EffectKind::Rainbow,
                     params: EffectParams::new()
-                        .set("speed", ParamValue::Float(0.5))
-                        .set("spread", ParamValue::Float(2.0))
-                        .set("brightness", ParamValue::Float(0.4)),
+                        .set(ParamKey::Speed, ParamValue::Float(0.5))
+                        .set(ParamKey::Spread, ParamValue::Float(2.0))
+                        .set(ParamKey::Brightness, ParamValue::Float(0.4)),
                     time_range: TimeRange::new(0.0, 30.0).unwrap(),
+                    blend_mode: BlendMode::Override,
+                    opacity: 1.0,
                 }],
             },
             // Chase on top strings, additive.
             Track {
                 name: "Chase Top".into(),
                 target: EffectTarget::Fixtures(vec![FixtureId(0), FixtureId(1)]),
-                blend_mode: BlendMode::Add,
                 effects: vec![EffectInstance {
                     kind: EffectKind::Chase,
                     params: EffectParams::new()
-                        .set("gradient", ParamValue::ColorGradient(
+                        .set(ParamKey::Gradient, ParamValue::ColorGradient(
                             crate::model::ColorGradient::solid(Color::rgb(0, 100, 255)),
                         ))
-                        .set("speed", ParamValue::Float(3.0))
-                        .set("pulse_width", ParamValue::Float(0.4)),
+                        .set(ParamKey::Speed, ParamValue::Float(3.0))
+                        .set(ParamKey::PulseWidth, ParamValue::Float(0.4)),
                     time_range: TimeRange::new(0.0, 20.0).unwrap(),
+                    blend_mode: BlendMode::Add,
+                    opacity: 1.0,
                 }],
             },
             // Twinkle overlay on bottom strings.
             Track {
                 name: "Twinkle Bottom".into(),
                 target: EffectTarget::Fixtures(vec![FixtureId(3), FixtureId(4)]),
-                blend_mode: BlendMode::Add,
                 effects: vec![EffectInstance {
                     kind: EffectKind::Twinkle,
                     params: EffectParams::new()
-                        .set("color", ParamValue::Color(Color::rgb(255, 255, 200)))
-                        .set("density", ParamValue::Float(0.4))
-                        .set("speed", ParamValue::Float(8.0)),
+                        .set(ParamKey::Color, ParamValue::Color(Color::rgb(255, 255, 200)))
+                        .set(ParamKey::Density, ParamValue::Float(0.4))
+                        .set(ParamKey::Speed, ParamValue::Float(8.0)),
                     time_range: TimeRange::new(0.0, 30.0).unwrap(),
+                    blend_mode: BlendMode::Add,
+                    opacity: 1.0,
                 }],
             },
             // Strobe burst in the middle, 15-20 seconds.
             Track {
                 name: "Strobe Burst".into(),
                 target: EffectTarget::Fixtures(vec![FixtureId(2)]),
-                blend_mode: BlendMode::Max,
                 effects: vec![EffectInstance {
                     kind: EffectKind::Strobe,
                     params: EffectParams::new()
-                        .set("color", ParamValue::Color(Color::rgb(255, 50, 50)))
-                        .set("rate", ParamValue::Float(8.0))
-                        .set("duty_cycle", ParamValue::Float(0.3)),
+                        .set(ParamKey::Color, ParamValue::Color(Color::rgb(255, 50, 50)))
+                        .set(ParamKey::Rate, ParamValue::Float(8.0))
+                        .set(ParamKey::DutyCycle, ParamValue::Float(0.3)),
                     time_range: TimeRange::new(15.0, 20.0).unwrap(),
+                    blend_mode: BlendMode::Max,
+                    opacity: 1.0,
                 }],
             },
             // Gradient sweep at the end.
             Track {
                 name: "Gradient Finale".into(),
                 target: EffectTarget::Group(GroupId(0)),
-                blend_mode: BlendMode::Alpha,
                 effects: vec![EffectInstance {
                     kind: EffectKind::Gradient,
                     params: EffectParams::new()
                         .set(
-                            "colors",
+                            ParamKey::Colors,
                             ParamValue::ColorList(vec![
                                 Color::rgb(255, 0, 100),
                                 Color::rgb(0, 255, 100),
                                 Color::rgb(100, 0, 255),
                             ]),
                         )
-                        .set("offset", ParamValue::Float(0.5)),
+                        .set(ParamKey::Offset, ParamValue::Float(0.5)),
                     time_range: TimeRange::new(20.0, 30.0).unwrap(),
+                    blend_mode: BlendMode::Alpha,
+                    opacity: 1.0,
                 }],
             },
         ],

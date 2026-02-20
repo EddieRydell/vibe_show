@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { Color, ColorStop, CurvePoint, EffectDetail, ParamSchema, ParamValue } from "../types";
+import type { Color, ColorMode, ColorStop, CurvePoint, EffectDetail, ParamSchema, ParamValue } from "../types";
 import {
   FloatSlider,
   IntSlider,
@@ -22,7 +22,9 @@ const PANEL_WIDTH = 260;
 const DEBOUNCE_MS = 50;
 
 function parseEffectKey(key: string): { trackIndex: number; effectIndex: number } | null {
-  const parts = key.split("-");
+  // Keys may be "fixtureId:trackIdx-effectIdx" or legacy "trackIdx-effectIdx"
+  const logical = key.includes(":") ? key.split(":")[1] : key;
+  const parts = logical.split("-");
   if (parts.length !== 2) return null;
   const trackIndex = parseInt(parts[0], 10);
   const effectIndex = parseInt(parts[1], 10);
@@ -139,6 +141,24 @@ function getDefaultText(schema: ParamSchema): string {
   return "";
 }
 
+const COLOR_MODE_OPTIONS = [
+  "static",
+  "gradient_per_pulse",
+  "gradient_through_effect",
+  "gradient_across_items",
+];
+
+function getParamColorMode(params: Record<string, ParamValue>, key: string, fallback: string): string {
+  const v = params[key];
+  if (v && "ColorMode" in v) return v.ColorMode;
+  return fallback;
+}
+
+function getDefaultColorMode(schema: ParamSchema): string {
+  if ("ColorMode" in schema.default) return schema.default.ColorMode;
+  return "static";
+}
+
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = (seconds % 60).toFixed(1);
@@ -249,6 +269,9 @@ export function PropertyPanel({
         {detail.blend_mode !== "Override" && (
           <div className="text-text-2 mt-0.5 text-[10px]">Blend: {detail.blend_mode}</div>
         )}
+        {detail.opacity < 1.0 && (
+          <div className="text-text-2 mt-0.5 text-[10px]">Opacity: {Math.round(detail.opacity * 100)}%</div>
+        )}
       </div>
 
       {/* Parameter controls */}
@@ -355,13 +378,25 @@ function ParamControl({ schema, params, onChange }: ParamControlProps) {
     );
   }
 
-  if (typeof pt === "object" && "Select" in pt) {
+  if (pt === "ColorMode") {
+    const value = getParamColorMode(params, schema.key, getDefaultColorMode(schema));
+    return (
+      <SelectInput
+        label={schema.label}
+        value={value}
+        options={COLOR_MODE_OPTIONS}
+        onChange={(v) => onChange({ ColorMode: v as ColorMode })}
+      />
+    );
+  }
+
+  if (typeof pt === "object" && "Text" in pt) {
     const value = getParamText(params, schema.key, getDefaultText(schema));
     return (
       <SelectInput
         label={schema.label}
         value={value}
-        options={pt.Select.options}
+        options={pt.Text.options}
         onChange={(v) => onChange({ Text: v })}
       />
     );

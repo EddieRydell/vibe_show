@@ -2,7 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use tauri::Manager;
 
@@ -14,6 +16,7 @@ use vibe_lights::model::Show;
 use vibe_lights::settings;
 use vibe_lights::state::{AppState, PlaybackState};
 
+#[allow(clippy::expect_used)] // app cannot start without config dir / Tauri runtime
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -31,6 +34,7 @@ fn main() {
                     playing: false,
                     current_time: 0.0,
                     sequence_index: 0,
+                    last_tick: None,
                 }),
                 dispatcher: Mutex::new(CommandDispatcher::new()),
                 chat: Mutex::new(ChatManager::new()),
@@ -101,6 +105,7 @@ fn main() {
             // Engine / playback
             commands::get_show,
             commands::get_frame,
+            commands::get_frame_filtered,
             commands::play,
             commands::pause,
             commands::seek,

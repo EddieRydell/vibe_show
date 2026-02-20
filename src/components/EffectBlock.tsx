@@ -21,6 +21,12 @@ const BLEND_LABELS: Record<BlendMode, string> = {
   Multiply: "MUL",
   Max: "MAX",
   Alpha: "ALP",
+  Subtract: "SUB",
+  Min: "MIN",
+  Average: "AVG",
+  Screen: "SCR",
+  Mask: "MSK",
+  IntensityOverlay: "INT",
 };
 
 export function EffectBlock({

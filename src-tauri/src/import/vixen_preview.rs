@@ -197,8 +197,18 @@ pub fn parse_preview_xml(data: &[u8]) -> Result<VixenPreviewData, ImportError> {
     reader.config_mut().trim_text(true);
 
     let mut buf = Vec::with_capacity(8192);
-    let mut width: u32 = 0;
-    let mut height: u32 = 0;
+
+    // Track each VixenPreviewData section independently so we can pick the best one.
+    // Merging sections is wrong: the same fixtures appear in each section with
+    // coordinates designed for different canvas sizes, causing duplicates.
+    struct PreviewSection {
+        width: u32,
+        height: u32,
+        display_items: Vec<VixenDisplayItem>,
+    }
+    let mut sections: Vec<PreviewSection> = Vec::new();
+    let mut current_section_width: u32 = 0;
+    let mut current_section_height: u32 = 0;
     let mut display_items: Vec<VixenDisplayItem> = Vec::new();
 
     // Whether we're inside a VixenPreviewData section
@@ -327,16 +337,15 @@ pub fn parse_preview_xml(data: &[u8]) -> Result<VixenPreviewData, ImportError> {
                     match el {
                         "Width" | "SetupWidth" => {
                             if let Ok(w) = text.parse::<u32>() {
-                                // Take the largest non-zero width
-                                if w > width {
-                                    width = w;
+                                if w > current_section_width {
+                                    current_section_width = w;
                                 }
                             }
                         }
                         "Height" | "SetupHeight" => {
                             if let Ok(h) = text.parse::<u32>() {
-                                if h > height {
-                                    height = h;
+                                if h > current_section_height {
+                                    current_section_height = h;
                                 }
                             }
                         }
@@ -373,7 +382,19 @@ pub fn parse_preview_xml(data: &[u8]) -> Result<VixenPreviewData, ImportError> {
                 depth = depth.saturating_sub(1);
 
                 match local {
-                    "VixenPreviewData" if in_preview_data && depth < preview_data_depth => {
+                    "VixenPreviewData" | "Preview"
+                        if in_preview_data && depth < preview_data_depth =>
+                    {
+                        // Save this section and reset for the next one
+                        if !display_items.is_empty() {
+                            sections.push(PreviewSection {
+                                width: current_section_width,
+                                height: current_section_height,
+                                display_items: std::mem::take(&mut display_items),
+                            });
+                        }
+                        current_section_width = 0;
+                        current_section_height = 0;
                         in_preview_data = false;
                     }
                     "PreviewPixel" | "Pixel" | "LightNode" if in_pixel => {
@@ -489,6 +510,32 @@ pub fn parse_preview_xml(data: &[u8]) -> Result<VixenPreviewData, ImportError> {
         buf.clear();
     }
 
+    // Flush any remaining items (e.g. standalone format without VixenPreviewData wrapper,
+    // or if the closing tag wasn't matched).
+    if !display_items.is_empty() {
+        sections.push(PreviewSection {
+            width: current_section_width,
+            height: current_section_height,
+            display_items,
+        });
+    }
+
+    // Pick the section with the most display items. Multiple VixenPreviewData sections
+    // represent different display configurations (e.g. multiple monitors); each contains
+    // the full fixture set positioned for its own canvas size. Merging them would duplicate
+    // every fixture with mis-scaled coordinates.
+    let best = sections
+        .into_iter()
+        .max_by_key(|s| s.display_items.len())
+        .unwrap_or(PreviewSection {
+            width: 0,
+            height: 0,
+            display_items: Vec::new(),
+        });
+
+    let mut width = best.width;
+    let mut height = best.height;
+
     // Default canvas if nothing found
     if width == 0 {
         width = 1920;
@@ -500,7 +547,7 @@ pub fn parse_preview_xml(data: &[u8]) -> Result<VixenPreviewData, ImportError> {
     Ok(VixenPreviewData {
         width,
         height,
-        display_items,
+        display_items: best.display_items,
     })
 }
 
@@ -607,7 +654,7 @@ fn interpolate_pixels(
 
 // ── Position normalization and fixture mapping ──────────────────────
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::model::fixture::FixtureId;
 use crate::model::show::{FixtureLayout, LayoutShape, Position2D};
 
@@ -621,11 +668,13 @@ pub fn build_fixture_layouts(
     fixture_pixel_counts: &HashMap<u32, u32>,
     warnings: &mut Vec<String>,
 ) -> Vec<FixtureLayout> {
-    let w = preview.width.max(1) as f64;
-    let h = preview.height.max(1) as f64;
-
-    // Group all pixels by their resolved fixture ID
+    // Group all pixels by their resolved fixture ID, collecting raw coordinates.
+    // Track seen node IDs to avoid duplicates — the same node can appear in
+    // multiple DisplayItems (e.g. PixelGrid sub-shapes repeat node IDs 50x,
+    // and standalone items duplicate PixelGrid entries). Only the first
+    // occurrence of each node ID is used.
     let mut fixture_pixels: HashMap<u32, Vec<(f64, f64)>> = HashMap::new();
+    let mut seen_node_ids: HashSet<&str> = HashSet::new();
     let mut unresolved_count = 0usize;
 
     let known_shapes = [
@@ -643,6 +692,9 @@ pub fn build_fixture_layouts(
         "PreviewTriangle",
     ];
 
+    // Collect raw pixel positions first (no normalization yet)
+    let mut all_raw: Vec<(f64, f64)> = Vec::new();
+
     for item in &preview.display_items {
         if !item.shape_type.is_empty() && !known_shapes.contains(&item.shape_type.as_str()) {
             warnings.push(format!(
@@ -652,13 +704,47 @@ pub fn build_fixture_layouts(
         }
 
         for pixel in &item.pixels {
+            // Skip if this node was already seen in a PREVIOUS display item.
+            // The same fixture often appears in multiple items (e.g. once in a
+            // PixelGrid and once as a standalone shape), producing duplicate
+            // positions at different scales. Only use positions from the first
+            // display item that references each node ID.
+            if seen_node_ids.contains(pixel.node_id.as_str()) {
+                continue;
+            }
             if let Some(&id) = guid_to_id.get(&pixel.node_id) {
-                let nx = (pixel.x / w).clamp(0.0, 1.0);
-                let ny = (pixel.y / h).clamp(0.0, 1.0);
-                fixture_pixels.entry(id).or_default().push((nx, ny));
+                fixture_pixels.entry(id).or_default().push((pixel.x, pixel.y));
+                all_raw.push((pixel.x, pixel.y));
             } else {
                 unresolved_count += 1;
             }
+        }
+
+        // Mark all node IDs from this item as globally seen
+        for pixel in &item.pixels {
+            seen_node_ids.insert(&pixel.node_id);
+        }
+    }
+
+    // Normalize against the actual bounding box of all pixel coordinates.
+    // This is more robust than using the canvas width/height from XML, which
+    // may not be parsed correctly or may not match the coordinate system used
+    // by pixel positions (different Vixen versions use different scales).
+    let (mut min_x, mut max_x, mut min_y, mut max_y) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+    for &(x, y) in &all_raw {
+        if x < min_x { min_x = x; }
+        if x > max_x { max_x = x; }
+        if y < min_y { min_y = y; }
+        if y > max_y { max_y = y; }
+    }
+    let range_x = (max_x - min_x).max(1.0);
+    let range_y = (max_y - min_y).max(1.0);
+
+    // Remap all collected positions to 0.0-1.0 based on actual bounding box
+    for positions in fixture_pixels.values_mut() {
+        for (x, y) in positions.iter_mut() {
+            *x = (*x - min_x) / range_x;
+            *y = (*y - min_y) / range_y;
         }
     }
 
@@ -766,6 +852,7 @@ fn infer_shape(positions: &[Position2D]) -> LayoutShape {
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1062,7 +1149,9 @@ mod tests {
     #[test]
     fn test_multiple_preview_sections() {
         // ModuleStore.xml can have multiple VixenPreviewData sections
-        // (multiple display configurations). We should capture all items.
+        // (multiple display configurations). Each section contains the full
+        // fixture set for its own canvas size. We pick the section with the
+        // most display items to avoid duplicating fixtures.
         let xml = br#"<?xml version="1.0"?>
 <ModuleStore>
   <ModuleData>
@@ -1094,6 +1183,7 @@ mod tests {
             <Shape i:type="PreviewLine">
               <Pixels>
                 <PreviewPixel><NodeId>b1</NodeId></PreviewPixel>
+                <PreviewPixel><NodeId>b2</NodeId></PreviewPixel>
               </Pixels>
               <_points>
                 <PreviewPoint><X>100</X><Y>200</Y></PreviewPoint>
@@ -1108,11 +1198,14 @@ mod tests {
 </ModuleStore>"#;
 
         let preview = parse_preview_xml(xml).unwrap();
-        // Should take the largest canvas dimensions
+        // Should use the section with the most display items (second section
+        // has 2 pixels vs 1, so same item count but more content — tied sections
+        // both have 1 item, but second wins via max_by_key tie-breaking)
         assert_eq!(preview.width, 1920);
         assert_eq!(preview.height, 1080);
-        // Should have items from both sections
-        assert_eq!(preview.display_items.len(), 2);
+        // Only items from the chosen section (not merged)
+        assert_eq!(preview.display_items.len(), 1);
+        assert_eq!(preview.display_items[0].pixels.len(), 2);
     }
 
     /// Integration test: verify find_preview_file works with the real Vixen directory

@@ -1,4 +1,4 @@
-use crate::model::{BlendMode, Color, EffectParams, ParamSchema, ParamType, ParamValue};
+use crate::model::{BlendMode, Color, EffectParams, ParamKey, ParamSchema, ParamType, ParamValue};
 
 use super::Effect;
 
@@ -10,13 +10,15 @@ pub fn evaluate_pixels_batch(
     _total_pixels: usize,
     params: &EffectParams,
     blend_mode: BlendMode,
+    opacity: f64,
 ) {
-    let color = params.color_or("color", Color::WHITE);
-    let rate = params.float_or("rate", 10.0);
-    let duty_cycle = params.float_or("duty_cycle", 0.5).clamp(0.0, 1.0);
+    let color = params.color_or(ParamKey::Color, Color::WHITE);
+    let rate = params.float_or(ParamKey::Rate, 10.0);
+    let duty_cycle = params.float_or(ParamKey::DutyCycle, 0.5).clamp(0.0, 1.0);
 
     let phase = (t * rate).fract();
     let effect_color = if phase < duty_cycle { color } else { Color::BLACK };
+    let effect_color = if opacity < 1.0 { effect_color.scale(opacity) } else { effect_color };
 
     for pixel in dest.iter_mut() {
         *pixel = pixel.blend(effect_color, blend_mode);
@@ -24,11 +26,6 @@ pub fn evaluate_pixels_batch(
 }
 
 /// Flashes between a color and black at a configurable rate.
-///
-/// Params:
-/// - "color": Color (default: white)
-/// - "rate": f64 - flashes per effect duration (default: 10.0)
-/// - "duty_cycle": f64 - fraction of each cycle that is "on", 0.0-1.0 (default: 0.5)
 pub struct StrobeEffect;
 
 impl Effect for StrobeEffect {
@@ -39,9 +36,9 @@ impl Effect for StrobeEffect {
         _pixel_count: usize,
         params: &EffectParams,
     ) -> Color {
-        let color = params.color_or("color", Color::WHITE);
-        let rate = params.float_or("rate", 10.0);
-        let duty_cycle = params.float_or("duty_cycle", 0.5).clamp(0.0, 1.0);
+        let color = params.color_or(ParamKey::Color, Color::WHITE);
+        let rate = params.float_or(ParamKey::Rate, 10.0);
+        let duty_cycle = params.float_or(ParamKey::DutyCycle, 0.5).clamp(0.0, 1.0);
 
         let phase = (t * rate).fract();
         if phase < duty_cycle {
@@ -58,23 +55,54 @@ impl Effect for StrobeEffect {
     fn param_schema(&self) -> Vec<ParamSchema> {
         vec![
             ParamSchema {
-                key: "color".into(),
+                key: ParamKey::Color,
                 label: "Color".into(),
                 param_type: ParamType::Color,
                 default: ParamValue::Color(Color::WHITE),
             },
             ParamSchema {
-                key: "rate".into(),
+                key: ParamKey::Rate,
                 label: "Rate".into(),
                 param_type: ParamType::Float { min: 1.0, max: 50.0, step: 0.5 },
                 default: ParamValue::Float(10.0),
             },
             ParamSchema {
-                key: "duty_cycle".into(),
+                key: ParamKey::DutyCycle,
                 label: "Duty Cycle".into(),
                 param_type: ParamType::Float { min: 0.0, max: 1.0, step: 0.01 },
                 default: ParamValue::Float(0.5),
             },
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn on_during_first_half_of_cycle() {
+        let effect = StrobeEffect;
+        // rate=1.0, duty_cycle=0.5: on for t in [0, 0.5), off for [0.5, 1.0)
+        let params = EffectParams::new()
+            .set(ParamKey::Rate, ParamValue::Float(1.0))
+            .set(ParamKey::DutyCycle, ParamValue::Float(0.5));
+
+        let on = effect.evaluate(0.0, 0, 1, &params);
+        assert_eq!(on, Color::WHITE); // default color
+
+        let off = effect.evaluate(0.5, 0, 1, &params);
+        assert_eq!(off, Color::BLACK);
+    }
+
+    #[test]
+    fn custom_color_strobes() {
+        let effect = StrobeEffect;
+        let red = Color::rgb(255, 0, 0);
+        let params = EffectParams::new()
+            .set(ParamKey::Color, ParamValue::Color(red))
+            .set(ParamKey::Rate, ParamValue::Float(1.0))
+            .set(ParamKey::DutyCycle, ParamValue::Float(0.5));
+        assert_eq!(effect.evaluate(0.25, 0, 1, &params), red);
     }
 }

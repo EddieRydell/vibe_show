@@ -10,7 +10,7 @@ use crate::effects::{self, resolve_effect};
 use crate::engine::{self, Frame};
 use crate::import::vixen::{VixenDiscovery, VixenImportConfig, VixenImportResult};
 use crate::model::{
-    BlendMode, EffectKind, EffectTarget, ParamSchema, ParamValue, Show,
+    EffectKind, EffectTarget, ParamKey, ParamSchema, ParamValue, Show,
 };
 use crate::profile::{self, MediaFile, Profile, ProfileSummary, SequenceSummary};
 use crate::progress::emit_progress;
@@ -22,7 +22,7 @@ use crate::state::{self, AppState, PlaybackInfo};
 /// Check if settings exist (first launch detection).
 #[tauri::command]
 pub fn get_settings(state: State<Arc<AppState>>) -> Option<AppSettings> {
-    state.settings.lock().unwrap().clone()
+    state.settings.lock().clone()
 }
 
 /// Get the API server port (0 if not yet started).
@@ -43,7 +43,7 @@ pub fn initialize_data_dir(state: State<Arc<AppState>>, data_dir: String) -> Res
     settings::save_settings(&state.app_config_dir, &new_settings)
         .map_err(|e| e.to_string())?;
 
-    *state.settings.lock().unwrap() = Some(new_settings.clone());
+    *state.settings.lock() = Some(new_settings.clone());
     Ok(new_settings)
 }
 
@@ -72,11 +72,11 @@ pub fn create_profile(state: State<Arc<AppState>>, name: String) -> Result<Profi
 pub fn open_profile(state: State<Arc<AppState>>, slug: String) -> Result<Profile, String> {
     let data_dir = get_data_dir(&state)?;
     let loaded = profile::load_profile(&data_dir, &slug).map_err(|e| e.to_string())?;
-    *state.current_profile.lock().unwrap() = Some(slug.clone());
-    *state.current_sequence.lock().unwrap() = None;
+    *state.current_profile.lock() = Some(slug.clone());
+    *state.current_sequence.lock() = None;
 
     // Update last_profile in settings
-    let mut settings_guard = state.settings.lock().unwrap();
+    let mut settings_guard = state.settings.lock();
     if let Some(ref mut s) = *settings_guard {
         s.last_profile = Some(slug);
         let _ = settings::save_settings(&state.app_config_dir, s);
@@ -92,10 +92,10 @@ pub fn delete_profile(state: State<Arc<AppState>>, slug: String) -> Result<(), S
     profile::delete_profile(&data_dir, &slug).map_err(|e| e.to_string())?;
 
     // Clear current if it was the deleted one
-    let mut current = state.current_profile.lock().unwrap();
+    let mut current = state.current_profile.lock();
     if current.as_deref() == Some(&slug) {
         *current = None;
-        *state.current_sequence.lock().unwrap() = None;
+        *state.current_sequence.lock() = None;
     }
 
     Ok(())
@@ -108,7 +108,6 @@ pub fn save_profile(state: State<Arc<AppState>>) -> Result<(), String> {
     let slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     let loaded = profile::load_profile(&data_dir, &slug).map_err(|e| e.to_string())?;
@@ -126,7 +125,6 @@ pub fn update_profile_fixtures(
     let slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     let mut loaded = profile::load_profile(&data_dir, &slug).map_err(|e| e.to_string())?;
@@ -146,7 +144,6 @@ pub fn update_profile_setup(
     let slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     let mut loaded = profile::load_profile(&data_dir, &slug).map_err(|e| e.to_string())?;
@@ -165,7 +162,6 @@ pub fn update_profile_layout(
     let slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     let mut loaded = profile::load_profile(&data_dir, &slug).map_err(|e| e.to_string())?;
@@ -182,7 +178,6 @@ pub fn list_sequences(state: State<Arc<AppState>>) -> Result<Vec<SequenceSummary
     let profile_slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     profile::list_sequences(&data_dir, &profile_slug).map_err(|e| e.to_string())
@@ -195,7 +190,6 @@ pub fn create_sequence(state: State<Arc<AppState>>, name: String) -> Result<Sequ
     let profile_slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     profile::create_sequence(&data_dir, &profile_slug, &name).map_err(|e| e.to_string())
@@ -208,13 +202,12 @@ pub fn delete_sequence(state: State<Arc<AppState>>, slug: String) -> Result<(), 
     let profile_slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     profile::delete_sequence(&data_dir, &profile_slug, &slug).map_err(|e| e.to_string())?;
 
     // Clear current sequence if it was the deleted one
-    let mut current = state.current_sequence.lock().unwrap();
+    let mut current = state.current_sequence.lock();
     if current.as_deref() == Some(&slug) {
         *current = None;
     }
@@ -233,7 +226,6 @@ pub async fn open_sequence(
     let profile_slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     let state_arc = (*state).clone();
@@ -251,15 +243,15 @@ pub async fn open_sequence(
         emit_progress(&app, "open_sequence", "Assembling show...", 0.7, None);
         let assembled = profile::assemble_show(&profile_data, &sequence);
 
-        *state_arc.show.lock().unwrap() = assembled.clone();
-        state_arc.dispatcher.lock().unwrap().clear();
+        *state_arc.show.lock() = assembled.clone();
+        state_arc.dispatcher.lock().clear();
 
-        let mut playback = state_arc.playback.lock().unwrap();
+        let mut playback = state_arc.playback.lock();
         playback.playing = false;
         playback.current_time = 0.0;
         playback.sequence_index = 0;
 
-        *state_arc.current_sequence.lock().unwrap() = Some(slug);
+        *state_arc.current_sequence.lock() = Some(slug);
 
         emit_progress(&app, "open_sequence", "Ready", 1.0, None);
 
@@ -278,17 +270,15 @@ pub fn save_current_sequence(state: State<Arc<AppState>>) -> Result<(), String> 
     let profile_slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     let seq_slug = state
         .current_sequence
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No sequence open")?;
 
-    let show = state.show.lock().unwrap();
+    let show = state.show.lock();
     let sequence = show
         .sequences
         .first()
@@ -306,7 +296,6 @@ pub fn list_media(state: State<Arc<AppState>>) -> Result<Vec<MediaFile>, String>
     let profile_slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     profile::list_media(&data_dir, &profile_slug).map_err(|e| e.to_string())
@@ -319,7 +308,6 @@ pub fn import_media(state: State<Arc<AppState>>, source_path: String) -> Result<
     let profile_slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     profile::import_media(
@@ -337,7 +325,6 @@ pub fn delete_media(state: State<Arc<AppState>>, filename: String) -> Result<(),
     let profile_slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     profile::delete_media(&data_dir, &profile_slug, &filename).map_err(|e| e.to_string())
@@ -352,7 +339,6 @@ pub fn resolve_media_path(state: State<Arc<AppState>>, filename: String) -> Resu
     let profile_slug = state
         .current_profile
         .lock()
-        .unwrap()
         .clone()
         .ok_or("No profile open")?;
     let path = profile::media_dir(&data_dir, &profile_slug).join(&filename);
@@ -374,8 +360,8 @@ pub fn update_sequence_settings(
     duration: Option<f64>,
     frame_rate: Option<f64>,
 ) -> Result<(), String> {
-    let mut dispatcher = state.dispatcher.lock().unwrap();
-    let mut show = state.show.lock().unwrap();
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
     let cmd = EditCommand::UpdateSequenceSettings {
         sequence_index,
         name,
@@ -408,6 +394,7 @@ pub fn list_effects() -> Vec<EffectInfo> {
         EffectKind::Gradient,
         EffectKind::Twinkle,
         EffectKind::Fade,
+        EffectKind::Wipe,
     ];
     kinds
         .into_iter()
@@ -427,23 +414,23 @@ pub fn list_effects() -> Vec<EffectInfo> {
 /// Undo the last editing command.
 #[tauri::command]
 pub fn undo(state: State<Arc<AppState>>) -> Result<String, String> {
-    let mut dispatcher = state.dispatcher.lock().unwrap();
-    let mut show = state.show.lock().unwrap();
-    dispatcher.undo(&mut show)
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    dispatcher.undo(&mut show).map_err(|e| e.to_string())
 }
 
 /// Redo the last undone editing command.
 #[tauri::command]
 pub fn redo(state: State<Arc<AppState>>) -> Result<String, String> {
-    let mut dispatcher = state.dispatcher.lock().unwrap();
-    let mut show = state.show.lock().unwrap();
-    dispatcher.redo(&mut show)
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    dispatcher.redo(&mut show).map_err(|e| e.to_string())
 }
 
 /// Get the current undo/redo state.
 #[tauri::command]
 pub fn get_undo_state(state: State<Arc<AppState>>) -> UndoState {
-    state.dispatcher.lock().unwrap().undo_state()
+    state.dispatcher.lock().undo_state()
 }
 
 // ── Chat commands ─────────────────────────────────────────────────
@@ -463,25 +450,25 @@ pub async fn send_chat_message(
 /// Get the chat history for display.
 #[tauri::command]
 pub fn get_chat_history(state: State<Arc<AppState>>) -> Vec<ChatHistoryEntry> {
-    state.chat.lock().unwrap().history_for_display()
+    state.chat.lock().history_for_display()
 }
 
 /// Clear the chat conversation.
 #[tauri::command]
 pub fn clear_chat(state: State<Arc<AppState>>) {
-    state.chat.lock().unwrap().clear();
+    state.chat.lock().clear();
 }
 
 /// Cancel any in-flight chat request.
 #[tauri::command]
 pub fn stop_chat(state: State<Arc<AppState>>) {
-    state.chat.lock().unwrap().cancel();
+    state.chat.lock().cancel();
 }
 
 /// Update the Claude API key in settings.
 #[tauri::command]
 pub fn set_claude_api_key(state: State<Arc<AppState>>, api_key: String) -> Result<(), String> {
-    let mut settings_guard = state.settings.lock().unwrap();
+    let mut settings_guard = state.settings.lock();
     if let Some(ref mut s) = *settings_guard {
         s.claude_api_key = if api_key.is_empty() {
             None
@@ -499,7 +486,6 @@ pub fn has_claude_api_key(state: State<Arc<AppState>>) -> bool {
     state
         .settings
         .lock()
-        .unwrap()
         .as_ref()
         .and_then(|s| s.claude_api_key.as_ref())
         .map(|k| !k.is_empty())
@@ -511,43 +497,63 @@ pub fn has_claude_api_key(state: State<Arc<AppState>>) -> bool {
 /// Get the full show model as JSON.
 #[tauri::command]
 pub fn get_show(state: State<Arc<AppState>>) -> Show {
-    state.show.lock().unwrap().clone()
+    state.show.lock().clone()
 }
 
 /// Evaluate and return a single frame at the given time.
 #[tauri::command]
 pub fn get_frame(state: State<Arc<AppState>>, time: f64) -> Frame {
-    let show = state.show.lock().unwrap();
-    let playback = state.playback.lock().unwrap();
-    engine::evaluate(&show, playback.sequence_index, time)
+    let show = state.show.lock();
+    let playback = state.playback.lock();
+    engine::evaluate(&show, playback.sequence_index, time, None)
+}
+
+/// Evaluate and return a single frame at the given time, rendering only the
+/// specified (track_index, effect_index) pairs. Used by the preview loop to
+/// show only selected effects.
+#[tauri::command]
+pub fn get_frame_filtered(
+    state: State<Arc<AppState>>,
+    time: f64,
+    effects: Vec<(usize, usize)>,
+) -> Frame {
+    let show = state.show.lock();
+    let playback = state.playback.lock();
+    engine::evaluate(&show, playback.sequence_index, time, Some(&effects))
 }
 
 /// Start playback.
 #[tauri::command]
 pub fn play(state: State<Arc<AppState>>) {
-    let mut playback = state.playback.lock().unwrap();
+    let mut playback = state.playback.lock();
     playback.playing = true;
+    playback.last_tick = Some(std::time::Instant::now());
 }
 
 /// Pause playback.
 #[tauri::command]
 pub fn pause(state: State<Arc<AppState>>) {
-    let mut playback = state.playback.lock().unwrap();
+    let mut playback = state.playback.lock();
     playback.playing = false;
+    playback.last_tick = None;
 }
 
 /// Seek to a specific time.
 #[tauri::command]
 pub fn seek(state: State<Arc<AppState>>, time: f64) {
-    let mut playback = state.playback.lock().unwrap();
+    let mut playback = state.playback.lock();
     playback.current_time = time.max(0.0);
+    // Reset clock anchor so next tick doesn't jump
+    if playback.playing {
+        playback.last_tick = Some(std::time::Instant::now());
+    }
 }
 
 /// Get current playback state.
 #[tauri::command]
 pub fn get_playback(state: State<Arc<AppState>>) -> PlaybackInfo {
-    let playback = state.playback.lock().unwrap();
-    let show = state.show.lock().unwrap();
+    let playback = state.playback.lock();
+    let show = state.show.lock();
     let duration = show
         .sequences
         .get(playback.sequence_index)
@@ -561,28 +567,40 @@ pub fn get_playback(state: State<Arc<AppState>>) -> PlaybackInfo {
     }
 }
 
-/// Advance playback by dt seconds. Returns the new frame if playing.
+/// Advance playback using real clock time. Returns the new frame if playing.
+///
+/// Uses `Instant`-based dt so multiple windows can call `tick` without
+/// double-advancing time (each call measures elapsed since last tick).
+/// The `dt` parameter is accepted for API compatibility but ignored.
 #[tauri::command]
-pub fn tick(state: State<Arc<AppState>>, dt: f64) -> Option<TickResult> {
-    let mut playback = state.playback.lock().unwrap();
+pub fn tick(state: State<Arc<AppState>>, _dt: f64) -> Option<TickResult> {
+    let mut playback = state.playback.lock();
     if !playback.playing {
         return None;
     }
 
-    let show = state.show.lock().unwrap();
+    let now = std::time::Instant::now();
+    let real_dt = match playback.last_tick {
+        Some(prev) => now.duration_since(prev).as_secs_f64(),
+        None => 0.0,
+    };
+    playback.last_tick = Some(now);
+
+    let show = state.show.lock();
     let duration = show
         .sequences
         .get(playback.sequence_index)
         .map(|s| s.duration)
         .unwrap_or(0.0);
 
-    playback.current_time += dt;
+    playback.current_time += real_dt;
     if playback.current_time >= duration {
         playback.current_time = duration;
         playback.playing = false;
+        playback.last_tick = None;
     }
 
-    let frame = engine::evaluate(&show, playback.sequence_index, playback.current_time);
+    let frame = engine::evaluate(&show, playback.sequence_index, playback.current_time, None);
     Some(TickResult {
         frame,
         current_time: playback.current_time,
@@ -608,7 +626,7 @@ pub fn render_effect_thumbnail(
     time_samples: usize,
     pixel_rows: usize,
 ) -> Option<EffectThumbnail> {
-    let show = state.show.lock().unwrap();
+    let show = state.show.lock();
     let sequence = show.sequences.get(sequence_index)?;
     let track = sequence.tracks.get(track_index)?;
     let effect_instance = track.effects.get(effect_index)?;
@@ -663,7 +681,7 @@ pub fn get_effect_detail(
     track_index: usize,
     effect_index: usize,
 ) -> Option<EffectDetail> {
-    let show = state.show.lock().unwrap();
+    let show = state.show.lock();
     let sequence = show.sequences.get(sequence_index)?;
     let track = sequence.tracks.get(track_index)?;
     let effect_instance = track.effects.get(effect_index)?;
@@ -676,7 +694,8 @@ pub fn get_effect_detail(
         params: effect_instance.params.clone(),
         time_range: effect_instance.time_range,
         track_name: track.name.clone(),
-        blend_mode: track.blend_mode,
+        blend_mode: effect_instance.blend_mode,
+        opacity: effect_instance.opacity,
     })
 }
 
@@ -687,11 +706,11 @@ pub fn update_effect_param(
     sequence_index: usize,
     track_index: usize,
     effect_index: usize,
-    key: String,
+    key: ParamKey,
     value: ParamValue,
 ) -> bool {
-    let mut dispatcher = state.dispatcher.lock().unwrap();
-    let mut show = state.show.lock().unwrap();
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
     let cmd = EditCommand::UpdateEffectParam {
         sequence_index,
         track_index,
@@ -715,15 +734,19 @@ pub fn add_effect(
     kind: EffectKind,
     start: f64,
     end: f64,
+    blend_mode: Option<crate::model::BlendMode>,
+    opacity: Option<f64>,
 ) -> Result<usize, String> {
-    let mut dispatcher = state.dispatcher.lock().unwrap();
-    let mut show = state.show.lock().unwrap();
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
     let cmd = EditCommand::AddEffect {
         sequence_index,
         track_index,
         kind,
         start,
         end,
+        blend_mode: blend_mode.unwrap_or(crate::model::BlendMode::Override),
+        opacity: opacity.unwrap_or(1.0),
     };
     match dispatcher.execute(&mut show, cmd)? {
         CommandResult::Index(idx) => Ok(idx),
@@ -738,15 +761,13 @@ pub fn add_track(
     sequence_index: usize,
     name: String,
     target: EffectTarget,
-    blend_mode: BlendMode,
 ) -> Result<usize, String> {
-    let mut dispatcher = state.dispatcher.lock().unwrap();
-    let mut show = state.show.lock().unwrap();
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
     let cmd = EditCommand::AddTrack {
         sequence_index,
         name,
         target,
-        blend_mode,
     };
     match dispatcher.execute(&mut show, cmd)? {
         CommandResult::Index(idx) => Ok(idx),
@@ -761,8 +782,8 @@ pub fn delete_effects(
     sequence_index: usize,
     targets: Vec<(usize, usize)>,
 ) -> Result<(), String> {
-    let mut dispatcher = state.dispatcher.lock().unwrap();
-    let mut show = state.show.lock().unwrap();
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
     let cmd = EditCommand::DeleteEffects {
         sequence_index,
         targets,
@@ -781,8 +802,8 @@ pub fn update_effect_time_range(
     start: f64,
     end: f64,
 ) -> Result<bool, String> {
-    let mut dispatcher = state.dispatcher.lock().unwrap();
-    let mut show = state.show.lock().unwrap();
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
     let cmd = EditCommand::UpdateEffectTimeRange {
         sequence_index,
         track_index,
@@ -805,8 +826,8 @@ pub fn move_effect_to_track(
     effect_index: usize,
     to_track: usize,
 ) -> Result<usize, String> {
-    let mut dispatcher = state.dispatcher.lock().unwrap();
-    let mut show = state.show.lock().unwrap();
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
     let cmd = EditCommand::MoveEffectToTrack {
         sequence_index,
         from_track,

@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU16;
-use std::sync::Mutex;
+use std::time::Instant;
+
+use parking_lot::Mutex;
 
 use serde::Serialize;
 
@@ -29,6 +31,9 @@ pub struct PlaybackState {
     pub playing: bool,
     pub current_time: f64,
     pub sequence_index: usize,
+    /// Real-time clock anchor for computing dt in `tick()`.
+    /// Set when playback starts; cleared on pause/seek.
+    pub last_tick: Option<Instant>,
 }
 
 #[derive(Serialize)]
@@ -51,6 +56,7 @@ pub struct EffectDetail {
     pub time_range: TimeRange,
     pub track_name: String,
     pub blend_mode: BlendMode,
+    pub opacity: f64,
 }
 
 /// Helper to get data_dir from settings.
@@ -58,7 +64,6 @@ pub fn get_data_dir(state: &AppState) -> Result<PathBuf, String> {
     state
         .settings
         .lock()
-        .unwrap()
         .as_ref()
         .map(|s| s.data_dir.clone())
         .ok_or_else(|| "No data directory configured".to_string())

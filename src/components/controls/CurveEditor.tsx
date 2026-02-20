@@ -109,7 +109,8 @@ export function CurveEditor({ label, value, onChange }: CurveEditorProps) {
   );
 
   const getMousePos = (e: React.MouseEvent) => {
-    const rect = canvasRef.current!.getBoundingClientRect();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return { cx: 0, cy: 0 };
     return { cx: e.clientX - rect.left, cy: e.clientY - rect.top };
   };
 

@@ -1,4 +1,4 @@
-use crate::model::{BlendMode, Color, EffectParams, ParamSchema, ParamType, ParamValue};
+use crate::model::{BlendMode, Color, EffectParams, ParamKey, ParamSchema, ParamType, ParamValue};
 
 use super::Effect;
 
@@ -10,10 +10,11 @@ pub fn evaluate_pixels_batch(
     _total_pixels: usize,
     params: &EffectParams,
     blend_mode: BlendMode,
+    opacity: f64,
 ) {
-    let color = params.color_or("color", Color::WHITE);
-    let density = params.float_or("density", 0.3).clamp(0.0, 1.0);
-    let speed = params.float_or("speed", 5.0);
+    let color = params.color_or(ParamKey::Color, Color::WHITE);
+    let density = params.float_or(ParamKey::Density, 0.3).clamp(0.0, 1.0);
+    let speed = params.float_or(ParamKey::Speed, 5.0);
 
     let slot = (t * speed) as u64;
     let next_slot = slot + 1;
@@ -29,7 +30,7 @@ pub fn evaluate_pixels_batch(
         let brightness = brightness_current * inv_frac + brightness_next * frac;
 
         let effect_color = if brightness > threshold {
-            let intensity = (brightness - threshold) * inv_density;
+            let intensity = (brightness - threshold) * inv_density * opacity;
             color.scale(intensity)
         } else {
             Color::BLACK
@@ -40,11 +41,6 @@ pub fn evaluate_pixels_batch(
 
 /// Random per-pixel twinkling. Uses a deterministic hash so the same
 /// (time, pixel) always produces the same result (no actual RNG needed).
-///
-/// Params:
-/// - "color": Color (default: white)
-/// - "density": f64 - fraction of pixels lit at any moment, 0.0-1.0 (default: 0.3)
-/// - "speed": f64 - how fast twinkles change, cycles per duration (default: 5.0)
 pub struct TwinkleEffect;
 
 /// Simple deterministic hash for reproducible "randomness" without state.
@@ -63,9 +59,9 @@ impl Effect for TwinkleEffect {
         _pixel_count: usize,
         params: &EffectParams,
     ) -> Color {
-        let color = params.color_or("color", Color::WHITE);
-        let density = params.float_or("density", 0.3).clamp(0.0, 1.0);
-        let speed = params.float_or("speed", 5.0);
+        let color = params.color_or(ParamKey::Color, Color::WHITE);
+        let density = params.float_or(ParamKey::Density, 0.3).clamp(0.0, 1.0);
+        let speed = params.float_or(ParamKey::Speed, 5.0);
 
         // Discrete time slots for twinkling.
         let slot = (t * speed) as u64;
@@ -95,23 +91,50 @@ impl Effect for TwinkleEffect {
     fn param_schema(&self) -> Vec<ParamSchema> {
         vec![
             ParamSchema {
-                key: "color".into(),
+                key: ParamKey::Color,
                 label: "Color".into(),
                 param_type: ParamType::Color,
                 default: ParamValue::Color(Color::WHITE),
             },
             ParamSchema {
-                key: "density".into(),
+                key: ParamKey::Density,
                 label: "Density".into(),
                 param_type: ParamType::Float { min: 0.0, max: 1.0, step: 0.01 },
                 default: ParamValue::Float(0.3),
             },
             ParamSchema {
-                key: "speed".into(),
+                key: ParamKey::Speed,
                 label: "Speed".into(),
                 param_type: ParamType::Float { min: 0.5, max: 30.0, step: 0.5 },
                 default: ParamValue::Float(5.0),
             },
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deterministic_same_inputs_same_output() {
+        let effect = TwinkleEffect;
+        let params = EffectParams::new();
+        let a = effect.evaluate(0.3, 5, 100, &params);
+        let b = effect.evaluate(0.3, 5, 100, &params);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn spatial_variation_exists() {
+        let effect = TwinkleEffect;
+        let params = EffectParams::new()
+            .set(ParamKey::Density, ParamValue::Float(0.5));
+        // Check several pixels — at least some should differ
+        let colors: Vec<_> = (0..20)
+            .map(|i| effect.evaluate(0.0, i, 20, &params))
+            .collect();
+        let all_same = colors.windows(2).all(|w| w[0] == w[1]);
+        assert!(!all_same, "twinkle should produce spatial variation");
     }
 }

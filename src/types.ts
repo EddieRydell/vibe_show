@@ -4,12 +4,14 @@
 
 // ── Re-exports from generated Rust bindings ─────────────────────────
 
+export type { AppError } from "../src-tauri/bindings/AppError";
 export type { AppSettings } from "../src-tauri/bindings/AppSettings";
 export type { BlendMode } from "../src-tauri/bindings/BlendMode";
 export type { BulbShape } from "../src-tauri/bindings/BulbShape";
 export type { ChannelOrder } from "../src-tauri/bindings/ChannelOrder";
 export type { Color } from "../src-tauri/bindings/Color";
 export type { ColorGradient } from "../src-tauri/bindings/ColorGradient";
+export type { ColorMode } from "../src-tauri/bindings/ColorMode";
 export type { ColorModel } from "../src-tauri/bindings/ColorModel";
 export type { ColorStop } from "../src-tauri/bindings/ColorStop";
 export type { Curve } from "../src-tauri/bindings/Curve";
@@ -36,6 +38,7 @@ export type { Layout } from "../src-tauri/bindings/Layout";
 export type { LayoutShape } from "../src-tauri/bindings/LayoutShape";
 export type { MediaFile } from "../src-tauri/bindings/MediaFile";
 export type { OutputMapping } from "../src-tauri/bindings/OutputMapping";
+export type { ParamKey } from "../src-tauri/bindings/ParamKey";
 export type { ParamSchema } from "../src-tauri/bindings/ParamSchema";
 export type { ParamType } from "../src-tauri/bindings/ParamType";
 export type { ParamValue } from "../src-tauri/bindings/ParamValue";

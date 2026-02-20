@@ -12,9 +12,22 @@ pub struct CurvePoint {
 /// Piecewise-linear curve mapping time (x) to value (y), both normalized [0, 1].
 /// Points are always sorted by x. Evaluate via binary search + linear interpolation.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(try_from = "CurveRaw")]
 #[ts(export)]
 pub struct Curve {
     points: Vec<CurvePoint>,
+}
+
+#[derive(Deserialize)]
+struct CurveRaw {
+    points: Vec<CurvePoint>,
+}
+
+impl TryFrom<CurveRaw> for Curve {
+    type Error = String;
+    fn try_from(raw: CurveRaw) -> Result<Self, String> {
+        Curve::new(raw.points).ok_or_else(|| "Curve requires at least 2 points".to_string())
+    }
 }
 
 impl Curve {
@@ -78,7 +91,8 @@ impl Curve {
             return self.points[0].y;
         }
         if idx >= self.points.len() {
-            return self.points.last().unwrap().y;
+            // points always has >= 2 entries (constructor returns None otherwise)
+            return self.points.last().map_or(0.0, |p| p.y);
         }
 
         let a = &self.points[idx - 1];
@@ -100,6 +114,7 @@ impl Default for Curve {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

@@ -110,9 +110,11 @@ fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {
                     "track_index": { "type": "integer" },
-                    "kind": { "type": "string", "enum": ["Solid", "Chase", "Rainbow", "Strobe", "Gradient", "Twinkle"] },
+                    "kind": { "type": "string", "enum": ["Solid", "Chase", "Rainbow", "Strobe", "Gradient", "Twinkle", "Fade", "Wipe"] },
                     "start": { "type": "number", "description": "Start time in seconds" },
-                    "end": { "type": "number", "description": "End time in seconds" }
+                    "end": { "type": "number", "description": "End time in seconds" },
+                    "blend_mode": { "type": "string", "enum": ["Override", "Add", "Multiply", "Max", "Alpha", "Subtract", "Min", "Average", "Screen", "Mask", "IntensityOverlay"], "default": "Override" },
+                    "opacity": { "type": "number", "description": "Opacity 0.0-1.0", "default": 1.0 }
                 },
                 "required": ["track_index", "kind", "start", "end"]
             }
@@ -166,8 +168,7 @@ fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {
                     "name": { "type": "string" },
-                    "fixture_id": { "type": "integer", "description": "Target fixture ID" },
-                    "blend_mode": { "type": "string", "enum": ["Override", "Add", "Multiply", "Max", "Alpha"], "default": "Override" }
+                    "fixture_id": { "type": "integer", "description": "Target fixture ID" }
                 },
                 "required": ["name", "fixture_id"]
             }
@@ -214,8 +215,8 @@ fn tool_definitions() -> Value {
 // ── System prompt builder ────────────────────────────────────────
 
 fn build_system_prompt(state: &Arc<AppState>) -> String {
-    let show = state.show.lock().unwrap();
-    let playback = state.playback.lock().unwrap();
+    let show = state.show.lock();
+    let playback = state.playback.lock();
 
     let mut lines = Vec::new();
     lines.push("You are a light show assistant integrated into VibeLights, a light show sequencer.".to_string());
@@ -233,9 +234,14 @@ fn build_system_prompt(state: &Arc<AppState>) -> String {
         lines.push(format!("\nSequence: {} ({:.1}s @ {}fps)", seq.name, seq.duration, seq.frame_rate));
         lines.push(format!("Tracks: {}", seq.tracks.len()));
         for (i, t) in seq.tracks.iter().enumerate() {
-            lines.push(format!("  Track {}: \"{}\" ({:?}, {} effects)", i, t.name, t.blend_mode, t.effects.len()));
+            lines.push(format!("  Track {}: \"{}\" ({} effects)", i, t.name, t.effects.len()));
             for (j, e) in t.effects.iter().enumerate() {
-                lines.push(format!("    Effect {}: {:?} [{:.1}s - {:.1}s]", j, e.kind, e.time_range.start(), e.time_range.end()));
+                let blend_info = if e.blend_mode != crate::model::BlendMode::Override || e.opacity < 1.0 {
+                    format!(" blend={:?} opacity={:.1}", e.blend_mode, e.opacity)
+                } else {
+                    String::new()
+                };
+                lines.push(format!("    Effect {}: {:?} [{:.1}s - {:.1}s]{}", j, e.kind, e.time_range.start(), e.time_range.end(), blend_info));
             }
         }
     }
@@ -255,11 +261,12 @@ fn build_system_prompt(state: &Arc<AppState>) -> String {
         crate::model::EffectKind::Gradient,
         crate::model::EffectKind::Twinkle,
         crate::model::EffectKind::Fade,
+        crate::model::EffectKind::Wipe,
     ];
     for kind in &kinds {
         let effect = effects::resolve_effect(kind);
         let schemas = effect.param_schema();
-        let params: Vec<String> = schemas.iter().map(|s| format!("{} ({})", s.key, s.label)).collect();
+        let params: Vec<String> = schemas.iter().map(|s| format!("{:?} ({})", s.key, s.label)).collect();
         lines.push(format!("  {:?}: params [{}]", kind, params.join(", ")));
     }
 
@@ -273,15 +280,23 @@ fn build_system_prompt(state: &Arc<AppState>) -> String {
 fn execute_tool(state: &Arc<AppState>, name: &str, input: &Value) -> Result<String, String> {
     match name {
         "add_effect" => {
+            let blend_mode = input.get("blend_mode")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or(crate::model::BlendMode::Override);
+            let opacity = input.get("opacity")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(1.0);
             let cmd = EditCommand::AddEffect {
                 sequence_index: 0,
                 track_index: input["track_index"].as_u64().ok_or("Missing track_index")? as usize,
                 kind: serde_json::from_value(input["kind"].clone()).map_err(|e| e.to_string())?,
                 start: input["start"].as_f64().ok_or("Missing start")?,
                 end: input["end"].as_f64().ok_or("Missing end")?,
+                blend_mode,
+                opacity,
             };
-            let mut dispatcher = state.dispatcher.lock().unwrap();
-            let mut show = state.show.lock().unwrap();
+            let mut dispatcher = state.dispatcher.lock();
+            let mut show = state.show.lock();
             let result = dispatcher.execute(&mut show, cmd)?;
             Ok(format!("{:?}", result))
         }
@@ -293,8 +308,8 @@ fn execute_tool(state: &Arc<AppState>, name: &str, input: &Value) -> Result<Stri
                 .map(|pair| {
                     let arr = pair.as_array().ok_or("Invalid target pair")?;
                     Ok((
-                        arr[0].as_u64().ok_or("Invalid track index")? as usize,
-                        arr[1].as_u64().ok_or("Invalid effect index")? as usize,
+                        arr.get(0).and_then(|v| v.as_u64()).ok_or("Invalid track index")? as usize,
+                        arr.get(1).and_then(|v| v.as_u64()).ok_or("Invalid effect index")? as usize,
                     ))
                 })
                 .collect::<Result<_, String>>()?;
@@ -302,8 +317,8 @@ fn execute_tool(state: &Arc<AppState>, name: &str, input: &Value) -> Result<Stri
                 sequence_index: 0,
                 targets,
             };
-            let mut dispatcher = state.dispatcher.lock().unwrap();
-            let mut show = state.show.lock().unwrap();
+            let mut dispatcher = state.dispatcher.lock();
+            let mut show = state.show.lock();
             dispatcher.execute(&mut show, cmd)?;
             Ok("Deleted".to_string())
         }
@@ -312,11 +327,11 @@ fn execute_tool(state: &Arc<AppState>, name: &str, input: &Value) -> Result<Stri
                 sequence_index: 0,
                 track_index: input["track_index"].as_u64().ok_or("Missing track_index")? as usize,
                 effect_index: input["effect_index"].as_u64().ok_or("Missing effect_index")? as usize,
-                key: input["key"].as_str().ok_or("Missing key")?.to_string(),
+                key: serde_json::from_value(input["key"].clone()).map_err(|e| format!("Invalid param key: {}", e))?,
                 value: serde_json::from_value(input["value"].clone()).map_err(|e| e.to_string())?,
             };
-            let mut dispatcher = state.dispatcher.lock().unwrap();
-            let mut show = state.show.lock().unwrap();
+            let mut dispatcher = state.dispatcher.lock();
+            let mut show = state.show.lock();
             dispatcher.execute(&mut show, cmd)?;
             Ok("Updated".to_string())
         }
@@ -328,54 +343,50 @@ fn execute_tool(state: &Arc<AppState>, name: &str, input: &Value) -> Result<Stri
                 start: input["start"].as_f64().ok_or("Missing start")?,
                 end: input["end"].as_f64().ok_or("Missing end")?,
             };
-            let mut dispatcher = state.dispatcher.lock().unwrap();
-            let mut show = state.show.lock().unwrap();
+            let mut dispatcher = state.dispatcher.lock();
+            let mut show = state.show.lock();
             dispatcher.execute(&mut show, cmd)?;
             Ok("Updated".to_string())
         }
         "add_track" => {
             let fixture_id = input["fixture_id"].as_u64().ok_or("Missing fixture_id")? as u32;
-            let blend_mode = input.get("blend_mode")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or(crate::model::BlendMode::Override);
             let cmd = EditCommand::AddTrack {
                 sequence_index: 0,
                 name: input["name"].as_str().ok_or("Missing name")?.to_string(),
                 target: crate::model::EffectTarget::Fixtures(vec![crate::model::FixtureId(fixture_id)]),
-                blend_mode,
             };
-            let mut dispatcher = state.dispatcher.lock().unwrap();
-            let mut show = state.show.lock().unwrap();
+            let mut dispatcher = state.dispatcher.lock();
+            let mut show = state.show.lock();
             let result = dispatcher.execute(&mut show, cmd)?;
             Ok(format!("{:?}", result))
         }
         "play" => {
-            state.playback.lock().unwrap().playing = true;
+            state.playback.lock().playing = true;
             Ok("Playing".to_string())
         }
         "pause" => {
-            state.playback.lock().unwrap().playing = false;
+            state.playback.lock().playing = false;
             Ok("Paused".to_string())
         }
         "seek" => {
             let time = input["time"].as_f64().ok_or("Missing time")?;
-            state.playback.lock().unwrap().current_time = time.max(0.0);
+            state.playback.lock().current_time = time.max(0.0);
             Ok(format!("Seeked to {:.1}s", time))
         }
         "undo" => {
-            let mut dispatcher = state.dispatcher.lock().unwrap();
-            let mut show = state.show.lock().unwrap();
+            let mut dispatcher = state.dispatcher.lock();
+            let mut show = state.show.lock();
             let desc = dispatcher.undo(&mut show)?;
             Ok(format!("Undone: {}", desc))
         }
         "redo" => {
-            let mut dispatcher = state.dispatcher.lock().unwrap();
-            let mut show = state.show.lock().unwrap();
+            let mut dispatcher = state.dispatcher.lock();
+            let mut show = state.show.lock();
             let desc = dispatcher.redo(&mut show)?;
             Ok(format!("Redone: {}", desc))
         }
         "get_show" => {
-            let show = state.show.lock().unwrap();
+            let show = state.show.lock();
             Ok(serde_json::to_string_pretty(&*show).unwrap_or_default())
         }
         _ => Err(format!("Unknown tool: {}", name)),
@@ -456,7 +467,7 @@ impl ChatManager {
         message: String,
     ) -> Result<(), String> {
         let api_key = {
-            let settings = state.settings.lock().unwrap();
+            let settings = state.settings.lock();
             settings
                 .as_ref()
                 .and_then(|s| s.claude_api_key.clone())
@@ -465,7 +476,7 @@ impl ChatManager {
 
         // Add user message
         {
-            let mut chat = state.chat.lock().unwrap();
+            let mut chat = state.chat.lock();
             chat.cancelled = false;
             chat.history.push(ChatMessage {
                 role: "user".to_string(),
@@ -478,16 +489,16 @@ impl ChatManager {
 
         for _ in 0..max_iterations {
             // Check cancellation
-            if state.chat.lock().unwrap().cancelled {
+            if state.chat.lock().cancelled {
                 return Ok(());
             }
 
             let system_prompt = build_system_prompt(&state);
             let messages: Vec<Value> = {
-                let chat = state.chat.lock().unwrap();
+                let chat = state.chat.lock();
                 chat.history
                     .iter()
-                    .map(|m| serde_json::to_value(m).unwrap())
+                    .filter_map(|m| serde_json::to_value(m).ok())
                     .collect()
             };
 
@@ -572,7 +583,7 @@ impl ChatManager {
 
             // Add assistant message to history
             {
-                let mut chat = state.chat.lock().unwrap();
+                let mut chat = state.chat.lock();
                 chat.history.push(ChatMessage {
                     role: "assistant".to_string(),
                     content: ChatContent::Blocks(assistant_blocks),

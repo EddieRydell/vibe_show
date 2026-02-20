@@ -20,6 +20,7 @@ tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors"] }
 reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
 clap = { version = "4", features = ["derive"] }
+parking_lot = "0.12"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
@@ -32,3 +33,15 @@ required-features = ["tauri-app"]
 [[bin]]
 name = "vibelights-cli"
 path = "src/bin/cli.rs"
+
+[lints.clippy]
+# Prevent runtime panics — all of these abort the process
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+# Additional strictness
+missing_safety_doc = "deny"
+undocumented_unsafe_blocks = "deny"

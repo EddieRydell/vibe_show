@@ -4,4 +4,4 @@
  * Which built-in effect type an instance uses.
  * Future: this will be extended with Custom(String) for user-defined effects.
  */
-export type EffectKind = "Solid" | "Chase" | "Rainbow" | "Strobe" | "Gradient" | "Twinkle" | "Fade";
+export type EffectKind = "Solid" | "Chase" | "Rainbow" | "Strobe" | "Gradient" | "Twinkle" | "Fade" | "Wipe";

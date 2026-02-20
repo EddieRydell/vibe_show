@@ -1,7 +1,12 @@
+// CLI binary — panicking on unrecoverable errors is standard for CLI tools.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
+
 use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use clap::{Parser, Subcommand};
 use serde_json::Value;
@@ -70,8 +75,6 @@ enum Commands {
         name: String,
         #[arg(long)]
         fixture: u32,
-        #[arg(long, default_value = "Override")]
-        blend_mode: String,
     },
     /// Delete effects by track:effect pairs (e.g. "0:2,0:3")
     DeleteEffects {
@@ -247,6 +250,7 @@ async fn run_serve(
             playing: false,
             current_time: 0.0,
             sequence_index: 0,
+            last_tick: None,
         }),
         dispatcher: Mutex::new(CommandDispatcher::new()),
         chat: Mutex::new(ChatManager::new()),
@@ -262,7 +266,7 @@ async fn run_serve(
         if let Some(ref settings) = loaded_settings {
             match vibe_lights::profile::load_profile(&settings.data_dir, profile_slug) {
                 Ok(profile_data) => {
-                    *state.current_profile.lock().unwrap() = Some(profile_slug.clone());
+                    *state.current_profile.lock() = Some(profile_slug.clone());
                     eprintln!(
                         "[VibeLights] Profile: {} ({})",
                         profile_data.name, profile_slug
@@ -277,8 +281,8 @@ async fn run_serve(
                             Ok(seq_data) => {
                                 let assembled =
                                     vibe_lights::profile::assemble_show(&profile_data, &seq_data);
-                                *state.show.lock().unwrap() = assembled;
-                                *state.current_sequence.lock().unwrap() =
+                                *state.show.lock() = assembled;
+                                *state.current_sequence.lock() =
                                     Some(seq_slug.clone());
                                 eprintln!(
                                     "[VibeLights] Sequence: {} ({})",
@@ -389,7 +393,7 @@ fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64,
 
     // Measure serialization overhead
     {
-        let frame = engine::evaluate(&show, 0, time);
+        let frame = engine::evaluate(&show, 0, time, None);
         let json = serde_json::to_string(&frame).unwrap();
         eprintln!("Frame JSON size: {} bytes ({:.1} KB)", json.len(), json.len() as f64 / 1024.0);
         eprintln!("Frame fixture count: {}", frame.fixtures.len());
@@ -398,7 +402,7 @@ fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64,
 
         let start = std::time::Instant::now();
         for _ in 0..20 {
-            let f = engine::evaluate(&show, 0, time);
+            let f = engine::evaluate(&show, 0, time, None);
             let j = serde_json::to_string(&f).unwrap();
             std::hint::black_box(&j);
         }
@@ -406,7 +410,7 @@ fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64,
         eprintln!("Eval + serialize: {:?}", ser_time);
 
         // Measure serialize alone
-        let frame2 = engine::evaluate(&show, 0, time);
+        let frame2 = engine::evaluate(&show, 0, time, None);
         let start2 = std::time::Instant::now();
         for _ in 0..20 {
             let j = serde_json::to_string(&frame2).unwrap();
@@ -418,14 +422,14 @@ fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64,
 
     // Warmup
     eprintln!("\nWarmup...");
-    let _ = engine::evaluate(&show, 0, time);
+    let _ = engine::evaluate(&show, 0, time, None);
 
     // Benchmark (evaluate only)
     eprintln!("Benchmarking {} iterations at t={}...\n", iterations, time);
     let mut times = Vec::with_capacity(iterations);
     for _ in 0..iterations {
         let start = Instant::now();
-        let frame = engine::evaluate(&show, 0, time);
+        let frame = engine::evaluate(&show, 0, time, None);
         let elapsed = start.elapsed();
         times.push(elapsed);
         std::hint::black_box(&frame);
@@ -692,15 +696,14 @@ async fn main() {
                     ).await
                 }
 
-                Commands::AddTrack { name, fixture, blend_mode } => {
+                Commands::AddTrack { name, fixture } => {
                     http_post(
                         &format!("{}/api/command", base),
                         serde_json::json!({
                             "AddTrack": {
                                 "sequence_index": 0,
                                 "name": name,
-                                "target": { "Fixtures": [fixture] },
-                                "blend_mode": blend_mode
+                                "target": { "Fixtures": [fixture] }
                             }
                         }),
                     ).await

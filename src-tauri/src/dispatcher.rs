@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::error::AppError;
 use crate::model::{
-    BlendMode, EffectInstance, EffectKind, EffectParams, EffectTarget, ParamValue, Sequence,
-    TimeRange,
+    BlendMode, EffectInstance, EffectKind, EffectParams, EffectTarget, ParamKey, ParamValue,
+    Sequence, TimeRange,
 };
 
 /// An undoable editing command. Each variant corresponds to one user action.
@@ -15,6 +16,8 @@ pub enum EditCommand {
         kind: EffectKind,
         start: f64,
         end: f64,
+        blend_mode: BlendMode,
+        opacity: f64,
     },
     DeleteEffects {
         sequence_index: usize,
@@ -24,7 +27,7 @@ pub enum EditCommand {
         sequence_index: usize,
         track_index: usize,
         effect_index: usize,
-        key: String,
+        key: ParamKey,
         value: ParamValue,
     },
     UpdateEffectTimeRange {
@@ -44,7 +47,6 @@ pub enum EditCommand {
         sequence_index: usize,
         name: String,
         target: EffectTarget,
-        blend_mode: BlendMode,
     },
     UpdateSequenceSettings {
         sequence_index: usize,
@@ -72,7 +74,7 @@ impl EditCommand {
                     format!("Delete {} effects", n)
                 }
             }
-            EditCommand::UpdateEffectParam { key, .. } => format!("Update {}", key),
+            EditCommand::UpdateEffectParam { key, .. } => format!("Update {:?}", key),
             EditCommand::UpdateEffectTimeRange { .. } => "Update effect timing".to_string(),
             EditCommand::MoveEffectToTrack { .. } => "Move effect to track".to_string(),
             EditCommand::AddTrack { name, .. } => format!("Add track \"{}\"", name),
@@ -153,7 +155,7 @@ impl CommandDispatcher {
         &mut self,
         show: &mut crate::model::Show,
         cmd: EditCommand,
-    ) -> Result<CommandResult, String> {
+    ) -> Result<CommandResult, AppError> {
         let seq_idx = cmd.sequence_index();
         let description = cmd.description();
 
@@ -161,7 +163,10 @@ impl CommandDispatcher {
         let snapshot = show
             .sequences
             .get(seq_idx)
-            .ok_or("Invalid sequence index")?
+            .ok_or(AppError::InvalidIndex {
+                what: "sequence".into(),
+                index: seq_idx,
+            })?
             .clone();
 
         // Execute the command
@@ -182,14 +187,19 @@ impl CommandDispatcher {
     }
 
     /// Undo the last command. Returns the description of what was undone.
-    pub fn undo(&mut self, show: &mut crate::model::Show) -> Result<String, String> {
-        let entry = self.undo_stack.pop().ok_or("Nothing to undo")?;
+    pub fn undo(&mut self, show: &mut crate::model::Show) -> Result<String, AppError> {
+        let entry = self.undo_stack.pop().ok_or(AppError::ValidationError {
+            message: "Nothing to undo".into(),
+        })?;
 
         // Snapshot current state for redo
         let current = show
             .sequences
             .get(entry.sequence_index)
-            .ok_or("Invalid sequence index")?
+            .ok_or(AppError::InvalidIndex {
+                what: "sequence".into(),
+                index: entry.sequence_index,
+            })?
             .clone();
 
         // Restore the snapshot
@@ -208,14 +218,19 @@ impl CommandDispatcher {
     }
 
     /// Redo the last undone command. Returns the description of what was redone.
-    pub fn redo(&mut self, show: &mut crate::model::Show) -> Result<String, String> {
-        let entry = self.redo_stack.pop().ok_or("Nothing to redo")?;
+    pub fn redo(&mut self, show: &mut crate::model::Show) -> Result<String, AppError> {
+        let entry = self.redo_stack.pop().ok_or(AppError::ValidationError {
+            message: "Nothing to redo".into(),
+        })?;
 
-        // Snapshot current state for undo
+        // Snapshot current state for redo
         let current = show
             .sequences
             .get(entry.sequence_index)
-            .ok_or("Invalid sequence index")?
+            .ok_or(AppError::InvalidIndex {
+                what: "sequence".into(),
+                index: entry.sequence_index,
+            })?
             .clone();
 
         // Restore the redo snapshot
@@ -254,7 +269,7 @@ impl CommandDispatcher {
         &self,
         show: &mut crate::model::Show,
         cmd: &EditCommand,
-    ) -> Result<CommandResult, String> {
+    ) -> Result<CommandResult, AppError> {
         match cmd {
             EditCommand::AddEffect {
                 sequence_index,
@@ -262,20 +277,32 @@ impl CommandDispatcher {
                 kind,
                 start,
                 end,
+                blend_mode,
+                opacity,
             } => {
-                let time_range = TimeRange::new(*start, *end).ok_or("Invalid time range")?;
+                let time_range = TimeRange::new(*start, *end).ok_or(AppError::ValidationError {
+                    message: format!("Invalid time range: {start}..{end}"),
+                })?;
                 let sequence = show
                     .sequences
                     .get_mut(*sequence_index)
-                    .ok_or("Invalid sequence index")?;
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
                 let track = sequence
                     .tracks
                     .get_mut(*track_index)
-                    .ok_or("Invalid track index")?;
+                    .ok_or(AppError::InvalidIndex {
+                        what: "track".into(),
+                        index: *track_index,
+                    })?;
                 let effect = EffectInstance {
                     kind: kind.clone(),
                     params: EffectParams::new(),
                     time_range,
+                    blend_mode: *blend_mode,
+                    opacity: *opacity,
                 };
                 // Insert sorted by start time for efficient binary-search evaluation.
                 let insert_pos = track.effects.partition_point(|e| {
@@ -292,7 +319,10 @@ impl CommandDispatcher {
                 let sequence = show
                     .sequences
                     .get_mut(*sequence_index)
-                    .ok_or("Invalid sequence index")?;
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
                 let mut by_track: std::collections::HashMap<usize, Vec<usize>> =
                     std::collections::HashMap::new();
                 for (track_idx, effect_idx) in targets {
@@ -302,7 +332,10 @@ impl CommandDispatcher {
                     let track = sequence
                         .tracks
                         .get_mut(track_idx)
-                        .ok_or(format!("Invalid track index {track_idx}"))?;
+                        .ok_or(AppError::InvalidIndex {
+                            what: "track".into(),
+                            index: track_idx,
+                        })?;
                     effect_indices.sort_unstable();
                     effect_indices.dedup();
                     for &idx in effect_indices.iter().rev() {
@@ -324,16 +357,25 @@ impl CommandDispatcher {
                 let sequence = show
                     .sequences
                     .get_mut(*sequence_index)
-                    .ok_or("Invalid sequence index")?;
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
                 let track = sequence
                     .tracks
                     .get_mut(*track_index)
-                    .ok_or("Invalid track index")?;
+                    .ok_or(AppError::InvalidIndex {
+                        what: "track".into(),
+                        index: *track_index,
+                    })?;
                 let effect = track
                     .effects
                     .get_mut(*effect_index)
-                    .ok_or("Invalid effect index")?;
-                effect.params.set_mut(key.clone(), value.clone());
+                    .ok_or(AppError::InvalidIndex {
+                        what: "effect".into(),
+                        index: *effect_index,
+                    })?;
+                effect.params.set_mut(*key, value.clone());
                 Ok(CommandResult::Bool(true))
             }
 
@@ -344,19 +386,30 @@ impl CommandDispatcher {
                 start,
                 end,
             } => {
-                let time_range = TimeRange::new(*start, *end).ok_or("Invalid time range")?;
+                let time_range = TimeRange::new(*start, *end).ok_or(AppError::ValidationError {
+                    message: format!("Invalid time range: {start}..{end}"),
+                })?;
                 let sequence = show
                     .sequences
                     .get_mut(*sequence_index)
-                    .ok_or("Invalid sequence index")?;
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
                 let track = sequence
                     .tracks
                     .get_mut(*track_index)
-                    .ok_or("Invalid track index")?;
+                    .ok_or(AppError::InvalidIndex {
+                        what: "track".into(),
+                        index: *track_index,
+                    })?;
                 let effect = track
                     .effects
                     .get_mut(*effect_index)
-                    .ok_or("Invalid effect index")?;
+                    .ok_or(AppError::InvalidIndex {
+                        what: "effect".into(),
+                        index: *effect_index,
+                    })?;
                 effect.time_range = time_range;
                 // Re-sort to maintain start-time ordering for binary search.
                 track.effects.sort_by(|a, b| {
@@ -377,15 +430,27 @@ impl CommandDispatcher {
                 let sequence = show
                     .sequences
                     .get_mut(*sequence_index)
-                    .ok_or("Invalid sequence index")?;
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
                 if *from_track >= sequence.tracks.len() {
-                    return Err(format!("Invalid source track index {from_track}"));
+                    return Err(AppError::InvalidIndex {
+                        what: "source track".into(),
+                        index: *from_track,
+                    });
                 }
                 if *to_track >= sequence.tracks.len() {
-                    return Err(format!("Invalid destination track index {to_track}"));
+                    return Err(AppError::InvalidIndex {
+                        what: "destination track".into(),
+                        index: *to_track,
+                    });
                 }
                 if *effect_index >= sequence.tracks[*from_track].effects.len() {
-                    return Err(format!("Invalid effect index {effect_index}"));
+                    return Err(AppError::InvalidIndex {
+                        what: "effect".into(),
+                        index: *effect_index,
+                    });
                 }
                 let effect = sequence.tracks[*from_track].effects.remove(*effect_index);
                 let dest_track = &mut sequence.tracks[*to_track];
@@ -400,17 +465,18 @@ impl CommandDispatcher {
                 sequence_index,
                 name,
                 target,
-                blend_mode,
             } => {
                 let sequence = show
                     .sequences
                     .get_mut(*sequence_index)
-                    .ok_or("Invalid sequence index")?;
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
                 let track = crate::model::Track {
                     name: name.clone(),
                     target: target.clone(),
                     effects: Vec::new(),
-                    blend_mode: *blend_mode,
                 };
                 sequence.tracks.push(track);
                 Ok(CommandResult::Index(sequence.tracks.len() - 1))
@@ -426,7 +492,10 @@ impl CommandDispatcher {
                 let sequence = show
                     .sequences
                     .get_mut(*sequence_index)
-                    .ok_or("Invalid sequence index")?;
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
                 if let Some(n) = name {
                     sequence.name = n.clone();
                 }
@@ -435,13 +504,17 @@ impl CommandDispatcher {
                 }
                 if let Some(d) = duration {
                     if *d <= 0.0 {
-                        return Err("Duration must be positive".into());
+                        return Err(AppError::ValidationError {
+                            message: "Duration must be positive".into(),
+                        });
                     }
                     sequence.duration = *d;
                 }
                 if let Some(fr) = frame_rate {
                     if *fr <= 0.0 {
-                        return Err("Frame rate must be positive".into());
+                        return Err(AppError::ValidationError {
+                            message: "Frame rate must be positive".into(),
+                        });
                     }
                     sequence.frame_rate = *fr;
                 }

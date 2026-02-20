@@ -14,9 +14,23 @@ pub struct ColorStop {
 /// A color gradient defined by stops with linear RGB interpolation.
 /// Stops are always sorted by position.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(try_from = "ColorGradientRaw")]
 #[ts(export)]
 pub struct ColorGradient {
     stops: Vec<ColorStop>,
+}
+
+#[derive(Deserialize)]
+struct ColorGradientRaw {
+    stops: Vec<ColorStop>,
+}
+
+impl TryFrom<ColorGradientRaw> for ColorGradient {
+    type Error = String;
+    fn try_from(raw: ColorGradientRaw) -> Result<Self, String> {
+        ColorGradient::new(raw.stops)
+            .ok_or_else(|| "ColorGradient requires at least 1 stop".to_string())
+    }
 }
 
 impl ColorGradient {
@@ -90,7 +104,8 @@ impl ColorGradient {
             return self.stops[0].color;
         }
         if idx >= self.stops.len() {
-            return self.stops.last().unwrap().color;
+            // stops is always non-empty (constructor returns None for empty)
+            return self.stops.last().map_or(Color::BLACK, |s| s.color);
         }
 
         let a = &self.stops[idx - 1];
@@ -112,6 +127,7 @@ impl Default for ColorGradient {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

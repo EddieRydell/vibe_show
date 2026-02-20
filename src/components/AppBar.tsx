@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Wordmark } from "./Wordmark";
 
-export function AppBar() {
+export function AppBar({ onClose }: { onClose?: () => void } = {}) {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -25,8 +25,9 @@ export function AppBar() {
   }, []);
 
   const handleClose = useCallback(() => {
-    getCurrentWindow().close();
-  }, []);
+    if (onClose) onClose();
+    else getCurrentWindow().close();
+  }, [onClose]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     // Don't drag if clicking on an interactive element

@@ -10,10 +10,25 @@ use super::fixture::EffectTarget;
 /// A time range within a sequence. Start must be < end, both in seconds.
 /// Constructed via `TimeRange::new` which enforces this invariant.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(try_from = "TimeRangeRaw")]
 #[ts(export)]
 pub struct TimeRange {
     start: f64,
     end: f64,
+}
+
+#[derive(Deserialize)]
+struct TimeRangeRaw {
+    start: f64,
+    end: f64,
+}
+
+impl TryFrom<TimeRangeRaw> for TimeRange {
+    type Error = String;
+    fn try_from(raw: TimeRangeRaw) -> Result<Self, String> {
+        TimeRange::new(raw.start, raw.end)
+            .ok_or_else(|| format!("Invalid TimeRange: start={}, end={}", raw.start, raw.end))
+    }
 }
 
 impl TimeRange {
@@ -63,9 +78,62 @@ pub enum BlendMode {
     Max,
     /// Alpha composite (foreground over background).
     Alpha,
+    /// Saturating subtraction per channel.
+    Subtract,
+    /// Per-channel minimum.
+    Min,
+    /// Per-channel average.
+    Average,
+    /// Screen blend (complement of multiply).
+    Screen,
+    /// Where foreground is non-black, output black; else preserve background.
+    Mask,
+    /// Scale background brightness by foreground luminance.
+    IntensityOverlay,
 }
 
-/// Type-safe parameter values for effects. Extensible without stringly-typed nonsense.
+/// All known effect parameter keys. Compile-time checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ParamKey {
+    Color,
+    Colors,
+    Gradient,
+    MovementCurve,
+    PulseCurve,
+    IntensityCurve,
+    ColorMode,
+    Speed,
+    PulseWidth,
+    BackgroundLevel,
+    Reverse,
+    Spread,
+    Saturation,
+    Brightness,
+    Rate,
+    DutyCycle,
+    Density,
+    Offset,
+    Direction,
+    CenterX,
+    CenterY,
+    PassCount,
+    WipeOn,
+}
+
+/// How gradient colors are applied across time/space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ColorMode {
+    Static,
+    GradientPerPulse,
+    GradientThroughEffect,
+    GradientAcrossItems,
+}
+
+/// Type-safe parameter values for effects.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub enum ParamValue {
@@ -74,10 +142,10 @@ pub enum ParamValue {
     Bool(bool),
     Color(Color),
     ColorList(Vec<Color>),
-    /// A text value (for future DSL expressions, etc.)
     Text(String),
     Curve(Curve),
     ColorGradient(ColorGradient),
+    ColorMode(ColorMode),
 }
 
 impl ParamValue {
@@ -137,6 +205,13 @@ impl ParamValue {
             _ => None,
         }
     }
+
+    pub fn as_color_mode(&self) -> Option<ColorMode> {
+        match self {
+            ParamValue::ColorMode(v) => Some(*v),
+            _ => None,
+        }
+    }
 }
 
 /// Describes the type and constraints for an effect parameter, used to drive UI generation.
@@ -150,14 +225,15 @@ pub enum ParamType {
     ColorList { min_colors: usize, max_colors: usize },
     Curve,
     ColorGradient { min_stops: usize, max_stops: usize },
-    Select { options: Vec<String> },
+    ColorMode,
+    Text { options: Vec<String> },
 }
 
 /// Schema entry for one effect parameter: key, label, type constraints, and default value.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ParamSchema {
-    pub key: String,
+    pub key: ParamKey,
     pub label: String,
     pub param_type: ParamType,
     pub default: ParamValue,
@@ -168,64 +244,71 @@ pub struct ParamSchema {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 #[serde(transparent)]
 #[ts(export)]
-pub struct EffectParams(HashMap<String, ParamValue>);
+pub struct EffectParams(HashMap<ParamKey, ParamValue>);
 
 impl EffectParams {
     pub fn new() -> Self {
         Self(HashMap::new())
     }
 
-    pub fn set(mut self, key: impl Into<String>, value: ParamValue) -> Self {
-        self.0.insert(key.into(), value);
+    pub fn set(mut self, key: ParamKey, value: ParamValue) -> Self {
+        self.0.insert(key, value);
         self
     }
 
-    pub fn set_mut(&mut self, key: impl Into<String>, value: ParamValue) {
-        self.0.insert(key.into(), value);
+    pub fn set_mut(&mut self, key: ParamKey, value: ParamValue) {
+        self.0.insert(key, value);
     }
 
-    pub fn get(&self, key: &str) -> Option<&ParamValue> {
-        self.0.get(key)
+    pub fn get(&self, key: ParamKey) -> Option<&ParamValue> {
+        self.0.get(&key)
     }
 
     /// Get a float param with a default fallback.
-    pub fn float_or(&self, key: &str, default: f64) -> f64 {
+    pub fn float_or(&self, key: ParamKey, default: f64) -> f64 {
         self.get(key).and_then(|v| v.as_float()).unwrap_or(default)
     }
 
     /// Get a color param with a default fallback.
-    pub fn color_or(&self, key: &str, default: Color) -> Color {
+    pub fn color_or(&self, key: ParamKey, default: Color) -> Color {
         self.get(key).and_then(|v| v.as_color()).unwrap_or(default)
     }
 
     /// Get a color list param with a default fallback.
-    pub fn color_list_or<'a>(&'a self, key: &str, default: &'a [Color]) -> &'a [Color] {
+    pub fn color_list_or<'a>(&'a self, key: ParamKey, default: &'a [Color]) -> &'a [Color] {
         self.get(key)
             .and_then(|v| v.as_color_list())
             .unwrap_or(default)
     }
 
     /// Get a bool param with a default fallback.
-    pub fn bool_or(&self, key: &str, default: bool) -> bool {
+    pub fn bool_or(&self, key: ParamKey, default: bool) -> bool {
         self.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
     }
 
     /// Get a curve param with a default fallback.
-    pub fn curve_or<'a>(&'a self, key: &str, default: &'a Curve) -> &'a Curve {
+    pub fn curve_or<'a>(&'a self, key: ParamKey, default: &'a Curve) -> &'a Curve {
         self.get(key)
             .and_then(|v| v.as_curve())
             .unwrap_or(default)
     }
 
     /// Get a color gradient param with a default fallback.
-    pub fn gradient_or<'a>(&'a self, key: &str, default: &'a ColorGradient) -> &'a ColorGradient {
+    pub fn gradient_or<'a>(&'a self, key: ParamKey, default: &'a ColorGradient) -> &'a ColorGradient {
         self.get(key)
             .and_then(|v| v.as_color_gradient())
             .unwrap_or(default)
     }
 
+    /// Get a color mode param with a default fallback.
+    pub fn color_mode_or(&self, key: ParamKey, default: ColorMode) -> ColorMode {
+        self.get(key)
+            .and_then(|v| v.as_color_mode())
+            .unwrap_or(default)
+    }
+
     /// Get a text param with a default fallback.
-    pub fn text_or<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
+    pub fn text_or<'a>(&'a self, key: ParamKey, default: &'a str) -> &'a str {
         self.get(key)
             .and_then(|v| v.as_text())
             .unwrap_or(default)
@@ -244,6 +327,7 @@ pub enum EffectKind {
     Gradient,
     Twinkle,
     Fade,
+    Wipe,
 }
 
 /// A placed effect on the timeline. Fully describes what happens, when, and to what.
@@ -253,17 +337,19 @@ pub struct EffectInstance {
     pub kind: EffectKind,
     pub params: EffectParams,
     pub time_range: TimeRange,
+    pub blend_mode: BlendMode,
+    /// Opacity multiplier (0.0 = transparent, 1.0 = fully opaque).
+    pub opacity: f64,
 }
 
 /// A track targets a set of fixtures and contains a list of non-overlapping effect instances.
-/// Tracks are layered bottom-to-top with a blend mode.
+/// Tracks are layered bottom-to-top; blend mode lives on each EffectInstance.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Track {
     pub name: String,
     pub target: EffectTarget,
     pub effects: Vec<EffectInstance>,
-    pub blend_mode: BlendMode,
 }
 
 /// A sequence is the top-level timeline container. One sequence per song/show.

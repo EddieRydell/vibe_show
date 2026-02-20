@@ -12,6 +12,7 @@ import type {
 } from "../types";
 import { Settings } from "lucide-react";
 import { AppBar } from "../components/AppBar";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { HouseTree } from "../components/house/HouseTree";
 import { FixtureEditor } from "../components/house/FixtureEditor";
 import { GroupEditor } from "../components/house/GroupEditor";
@@ -150,15 +151,22 @@ function SequencesTab({
       .catch((e) => setError(String(e)));
   }, [newName, refresh, setError]);
 
+  const [deleteTarget, setDeleteTarget] = useState<{ slug: string; name: string } | null>(null);
+
   const handleDelete = useCallback(
     (seqSlug: string, name: string) => {
-      if (!confirm(`Delete sequence "${name}"?`)) return;
-      invoke("delete_sequence", { slug: seqSlug })
-        .then(refresh)
-        .catch((e) => setError(String(e)));
+      setDeleteTarget({ slug: seqSlug, name });
     },
-    [refresh, setError],
+    [],
   );
+
+  const confirmDelete = useCallback(() => {
+    if (!deleteTarget) return;
+    invoke("delete_sequence", { slug: deleteTarget.slug })
+      .then(refresh)
+      .catch((e) => setError(String(e)));
+    setDeleteTarget(null);
+  }, [deleteTarget, refresh, setError]);
 
   const handleImportVixenSequence = useCallback(async () => {
     const picked = await open({
@@ -263,6 +271,17 @@ function SequencesTab({
           ))}
         </div>
       )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete sequence"
+          message={`Delete sequence "${deleteTarget.name}"? This cannot be undone.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
     </div>
   );
 }
@@ -293,15 +312,22 @@ function MusicTab({ setError }: { setError: (e: string | null) => void }) {
       .catch((e) => setError(String(e)));
   }, [refresh, setError]);
 
+  const [deleteFilename, setDeleteFilename] = useState<string | null>(null);
+
   const handleDelete = useCallback(
     (filename: string) => {
-      if (!confirm(`Delete "${filename}"?`)) return;
-      invoke("delete_media", { filename })
-        .then(refresh)
-        .catch((e) => setError(String(e)));
+      setDeleteFilename(filename);
     },
-    [refresh, setError],
+    [],
   );
+
+  const confirmDelete = useCallback(() => {
+    if (!deleteFilename) return;
+    invoke("delete_media", { filename: deleteFilename })
+      .then(refresh)
+      .catch((e) => setError(String(e)));
+    setDeleteFilename(null);
+  }, [deleteFilename, refresh, setError]);
 
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -346,6 +372,17 @@ function MusicTab({ setError }: { setError: (e: string | null) => void }) {
           ))}
         </div>
       )}
+
+      {deleteFilename && (
+        <ConfirmDialog
+          title="Delete file"
+          message={`Delete "${deleteFilename}"? This cannot be undone.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteFilename(null)}
+        />
+      )}
     </div>
   );
 }
@@ -366,6 +403,7 @@ function HouseSetupTab({
   const [dirty, setDirty] = useState(false);
   const [editingFixture, setEditingFixture] = useState<FixtureDef | null | "new">(null);
   const [editingGroup, setEditingGroup] = useState<FixtureGroup | null | "new">(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ kind: "fixture" | "group"; id: number } | null>(null);
 
   // Sync with profile when it changes externally
   useEffect(() => {
@@ -388,10 +426,11 @@ function HouseSetupTab({
   };
 
   const handleDeleteFixture = (id: number) => {
-    if (!confirm("Delete this fixture?")) return;
-    // Remove from fixtures
+    setDeleteConfirm({ kind: "fixture", id });
+  };
+
+  const doDeleteFixture = (id: number) => {
     setFixtures((prev) => prev.filter((f) => f.id !== id));
-    // Remove from all group members
     setGroups((prev) =>
       prev.map((g) => ({
         ...g,
@@ -412,17 +451,25 @@ function HouseSetupTab({
   };
 
   const handleDeleteGroup = (id: number) => {
-    if (!confirm("Delete this group?")) return;
-    // Remove the group itself
+    setDeleteConfirm({ kind: "group", id });
+  };
+
+  const doDeleteGroup = (id: number) => {
     setGroups((prev) => {
       const without = prev.filter((g) => g.id !== id);
-      // Also remove from other group members
       return without.map((g) => ({
         ...g,
         members: g.members.filter((m) => !("Group" in m && m.Group === id)),
       }));
     });
     setDirty(true);
+  };
+
+  const confirmDeleteItem = () => {
+    if (!deleteConfirm) return;
+    if (deleteConfirm.kind === "fixture") doDeleteFixture(deleteConfirm.id);
+    else doDeleteGroup(deleteConfirm.id);
+    setDeleteConfirm(null);
   };
 
   const handleSave = async () => {
@@ -535,6 +582,17 @@ function HouseSetupTab({
           onSave={handleSaveGroup}
           onCancel={() => setEditingGroup(null)}
           nextId={nextGroupId}
+        />
+      )}
+
+      {deleteConfirm && (
+        <ConfirmDialog
+          title={deleteConfirm.kind === "fixture" ? "Delete fixture" : "Delete group"}
+          message={`Delete this ${deleteConfirm.kind}? This cannot be undone.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={confirmDeleteItem}
+          onCancel={() => setDeleteConfirm(null)}
         />
       )}
     </div>

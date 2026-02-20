@@ -1,10 +1,48 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Frame, PlaybackInfo, Show } from "../types";
+import type { Frame, PlaybackInfo, Show, TickResult } from "../types";
 import { usePreviewRenderer } from "../hooks/usePreviewRenderer";
+import { usePreviewSettings } from "../hooks/usePreviewSettings";
+import { usePreviewCamera } from "../hooks/usePreviewCamera";
+import { PreviewToolbar } from "../components/PreviewToolbar";
 import { AppBar } from "../components/AppBar";
+
+// ── Selection preview loop (adapted from usePreviewLoop) ────────────
+
+interface SelectionInfo {
+  effects: [number, number][];
+  start: number;
+  end: number;
+}
+
+function parseSelection(
+  selected: [number, number][],
+  show: Show | null,
+  sequenceIndex: number,
+): SelectionInfo | null {
+  if (!show || selected.length === 0) return null;
+  const sequence = show.sequences[sequenceIndex];
+  if (!sequence) return null;
+
+  let min = Infinity;
+  let max = -Infinity;
+  const valid: [number, number][] = [];
+
+  for (const [trackIdx, effectIdx] of selected) {
+    const track = sequence.tracks[trackIdx];
+    if (!track) continue;
+    const effect = track.effects[effectIdx];
+    if (!effect) continue;
+    valid.push([trackIdx, effectIdx]);
+    if (effect.time_range.start < min) min = effect.time_range.start;
+    if (effect.time_range.end > max) max = effect.time_range.end;
+  }
+
+  if (valid.length === 0 || !isFinite(min) || !isFinite(max) || min >= max) return null;
+  return { effects: valid, start: min, end: max };
+}
 
 export function DetachedPreview() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -12,19 +50,18 @@ export function DetachedPreview() {
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [show, setShow] = useState<Show | null>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [selectedEffects, setSelectedEffects] = useState<[number, number][]>([]);
+  const [mainPlaying, setMainPlaying] = useState(false);
+  const [selectionFrame, setSelectionFrame] = useState<Frame | null>(null);
 
-  // Fetch show data on mount
+  const { settings, update: updateSettings, reset: resetSettings } = usePreviewSettings();
+  const { camera, resetView, handlers: cameraHandlers } = usePreviewCamera();
+
+  // Fetch show data
   const fetchShow = useCallback(() => {
     invoke<Show>("get_show")
-      .then((s) => {
-        setShow(s);
-        setLoading(false);
-      })
-      .catch((e) => {
-        console.error("[VibeLights] DetachedPreview get_show failed:", e);
-        setLoading(false);
-      });
+      .then((s) => setShow(s))
+      .catch((e) => console.error("[Preview] get_show failed:", e));
   }, []);
 
   useEffect(() => {
@@ -40,6 +77,16 @@ export function DetachedPreview() {
       unlisten.then((fn) => fn());
     };
   }, [fetchShow]);
+
+  // Listen for selection-changed events from the main window
+  useEffect(() => {
+    const unlisten = listen<{ effects: [number, number][] }>("selection-changed", (event) => {
+      setSelectedEffects(event.payload.effects);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   // Observe container size
   useEffect(() => {
@@ -58,20 +105,29 @@ export function DetachedPreview() {
     return () => observer.disconnect();
   }, []);
 
-  // Animation loop: poll playback state and fetch frames
+  // Main playback frame loop — calls tick() to drive time from this window
   useEffect(() => {
     let cancelled = false;
     let rafId = 0;
 
     const loop = () => {
       if (cancelled) return;
-      invoke<PlaybackInfo>("get_playback")
-        .then((pb) => {
+      invoke<TickResult | null>("tick", { dt: 0 })
+        .then((result) => {
           if (cancelled) return;
-          return invoke<Frame>("get_frame", { time: pb.current_time });
-        })
-        .then((f) => {
-          if (f && !cancelled) setFrame(f);
+          if (result) {
+            setMainPlaying(result.playing);
+            setFrame(result.frame);
+          } else {
+            // Paused — read current state for display
+            return invoke<PlaybackInfo>("get_playback").then((pb) => {
+              if (cancelled) return;
+              setMainPlaying(pb.playing);
+              return invoke<Frame>("get_frame", { time: pb.current_time });
+            }).then((f) => {
+              if (f && !cancelled) setFrame(f);
+            });
+          }
         })
         .catch(() => {})
         .finally(() => {
@@ -86,44 +142,92 @@ export function DetachedPreview() {
     };
   }, []);
 
-  const handleReattach = useCallback(() => {
-    emit("preview-reattach");
+  // Selection preview loop: runs when paused and selection is non-empty
+  const selectionInfo = useMemo(
+    () => parseSelection(selectedEffects, show, 0),
+    [selectedEffects, show],
+  );
+
+  const isPreviewingSelection = selectionInfo != null && !mainPlaying;
+  const selectionEffectsRef = useRef(selectionInfo?.effects ?? []);
+  selectionEffectsRef.current = selectionInfo?.effects ?? [];
+
+  useEffect(() => {
+    if (!selectionInfo || mainPlaying) {
+      setSelectionFrame(null);
+      return;
+    }
+
+    const { start, end } = selectionInfo;
+    const duration = end - start;
+    let cancelled = false;
+    let currentTime = start;
+    let lastTimestamp: number | null = null;
+    let rafId = 0;
+
+    const loop = (timestamp: number) => {
+      if (cancelled) return;
+
+      const dt = lastTimestamp != null ? (timestamp - lastTimestamp) / 1000.0 : 0;
+      lastTimestamp = timestamp;
+
+      currentTime += dt;
+      if (currentTime >= end) {
+        currentTime = start + ((currentTime - start) % duration);
+      }
+
+      const t = currentTime;
+
+      invoke<Frame>("get_frame_filtered", { time: t, effects: selectionEffectsRef.current })
+        .then((f) => {
+          if (!cancelled) setSelectionFrame(f);
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) rafId = requestAnimationFrame(loop);
+        });
+    };
+
+    rafId = requestAnimationFrame(loop);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+      setSelectionFrame(null);
+    };
+  }, [selectionInfo, mainPlaying]);
+
+  const displayFrame = isPreviewingSelection ? selectionFrame : frame;
+
+  const handleClose = useCallback(() => {
     getCurrentWindow().close();
   }, []);
 
-  usePreviewRenderer(canvasRef, show, frame, size.width, size.height);
+  const handleResetAll = useCallback(() => {
+    resetView();
+    resetSettings();
+  }, [resetView, resetSettings]);
+
+  usePreviewRenderer(canvasRef, show, displayFrame, size.width, size.height, settings, camera);
 
   return (
     <div className="bg-bg text-text flex h-screen flex-col">
-      <AppBar />
+      <AppBar onClose={handleClose} />
 
-      {/* Reattach toolbar */}
-      <div className="border-border bg-surface flex items-center border-b px-3 py-1">
-        <span className="text-text-2 flex-1 text-[11px] tracking-wider uppercase">
-          Preview
-        </span>
-        <button
-          onClick={handleReattach}
-          className="text-text-2 hover:bg-surface-2 hover:text-text rounded px-2 py-0.5 text-[11px] transition-colors"
-          title="Reattach to main window"
-        >
-          &#x2199; Reattach
-        </button>
+      <PreviewToolbar
+        settings={settings}
+        onUpdate={updateSettings}
+        isPreviewingSelection={isPreviewingSelection}
+        onResetView={handleResetAll}
+        onClose={handleClose}
+      />
+
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-hidden"
+        {...cameraHandlers}
+      >
+        <canvas ref={canvasRef} className="block h-full w-full" />
       </div>
-
-      {loading ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3">
-          <div className="border-primary h-6 w-6 animate-spin rounded-full border-2 border-t-transparent" />
-          <p className="text-text-2 text-sm">Loading preview...</p>
-        </div>
-      ) : (
-        <div
-          ref={containerRef}
-          className="flex-1 overflow-hidden"
-        >
-          <canvas ref={canvasRef} className="block h-full w-full" />
-        </div>
-      )}
     </div>
   );
 }

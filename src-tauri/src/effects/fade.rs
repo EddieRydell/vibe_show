@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use crate::model::{BlendMode, Color, ColorGradient, Curve, EffectParams, ParamSchema, ParamType, ParamValue};
+use crate::model::{BlendMode, Color, ColorGradient, ColorMode, Curve, EffectParams, ParamKey, ParamSchema, ParamType, ParamValue};
 
 use super::Effect;
 
@@ -16,10 +16,11 @@ pub fn evaluate_pixels_batch(
     total_pixels: usize,
     params: &EffectParams,
     blend_mode: BlendMode,
+    opacity: f64,
 ) {
-    let intensity_curve = params.curve_or("intensity_curve", &DEFAULT_INTENSITY);
-    let gradient = params.gradient_or("gradient", &DEFAULT_GRADIENT);
-    let color_mode = params.text_or("color_mode", "gradient_through_effect");
+    let intensity_curve = params.curve_or(ParamKey::IntensityCurve, &DEFAULT_INTENSITY);
+    let gradient = params.gradient_or(ParamKey::Gradient, &DEFAULT_GRADIENT);
+    let color_mode = params.color_mode_or(ParamKey::ColorMode, ColorMode::GradientThroughEffect);
 
     let intensity = intensity_curve.evaluate(t);
     let inv_total = if total_pixels > 0 {
@@ -32,12 +33,12 @@ pub fn evaluate_pixels_batch(
         let pos = ((global_offset + i) as f64) * inv_total;
 
         let color = match color_mode {
-            "gradient_across_items" => gradient.evaluate(pos),
-            "static" => gradient.evaluate(0.0),
-            _ => gradient.evaluate(t), // "gradient_through_effect"
+            ColorMode::GradientAcrossItems => gradient.evaluate(pos),
+            ColorMode::Static => gradient.evaluate(0.0),
+            _ => gradient.evaluate(t),
         };
 
-        let effect_color = color.scale(intensity);
+        let effect_color = color.scale(intensity * opacity);
         *pixel = pixel.blend(effect_color, blend_mode);
     }
 }
@@ -54,9 +55,9 @@ impl Effect for FadeEffect {
         pixel_count: usize,
         params: &EffectParams,
     ) -> Color {
-        let intensity_curve = params.curve_or("intensity_curve", &DEFAULT_INTENSITY);
-        let gradient = params.gradient_or("gradient", &DEFAULT_GRADIENT);
-        let color_mode = params.text_or("color_mode", "gradient_through_effect");
+        let intensity_curve = params.curve_or(ParamKey::IntensityCurve, &DEFAULT_INTENSITY);
+        let gradient = params.gradient_or(ParamKey::Gradient, &DEFAULT_GRADIENT);
+        let color_mode = params.color_mode_or(ParamKey::ColorMode, ColorMode::GradientThroughEffect);
 
         let intensity = intensity_curve.evaluate(t);
         let pos = if pixel_count > 0 {
@@ -66,8 +67,8 @@ impl Effect for FadeEffect {
         };
 
         let color = match color_mode {
-            "gradient_across_items" => gradient.evaluate(pos),
-            "static" => gradient.evaluate(0.0),
+            ColorMode::GradientAcrossItems => gradient.evaluate(pos),
+            ColorMode::Static => gradient.evaluate(0.0),
             _ => gradient.evaluate(t),
         };
 
@@ -81,13 +82,13 @@ impl Effect for FadeEffect {
     fn param_schema(&self) -> Vec<ParamSchema> {
         vec![
             ParamSchema {
-                key: "intensity_curve".into(),
+                key: ParamKey::IntensityCurve,
                 label: "Intensity Curve".into(),
                 param_type: ParamType::Curve,
                 default: ParamValue::Curve(Curve::triangle()),
             },
             ParamSchema {
-                key: "gradient".into(),
+                key: ParamKey::Gradient,
                 label: "Color Gradient".into(),
                 param_type: ParamType::ColorGradient {
                     min_stops: 1,
@@ -96,17 +97,38 @@ impl Effect for FadeEffect {
                 default: ParamValue::ColorGradient(ColorGradient::solid(Color::WHITE)),
             },
             ParamSchema {
-                key: "color_mode".into(),
+                key: ParamKey::ColorMode,
                 label: "Color Mode".into(),
-                param_type: ParamType::Select {
-                    options: vec![
-                        "static".into(),
-                        "gradient_through_effect".into(),
-                        "gradient_across_items".into(),
-                    ],
-                },
-                default: ParamValue::Text("gradient_through_effect".into()),
+                param_type: ParamType::ColorMode,
+                default: ParamValue::ColorMode(ColorMode::GradientThroughEffect),
             },
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intensity_follows_default_triangle_curve() {
+        let effect = FadeEffect;
+        let params = EffectParams::new();
+        // Default curve is triangle: 0→1→0
+        // At t=0.0, intensity is 0 → output should be black
+        let at_start = effect.evaluate(0.0, 0, 10, &params);
+        assert_eq!(at_start, Color::BLACK);
+
+        // At t=0.5, intensity is 1.0 → output should be white (default gradient)
+        let at_peak = effect.evaluate(0.5, 0, 10, &params);
+        assert_eq!(at_peak, Color::WHITE);
+    }
+
+    #[test]
+    fn zero_intensity_at_end() {
+        let effect = FadeEffect;
+        let params = EffectParams::new();
+        let at_end = effect.evaluate(1.0, 0, 10, &params);
+        assert_eq!(at_end, Color::BLACK);
     }
 }

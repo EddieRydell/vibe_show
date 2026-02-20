@@ -144,12 +144,12 @@ function computeStackedLayoutFast(
     for (let effectIdx = 0; effectIdx < track.effects.length; effectIdx++) {
       const effect = track.effects[effectIdx];
       effects.push({
-        key: `${trackIdx}-${effectIdx}`,
+        key: `${fixtureId}:${trackIdx}-${effectIdx}`,
         trackIndex: trackIdx,
         effectIndex: effectIdx,
         startSec: effect.time_range.start,
         durationSec: effect.time_range.end - effect.time_range.start,
-        blendMode: track.blend_mode,
+        blendMode: effect.blend_mode,
         kind: effect.kind,
         lane: 0,
       });

@@ -3,4 +3,4 @@
 /**
  * How multiple effect layers combine their output.
  */
-export type BlendMode = "Override" | "Add" | "Multiply" | "Max" | "Alpha";
+export type BlendMode = "Override" | "Add" | "Multiply" | "Max" | "Alpha" | "Subtract" | "Min" | "Average" | "Screen" | "Mask" | "IntensityOverlay";

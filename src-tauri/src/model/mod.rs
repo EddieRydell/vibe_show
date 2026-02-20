@@ -15,6 +15,6 @@ pub use fixture::{
 };
 pub use show::{Layout, LayoutShape, Show};
 pub use timeline::{
-    BlendMode, EffectInstance, EffectKind, EffectParams, ParamSchema, ParamType, ParamValue,
-    Sequence, TimeRange, Track,
+    BlendMode, ColorMode, EffectInstance, EffectKind, EffectParams, ParamKey, ParamSchema,
+    ParamType, ParamValue, Sequence, TimeRange, Track,
 };

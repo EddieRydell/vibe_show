@@ -4421,6 +4421,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "parking_lot",
  "quick-xml 0.37.5",
  "reqwest 0.12.28",
  "serde",

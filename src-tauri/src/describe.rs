@@ -88,11 +88,10 @@ pub fn describe_sequence(seq: &Sequence) -> String {
     lines.push(format!("\nTracks ({})", seq.tracks.len()));
     for (i, track) in seq.tracks.iter().enumerate() {
         lines.push(format!(
-            "  Track {}: \"{}\" (target: {:?}, blend: {:?}, {} effects)",
+            "  Track {}: \"{}\" (target: {:?}, {} effects)",
             i,
             track.name,
             track.target,
-            track.blend_mode,
             track.effects.len()
         ));
         for (j, effect) in track.effects.iter().enumerate() {
@@ -185,8 +184,8 @@ pub fn describe_effect(effect: &EffectInstance) -> String {
 
     let mut param_strs = Vec::new();
     for s in &schema {
-        if let Some(val) = effect.params.get(&s.key) {
-            param_strs.push(format!("{}={:?}", s.key, val));
+        if let Some(val) = effect.params.get(s.key) {
+            param_strs.push(format!("{:?}={:?}", s.key, val));
         }
     }
 

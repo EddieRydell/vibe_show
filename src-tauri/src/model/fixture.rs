@@ -70,10 +70,25 @@ pub enum ChannelOrder {
 pub struct Universe(pub u16);
 
 /// DMX channel address within a universe. Valid range: 1..=512.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[serde(transparent)]
 #[ts(export)]
 pub struct DmxAddress(u16);
+
+impl<'de> Deserialize<'de> for DmxAddress {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let addr = u16::deserialize(deserializer)?;
+        DmxAddress::new(addr).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "DMX address {} out of valid range 1..=512",
+                addr
+            ))
+        })
+    }
+}
 
 impl DmxAddress {
     /// Create a DMX address. Returns None if out of valid range (1-512).
@@ -286,4 +301,80 @@ pub enum EffectTarget {
     Group(GroupId),
     Fixtures(Vec<FixtureId>),
     All,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn group(id: u32, members: Vec<GroupMember>) -> FixtureGroup {
+        FixtureGroup {
+            id: GroupId(id),
+            name: format!("Group {id}"),
+            members,
+        }
+    }
+
+    #[test]
+    fn flat_group_resolves_to_its_fixtures() {
+        let g = group(1, vec![
+            GroupMember::Fixture(FixtureId(10)),
+            GroupMember::Fixture(FixtureId(20)),
+        ]);
+        let all = vec![g.clone()];
+        let ids = g.resolve_fixture_ids(&all);
+        assert_eq!(ids, vec![FixtureId(10), FixtureId(20)]);
+    }
+
+    #[test]
+    fn nested_group_resolves_recursively() {
+        let inner = group(2, vec![GroupMember::Fixture(FixtureId(30))]);
+        let outer = group(1, vec![
+            GroupMember::Fixture(FixtureId(10)),
+            GroupMember::Group(GroupId(2)),
+        ]);
+        let all = vec![outer.clone(), inner];
+        let ids = outer.resolve_fixture_ids(&all);
+        assert_eq!(ids, vec![FixtureId(10), FixtureId(30)]);
+    }
+
+    #[test]
+    fn circular_reference_terminates() {
+        let a = group(1, vec![GroupMember::Group(GroupId(2))]);
+        let b = group(2, vec![GroupMember::Group(GroupId(1))]);
+        let all = vec![a.clone(), b];
+        // Should not hang — cycle detection stops it
+        let ids = a.resolve_fixture_ids(&all);
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn self_referencing_group_terminates() {
+        let g = group(1, vec![
+            GroupMember::Fixture(FixtureId(10)),
+            GroupMember::Group(GroupId(1)),
+        ]);
+        let all = vec![g.clone()];
+        let ids = g.resolve_fixture_ids(&all);
+        assert_eq!(ids, vec![FixtureId(10)]);
+    }
+
+    #[test]
+    fn empty_group_resolves_to_empty() {
+        let g = group(1, vec![]);
+        let all = vec![g.clone()];
+        let ids = g.resolve_fixture_ids(&all);
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn missing_sub_group_is_skipped() {
+        let g = group(1, vec![
+            GroupMember::Fixture(FixtureId(10)),
+            GroupMember::Group(GroupId(999)), // doesn't exist
+        ]);
+        let all = vec![g.clone()];
+        let ids = g.resolve_fixture_ids(&all);
+        assert_eq!(ids, vec![FixtureId(10)]);
+    }
 }

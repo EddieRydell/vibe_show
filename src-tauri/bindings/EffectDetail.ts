@@ -5,4 +5,4 @@ import type { EffectParams } from "./EffectParams";
 import type { ParamSchema } from "./ParamSchema";
 import type { TimeRange } from "./TimeRange";
 
-export type EffectDetail = { kind: EffectKind, schema: Array<ParamSchema>, params: EffectParams, time_range: TimeRange, track_name: string, blend_mode: BlendMode, };
+export type EffectDetail = { kind: EffectKind, schema: Array<ParamSchema>, params: EffectParams, time_range: TimeRange, track_name: string, blend_mode: BlendMode, opacity: number, };
