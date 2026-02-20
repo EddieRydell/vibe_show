@@ -41,7 +41,7 @@ expect_used = "deny"
 panic = "deny"
 todo = "deny"
 unimplemented = "deny"
-unreachable = "deny"
+unreachable = "warn"  # warn-only: Tauri's #[tauri::command] macro generates unreachable!()
 # Additional strictness
 missing_safety_doc = "deny"
 undocumented_unsafe_blocks = "deny"

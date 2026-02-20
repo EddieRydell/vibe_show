@@ -308,7 +308,7 @@ fn execute_tool(state: &Arc<AppState>, name: &str, input: &Value) -> Result<Stri
                 .map(|pair| {
                     let arr = pair.as_array().ok_or("Invalid target pair")?;
                     Ok((
-                        arr.get(0).and_then(|v| v.as_u64()).ok_or("Invalid track index")? as usize,
+                        arr.first().and_then(|v| v.as_u64()).ok_or("Invalid track index")? as usize,
                         arr.get(1).and_then(|v| v.as_u64()).ok_or("Invalid effect index")? as usize,
                     ))
                 })
