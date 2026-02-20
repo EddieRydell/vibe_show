@@ -1,9 +1,14 @@
 use std::ops;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+use super::BlendMode;
 
 /// RGBA color with 8-bit channels. Alpha is used for blending during composition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[repr(C)]
+#[ts(export)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -103,6 +108,18 @@ impl Color {
             g: ((self.g as f64 * fa + other.g as f64 * ba * (1.0 - fa)) / out_a) as u8,
             b: ((self.b as f64 * fa + other.b as f64 * ba * (1.0 - fa)) / out_a) as u8,
             a: (out_a * 255.0) as u8,
+        }
+    }
+
+    /// Blend `fg` onto `self` (background) using the given blend mode.
+    #[inline]
+    pub fn blend(self, fg: Self, mode: BlendMode) -> Self {
+        match mode {
+            BlendMode::Override => fg,
+            BlendMode::Add => self + fg,
+            BlendMode::Multiply => self.multiply(fg),
+            BlendMode::Max => self.max(fg),
+            BlendMode::Alpha => fg.over(self),
         }
     }
 }

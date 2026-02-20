@@ -8,14 +8,14 @@ interface Props {
 
 export function FirstLaunchScreen({ onComplete }: Props) {
   const [parentDir, setParentDir] = useState<string | null>(null);
-  const [folderName, setFolderName] = useState("VibeShow");
+  const [folderName, setFolderName] = useState("VibeLights");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const handleChooseParent = useCallback(async () => {
     const selected = await open({
       directory: true,
-      title: "Choose where to create your VibeShow folder",
+      title: "Choose where to create your VibeLights folder",
     });
     if (selected) {
       setParentDir(selected);
@@ -41,10 +41,10 @@ export function FirstLaunchScreen({ onComplete }: Props) {
   return (
     <div className="bg-bg flex h-screen items-center justify-center">
       <div className="max-w-lg text-center">
-        <h1 className="text-text text-4xl font-bold">VibeShow</h1>
+        <h1 className="text-text text-4xl font-bold">Vibe Lights</h1>
         <p className="text-text mt-6 text-sm">
-          Welcome! Pick a location and name for your VibeShow data folder. All profiles, shows, and
-          media will be stored inside it.
+          Welcome! Pick a location and name for your Vibe Lights data folder. All profiles, shows,
+          and media will be stored inside it.
         </p>
 
         {/* Step 1: Choose parent directory */}

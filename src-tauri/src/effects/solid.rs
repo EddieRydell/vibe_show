@@ -1,6 +1,21 @@
-use crate::model::{Color, EffectParams, ParamSchema, ParamType, ParamValue};
+use crate::model::{BlendMode, Color, EffectParams, ParamSchema, ParamType, ParamValue};
 
 use super::Effect;
+
+/// Batch evaluate: extract color once, blend all pixels.
+pub fn evaluate_pixels_batch(
+    _t: f64,
+    dest: &mut [Color],
+    _global_offset: usize,
+    _total_pixels: usize,
+    params: &EffectParams,
+    blend_mode: BlendMode,
+) {
+    let color = params.color_or("color", Color::WHITE);
+    for pixel in dest.iter_mut() {
+        *pixel = pixel.blend(color, blend_mode);
+    }
+}
 
 /// Fills all pixels with a single solid color.
 ///

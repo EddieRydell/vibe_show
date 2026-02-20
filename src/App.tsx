@@ -8,8 +8,11 @@ import { HomeScreen } from "./screens/HomeScreen";
 import { ProfileScreen } from "./screens/ProfileScreen";
 import { EditorScreen } from "./screens/EditorScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
+import { useProgress } from "./hooks/useProgress";
+import { ProgressOverlay } from "./components/ProgressOverlay";
 
 export default function App() {
+  const progressOps = useProgress();
   const [screen, setScreen] = useState<AppScreen>({ kind: "loading" });
 
   useEffect(() => {
@@ -34,9 +37,9 @@ export default function App() {
     setScreen({ kind: "home" });
   }, []);
 
-  const handleOpenShow = useCallback(
-    (profileSlug: string, showSlug: string) => {
-      setScreen({ kind: "editor", profileSlug, showSlug });
+  const handleOpenSequence = useCallback(
+    (profileSlug: string, sequenceSlug: string) => {
+      setScreen({ kind: "editor", profileSlug, sequenceSlug });
     },
     [],
   );
@@ -56,37 +59,51 @@ export default function App() {
     });
   }, []);
 
+  let content: React.ReactNode;
   switch (screen.kind) {
     case "loading":
-      return <LoadingScreen />;
+      content = <LoadingScreen />;
+      break;
     case "first_launch":
-      return <FirstLaunchScreen onComplete={handleFirstLaunchComplete} />;
+      content = <FirstLaunchScreen onComplete={handleFirstLaunchComplete} />;
+      break;
     case "home":
-      return (
+      content = (
         <HomeScreen
           onOpenProfile={handleOpenProfile}
           onOpenSettings={handleOpenSettings}
         />
       );
+      break;
     case "settings":
-      return <SettingsScreen onBack={handleCloseSettings} />;
+      content = <SettingsScreen onBack={handleCloseSettings} />;
+      break;
     case "profile":
-      return (
+      content = (
         <ProfileScreen
           slug={screen.slug}
           onBack={handleBackToHome}
-          onOpenShow={(showSlug) => handleOpenShow(screen.slug, showSlug)}
+          onOpenSequence={(sequenceSlug) => handleOpenSequence(screen.slug, sequenceSlug)}
           onOpenSettings={handleOpenSettings}
         />
       );
+      break;
     case "editor":
-      return (
+      content = (
         <EditorScreen
           profileSlug={screen.profileSlug}
-          showSlug={screen.showSlug}
+          sequenceSlug={screen.sequenceSlug}
           onBack={() => handleBackToProfile(screen.profileSlug)}
           onOpenSettings={handleOpenSettings}
         />
       );
+      break;
   }
+
+  return (
+    <>
+      {content}
+      <ProgressOverlay operations={progressOps} />
+    </>
+  );
 }

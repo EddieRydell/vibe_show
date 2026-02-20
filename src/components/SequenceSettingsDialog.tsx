@@ -55,7 +55,7 @@ export function SequenceSettingsDialog({ sequence, sequenceIndex, onSaved, onCan
       });
       onSaved();
     } catch (e) {
-      console.error("[VibeShow] Save sequence settings failed:", e);
+      console.error("[VibeLights] Save sequence settings failed:", e);
     } finally {
       setSaving(false);
     }

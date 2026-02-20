@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::model::fixture::{Controller, FixtureDef, FixtureGroup, Patch};
 use crate::model::show::{Layout, Show};
@@ -11,7 +12,6 @@ use crate::project::{read_json, slugify, write_json, ProjectError};
 // ── Profile types ──────────────────────────────────────────────────
 
 const PROFILE_VERSION: u32 = 1;
-const SHOW_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileMeta {
@@ -21,17 +21,19 @@ pub struct ProfileMeta {
 }
 
 /// Summary info for listing profiles (cheap to compute).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ProfileSummary {
     pub name: String,
     pub slug: String,
     pub created_at: String,
-    pub show_count: usize,
+    pub sequence_count: usize,
     pub fixture_count: usize,
 }
 
 /// Full profile data loaded into memory.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct Profile {
     pub name: String,
     pub slug: String,
@@ -42,34 +44,23 @@ pub struct Profile {
     pub layout: Layout,
 }
 
-// ── Show types ─────────────────────────────────────────────────────
+// ── Sequence types ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShowMeta {
-    pub version: u32,
-    pub name: String,
-}
-
-/// Summary info for listing shows.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShowSummary {
+/// Summary info for listing sequences.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SequenceSummary {
     pub name: String,
     pub slug: String,
-    pub sequence_count: usize,
-}
-
-/// Full show data (sequences only — profile provides fixtures etc.).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShowData {
-    pub name: String,
-    pub sequences: Vec<Sequence>,
 }
 
 // ── Media types ────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct MediaFile {
     pub filename: String,
+    #[ts(type = "number")]
     pub size_bytes: u64,
 }
 
@@ -79,6 +70,10 @@ pub struct MediaFile {
 struct FixturesFile {
     fixtures: Vec<FixtureDef>,
     groups: Vec<FixtureGroup>,
+    /// Mapping from Vixen GUIDs to VibeLights fixture/group IDs.
+    /// Persisted so that sequence imports can resolve effect targets.
+    #[serde(default)]
+    vixen_guid_map: std::collections::HashMap<String, u32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -131,11 +126,15 @@ pub fn list_profiles(data_dir: &Path) -> Result<Vec<ProfileSummary>, ProjectErro
             .map(|f| f.fixtures.len())
             .unwrap_or(0);
 
-        // Count shows
-        let shows_dir = entry.path().join("shows");
-        let show_count = if shows_dir.exists() {
-            fs::read_dir(&shows_dir)
-                .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).count())
+        // Count sequences
+        let seq_dir = entry.path().join("sequences");
+        let sequence_count = if seq_dir.exists() {
+            fs::read_dir(&seq_dir)
+                .map(|rd| {
+                    rd.filter_map(|e| e.ok())
+                        .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                        .count()
+                })
                 .unwrap_or(0)
         } else {
             0
@@ -145,7 +144,7 @@ pub fn list_profiles(data_dir: &Path) -> Result<Vec<ProfileSummary>, ProjectErro
             name: meta.name,
             slug,
             created_at: meta.created_at,
-            show_count,
+            sequence_count,
             fixture_count,
         });
     }
@@ -166,7 +165,7 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
     }
 
     fs::create_dir_all(&dir)?;
-    fs::create_dir_all(dir.join("shows"))?;
+    fs::create_dir_all(dir.join("sequences"))?;
     fs::create_dir_all(dir.join("media"))?;
 
     let now = chrono_now();
@@ -185,6 +184,7 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
         &FixturesFile {
             fixtures: Vec::new(),
             groups: Vec::new(),
+            vixen_guid_map: std::collections::HashMap::new(),
         },
     )?;
 
@@ -207,7 +207,7 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
         name: name.to_string(),
         slug,
         created_at: now,
-        show_count: 0,
+        sequence_count: 0,
         fixture_count: 0,
     })
 }
@@ -242,11 +242,17 @@ pub fn load_profile(data_dir: &Path, slug: &str) -> Result<Profile, ProjectError
 pub fn save_profile(data_dir: &Path, slug: &str, profile: &Profile) -> Result<(), ProjectError> {
     let dir = profile_dir(data_dir, slug);
 
+    // Preserve existing vixen_guid_map if present
+    let existing_map = read_json::<FixturesFile>(&dir.join("fixtures.json"))
+        .map(|f| f.vixen_guid_map)
+        .unwrap_or_default();
+
     write_json(
         &dir.join("fixtures.json"),
         &FixturesFile {
             fixtures: profile.fixtures.clone(),
             groups: profile.groups.clone(),
+            vixen_guid_map: existing_map,
         },
     )?;
 
@@ -272,187 +278,119 @@ pub fn delete_profile(data_dir: &Path, slug: &str) -> Result<(), ProjectError> {
     Ok(())
 }
 
-// ── Show operations ────────────────────────────────────────────────
+// ── Sequence operations ────────────────────────────────────────────
 
-fn shows_dir(data_dir: &Path, profile_slug: &str) -> std::path::PathBuf {
-    profile_dir(data_dir, profile_slug).join("shows")
+fn sequences_dir(data_dir: &Path, profile_slug: &str) -> std::path::PathBuf {
+    profile_dir(data_dir, profile_slug).join("sequences")
 }
 
-fn show_dir(data_dir: &Path, profile_slug: &str, show_slug: &str) -> std::path::PathBuf {
-    shows_dir(data_dir, profile_slug).join(show_slug)
-}
-
-/// List all shows in a profile.
-pub fn list_shows(
+/// List all sequences in a profile.
+pub fn list_sequences(
     data_dir: &Path,
     profile_slug: &str,
-) -> Result<Vec<ShowSummary>, ProjectError> {
-    let dir = shows_dir(data_dir, profile_slug);
+) -> Result<Vec<SequenceSummary>, ProjectError> {
+    let dir = sequences_dir(data_dir, profile_slug);
     if !dir.exists() {
         return Ok(Vec::new());
     }
 
-    let mut shows = Vec::new();
+    let mut seqs = Vec::new();
     let mut entries: Vec<_> = fs::read_dir(&dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
         .collect();
     entries.sort_by_key(|e| e.file_name());
 
     for entry in entries {
-        let meta_path = entry.path().join("show.json");
-        if !meta_path.exists() {
-            continue;
-        }
-        let meta: ShowMeta = match read_json(&meta_path) {
-            Ok(m) => m,
+        let seq: Sequence = match read_json(&entry.path()) {
+            Ok(s) => s,
             Err(_) => continue,
         };
-
-        let slug = entry.file_name().to_string_lossy().to_string();
-
-        // Count sequences
-        let seq_dir = entry.path().join("sequences");
-        let sequence_count = if seq_dir.exists() {
-            fs::read_dir(&seq_dir)
-                .map(|rd| {
-                    rd.filter_map(|e| e.ok())
-                        .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
-                        .count()
-                })
-                .unwrap_or(0)
-        } else {
-            0
-        };
-
-        shows.push(ShowSummary {
-            name: meta.name,
+        let slug = entry
+            .path()
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        seqs.push(SequenceSummary {
+            name: seq.name,
             slug,
-            sequence_count,
         });
     }
 
-    Ok(shows)
+    Ok(seqs)
 }
 
-/// Create a new empty show in a profile.
-pub fn create_show(
+/// Create a new empty sequence in a profile.
+pub fn create_sequence(
     data_dir: &Path,
     profile_slug: &str,
     name: &str,
-) -> Result<ShowSummary, ProjectError> {
+) -> Result<SequenceSummary, ProjectError> {
     let slug = slugify(name);
-    let dir = show_dir(data_dir, profile_slug, &slug);
+    let dir = sequences_dir(data_dir, profile_slug);
+    fs::create_dir_all(&dir)?;
 
-    if dir.exists() {
+    let path = dir.join(format!("{}.json", slug));
+    if path.exists() {
         return Err(ProjectError::InvalidProject(format!(
-            "Show '{}' already exists",
+            "Sequence '{}' already exists",
             slug
         )));
     }
 
-    fs::create_dir_all(&dir)?;
-    fs::create_dir_all(dir.join("sequences"))?;
+    let seq = Sequence {
+        name: name.to_string(),
+        duration: 30.0,
+        frame_rate: 30.0,
+        audio_file: None,
+        tracks: Vec::new(),
+    };
+    write_json(&path, &seq)?;
 
-    write_json(
-        &dir.join("show.json"),
-        &ShowMeta {
-            version: SHOW_VERSION,
-            name: name.to_string(),
-        },
-    )?;
-
-    Ok(ShowSummary {
+    Ok(SequenceSummary {
         name: name.to_string(),
         slug,
-        sequence_count: 0,
     })
 }
 
-/// Load show data (sequences).
-pub fn load_show(
+/// Load a single sequence from a profile.
+pub fn load_sequence(
     data_dir: &Path,
     profile_slug: &str,
-    show_slug: &str,
-) -> Result<ShowData, ProjectError> {
-    let dir = show_dir(data_dir, profile_slug, show_slug);
-    if !dir.exists() {
+    seq_slug: &str,
+) -> Result<Sequence, ProjectError> {
+    let path = sequences_dir(data_dir, profile_slug).join(format!("{}.json", seq_slug));
+    if !path.exists() {
         return Err(ProjectError::InvalidProject(format!(
-            "Show '{}' not found",
-            show_slug
+            "Sequence '{}' not found",
+            seq_slug
         )));
     }
-
-    let meta: ShowMeta = read_json(&dir.join("show.json"))?;
-
-    let seq_dir = dir.join("sequences");
-    let mut sequences: Vec<Sequence> = Vec::new();
-    if seq_dir.exists() {
-        let mut entries: Vec<_> = fs::read_dir(&seq_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
-
-        for entry in entries {
-            let seq: Sequence = read_json(&entry.path())?;
-            sequences.push(seq);
-        }
-    }
-
-    Ok(ShowData {
-        name: meta.name,
-        sequences,
-    })
+    read_json(&path)
 }
 
-/// Save show data (sequences).
-pub fn save_show(
+/// Save a sequence to a profile.
+pub fn save_sequence(
     data_dir: &Path,
     profile_slug: &str,
-    show_slug: &str,
-    show_data: &ShowData,
+    seq_slug: &str,
+    sequence: &Sequence,
 ) -> Result<(), ProjectError> {
-    let dir = show_dir(data_dir, profile_slug, show_slug);
-    let seq_dir = dir.join("sequences");
-    fs::create_dir_all(&seq_dir)?;
-
-    // Update show.json name
-    write_json(
-        &dir.join("show.json"),
-        &ShowMeta {
-            version: SHOW_VERSION,
-            name: show_data.name.clone(),
-        },
-    )?;
-
-    // Clean out old sequence files
-    if seq_dir.exists() {
-        for entry in fs::read_dir(&seq_dir)? {
-            let entry = entry?;
-            if entry.path().extension().is_some_and(|e| e == "json") {
-                fs::remove_file(entry.path())?;
-            }
-        }
-    }
-
-    for seq in &show_data.sequences {
-        let filename = format!("{}.json", slugify(&seq.name));
-        write_json(&seq_dir.join(filename), seq)?;
-    }
-
-    Ok(())
+    let dir = sequences_dir(data_dir, profile_slug);
+    fs::create_dir_all(&dir)?;
+    write_json(&dir.join(format!("{}.json", seq_slug)), sequence)
 }
 
-/// Delete a show.
-pub fn delete_show(
+/// Delete a sequence from a profile.
+pub fn delete_sequence(
     data_dir: &Path,
     profile_slug: &str,
-    show_slug: &str,
+    seq_slug: &str,
 ) -> Result<(), ProjectError> {
-    let dir = show_dir(data_dir, profile_slug, show_slug);
-    if dir.exists() {
-        fs::remove_dir_all(&dir)?;
+    let path = sequences_dir(data_dir, profile_slug).join(format!("{}.json", seq_slug));
+    if path.exists() {
+        fs::remove_file(&path)?;
     }
     Ok(())
 }
@@ -543,18 +481,43 @@ pub fn delete_media(
 
 // ── Assembly ───────────────────────────────────────────────────────
 
-/// Combine a Profile (fixtures, setup) with ShowData (sequences) into a full Show
+/// Combine a Profile (fixtures, setup) with a single Sequence into a full Show
 /// that the engine can evaluate.
-pub fn assemble_show(profile: &Profile, show_data: &ShowData) -> Show {
+pub fn assemble_show(profile: &Profile, sequence: &Sequence) -> Show {
     Show {
-        name: show_data.name.clone(),
+        name: sequence.name.clone(),
         fixtures: profile.fixtures.clone(),
         groups: profile.groups.clone(),
         layout: profile.layout.clone(),
-        sequences: show_data.sequences.clone(),
+        sequences: vec![sequence.clone()],
         patches: profile.patches.clone(),
         controllers: profile.controllers.clone(),
     }
+}
+
+// ── Vixen GUID map persistence ─────────────────────────────────────
+
+/// Save a Vixen GUID → ID map into a profile's fixtures file.
+pub fn save_vixen_guid_map(
+    data_dir: &Path,
+    profile_slug: &str,
+    guid_map: &std::collections::HashMap<String, u32>,
+) -> Result<(), ProjectError> {
+    let dir = profile_dir(data_dir, profile_slug);
+    let path = dir.join("fixtures.json");
+    let mut file: FixturesFile = read_json(&path)?;
+    file.vixen_guid_map = guid_map.clone();
+    write_json(&path, &file)
+}
+
+/// Load a Vixen GUID → ID map from a profile's fixtures file.
+pub fn load_vixen_guid_map(
+    data_dir: &Path,
+    profile_slug: &str,
+) -> Result<std::collections::HashMap<String, u32>, ProjectError> {
+    let dir = profile_dir(data_dir, profile_slug);
+    let file: FixturesFile = read_json(&dir.join("fixtures.json"))?;
+    Ok(file.vixen_guid_map)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -623,7 +586,7 @@ mod tests {
     fn setup_test_dir() -> std::path::PathBuf {
         let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!(
-            "vibeshow_test_profile_{}_{}",
+            "vibelights_test_profile_{}_{}",
             std::process::id(),
             id
         ));
@@ -644,7 +607,7 @@ mod tests {
         let summary = create_profile(&data_dir, "My House").unwrap();
         assert_eq!(summary.name, "My House");
         assert_eq!(summary.slug, "my-house");
-        assert_eq!(summary.show_count, 0);
+        assert_eq!(summary.sequence_count, 0);
         assert_eq!(summary.fixture_count, 0);
 
         // List should have one
@@ -686,27 +649,27 @@ mod tests {
     }
 
     #[test]
-    fn test_show_crud() {
+    fn test_sequence_crud() {
         let data_dir = setup_test_dir();
         create_profile(&data_dir, "Test").unwrap();
 
-        // Create show
-        let show = create_show(&data_dir, "test", "Christmas 2024").unwrap();
-        assert_eq!(show.slug, "christmas-2024");
+        // Create sequence
+        let seq = create_sequence(&data_dir, "test", "Intro Scene").unwrap();
+        assert_eq!(seq.slug, "intro-scene");
 
-        // List shows
-        let shows = list_shows(&data_dir, "test").unwrap();
-        assert_eq!(shows.len(), 1);
+        // List sequences
+        let seqs = list_sequences(&data_dir, "test").unwrap();
+        assert_eq!(seqs.len(), 1);
 
-        // Load show
-        let show_data = load_show(&data_dir, "test", "christmas-2024").unwrap();
-        assert_eq!(show_data.name, "Christmas 2024");
-        assert!(show_data.sequences.is_empty());
+        // Load sequence
+        let loaded = load_sequence(&data_dir, "test", "intro-scene").unwrap();
+        assert_eq!(loaded.name, "Intro Scene");
+        assert_eq!(loaded.duration, 30.0);
 
-        // Delete show
-        delete_show(&data_dir, "test", "christmas-2024").unwrap();
-        let shows = list_shows(&data_dir, "test").unwrap();
-        assert!(shows.is_empty());
+        // Delete sequence
+        delete_sequence(&data_dir, "test", "intro-scene").unwrap();
+        let seqs = list_sequences(&data_dir, "test").unwrap();
+        assert!(seqs.is_empty());
 
         let _ = fs::remove_dir_all(&data_dir);
     }
@@ -743,12 +706,16 @@ mod tests {
             patches: Vec::new(),
             layout: Layout { fixtures: Vec::new() },
         };
-        let show_data = ShowData {
+        let sequence = Sequence {
             name: "Xmas".into(),
-            sequences: Vec::new(),
+            duration: 30.0,
+            frame_rate: 30.0,
+            audio_file: None,
+            tracks: Vec::new(),
         };
-        let show = assemble_show(&profile, &show_data);
+        let show = assemble_show(&profile, &sequence);
         assert_eq!(show.name, "Xmas");
         assert_eq!(show.fixtures.len(), 1);
+        assert_eq!(show.sequences.len(), 1);
     }
 }

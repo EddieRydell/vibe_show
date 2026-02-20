@@ -1,8 +1,8 @@
-# VibeShow Brand Guide
+# VibeLights Brand Guide
 
 ## 1. Core Identity
 
-**VibeShow is a precise creative instrument.**
+**VibeLights is a precise creative instrument.**
 
 It is not a toy, not a spectacle, and not a neon-heavy visualizer. It is a professional tool for designing light with control and clarity.
 
@@ -106,7 +106,12 @@ Dark mode is toggled via a `dark` class on `<html>`. The init script in `index.h
 
 ## 5. Typography
 
-### Primary font
+### Brand font
+- **Prompt** (Google Fonts) — used for the wordmark and branding elements
+- Weight 400 (regular) and 500 (medium)
+- Import: `@import url('https://fonts.googleapis.com/css2?family=Prompt:wght@400;500&display=swap')`
+
+### UI font
 - System stack: `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`
 
 ### Rules

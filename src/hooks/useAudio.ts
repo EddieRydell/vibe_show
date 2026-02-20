@@ -104,11 +104,11 @@ export function useAudio(): AudioState {
               setWaveform({ peaks, duration: decoded.duration });
             })
             .catch((err) => {
-              console.warn("[VibeShow] Waveform extraction failed:", err);
+              console.warn("[VibeLights] Waveform extraction failed:", err);
             });
         })
         .catch((err) => {
-          console.error("[VibeShow] Failed to resolve media path:", err);
+          console.error("[VibeLights] Failed to resolve media path:", err);
         });
     },
     [cleanup],

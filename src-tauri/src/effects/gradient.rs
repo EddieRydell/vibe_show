@@ -1,6 +1,56 @@
-use crate::model::{Color, EffectParams, ParamSchema, ParamType, ParamValue};
+use crate::model::{BlendMode, Color, EffectParams, ParamSchema, ParamType, ParamValue};
 
 use super::Effect;
+
+/// Batch evaluate: extract params once, loop over pixels.
+pub fn evaluate_pixels_batch(
+    t: f64,
+    dest: &mut [Color],
+    global_offset: usize,
+    total_pixels: usize,
+    params: &EffectParams,
+    blend_mode: BlendMode,
+) {
+    let colors = params.color_list_or("colors", &DEFAULT_COLORS);
+    let offset = params.float_or("offset", 0.0);
+
+    if colors.is_empty() {
+        let c = Color::BLACK;
+        for pixel in dest.iter_mut() {
+            *pixel = pixel.blend(c, blend_mode);
+        }
+        return;
+    }
+    if colors.len() == 1 {
+        let c = colors[0];
+        for pixel in dest.iter_mut() {
+            *pixel = pixel.blend(c, blend_mode);
+        }
+        return;
+    }
+
+    let segment_count = colors.len() - 1;
+    let inv_total = if total_pixels > 1 {
+        1.0 / ((total_pixels - 1) as f64)
+    } else {
+        0.0
+    };
+    let time_offset = t * offset;
+
+    for (i, pixel) in dest.iter_mut().enumerate() {
+        let pos = if total_pixels > 1 {
+            ((global_offset + i) as f64) * inv_total
+        } else {
+            0.5
+        };
+        let pos = (pos + time_offset).fract().abs();
+        let scaled = pos * segment_count as f64;
+        let segment = (scaled as usize).min(segment_count - 1);
+        let frac = scaled - segment as f64;
+        let effect_color = colors[segment].lerp(colors[segment + 1], frac);
+        *pixel = pixel.blend(effect_color, blend_mode);
+    }
+}
 
 /// A spatial gradient across pixels, interpolating between colors.
 ///

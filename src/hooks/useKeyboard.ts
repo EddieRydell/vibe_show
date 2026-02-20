@@ -10,6 +10,12 @@ interface KeyboardActions {
   onZoomFit: () => void;
   onSelectAll: () => void;
   onDeleteSelected: () => void;
+  onSave?: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  onSetModeSelect?: () => void;
+  onSetModeEdit?: () => void;
+  onSetModeSwipe?: () => void;
 }
 
 export function useKeyboard(actions: KeyboardActions) {
@@ -49,6 +55,24 @@ export function useKeyboard(actions: KeyboardActions) {
             actions.onZoomFit();
           }
           break;
+        case "KeyZ":
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            if (e.shiftKey) {
+              actions.onRedo?.();
+            } else {
+              actions.onUndo?.();
+            }
+          }
+          break;
+        case "KeyS":
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            actions.onSave?.();
+          } else if (!e.altKey) {
+            actions.onSetModeSwipe?.();
+          }
+          break;
         case "KeyA":
           if (e.ctrlKey || e.metaKey) {
             e.preventDefault();
@@ -62,6 +86,16 @@ export function useKeyboard(actions: KeyboardActions) {
           break;
         case "Escape":
           // Deselect all is handled by the timeline click-on-empty.
+          break;
+        case "KeyV":
+          if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+            actions.onSetModeSelect?.();
+          }
+          break;
+        case "KeyM":
+          if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+            actions.onSetModeEdit?.();
+          }
           break;
       }
     }

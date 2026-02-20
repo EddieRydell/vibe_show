@@ -78,9 +78,11 @@ pub fn create_demo_show() -> Show {
                 effects: vec![EffectInstance {
                     kind: EffectKind::Chase,
                     params: EffectParams::new()
-                        .set("color", ParamValue::Color(Color::rgb(0, 100, 255)))
+                        .set("gradient", ParamValue::ColorGradient(
+                            crate::model::ColorGradient::solid(Color::rgb(0, 100, 255)),
+                        ))
                         .set("speed", ParamValue::Float(3.0))
-                        .set("tail_length", ParamValue::Float(0.4)),
+                        .set("pulse_width", ParamValue::Float(0.4)),
                     time_range: TimeRange::new(0.0, 20.0).unwrap(),
                 }],
             },

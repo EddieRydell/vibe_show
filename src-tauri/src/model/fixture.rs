@@ -1,27 +1,32 @@
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// Newtype for fixture identity. Prevents mixing up fixture IDs with other integers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(transparent)]
+#[ts(export)]
 pub struct FixtureId(pub u32);
 
 /// Newtype for group identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(transparent)]
+#[ts(export)]
 pub struct GroupId(pub u32);
 
 /// Newtype for controller identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(transparent)]
+#[ts(export)]
 pub struct ControllerId(pub u32);
 
 // ── Color & Channel Models ──────────────────────────────────────────
 
 /// How a fixture's channels map to color data.
 /// Extensible to cover all common LED and conventional fixture types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum ColorModel {
     /// Single intensity channel (dimmers, single-color LEDs).
     Single,
@@ -44,7 +49,8 @@ impl ColorModel {
 
 /// Channel byte ordering within a pixel. Different protocols/chips use different orders.
 /// WS2811 defaults to GRB, WS2812 uses GRB, SK6812 uses GRBW, etc.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS)]
+#[ts(export)]
 pub enum ChannelOrder {
     #[default]
     Rgb,
@@ -58,13 +64,15 @@ pub enum ChannelOrder {
 // ── DMX Addressing ──────────────────────────────────────────────────
 
 /// DMX universe number (0-indexed internally, shown as 1-indexed to users).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(transparent)]
+#[ts(export)]
 pub struct Universe(pub u16);
 
 /// DMX channel address within a universe. Valid range: 1..=512.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(transparent)]
+#[ts(export)]
 pub struct DmxAddress(u16);
 
 impl DmxAddress {
@@ -88,14 +96,16 @@ impl DmxAddress {
 /// This is the "patch" - it connects logical fixtures to physical channels.
 /// Kept as a separate concern from the fixture itself so the same fixture
 /// definition can be re-patched to different controllers/universes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct Patch {
     pub fixture_id: FixtureId,
     pub output: OutputMapping,
 }
 
 /// Where a fixture's channel data is sent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum OutputMapping {
     /// Standard DMX (E1.31/sACN, ArtNet, or serial DMX).
     Dmx {
@@ -115,7 +125,8 @@ pub enum OutputMapping {
 // ── Controller ──────────────────────────────────────────────────────
 
 /// How a controller communicates with the sequencer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum ControllerProtocol {
     /// E1.31 (Streaming ACN) over network.
     E131 { unicast_address: Option<String> },
@@ -127,7 +138,8 @@ pub enum ControllerProtocol {
 
 /// A physical controller that drives one or more outputs.
 /// Examples: Falcon F16V4, ESPixelStick, Kulp K32, etc.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct Controller {
     pub id: ControllerId,
     pub name: String,
@@ -137,7 +149,8 @@ pub struct Controller {
 // ── Pixel & Bulb Types ──────────────────────────────────────────────
 
 /// Whether a fixture uses individually-addressable (smart) or ganged (dumb) pixels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS)]
+#[ts(export)]
 pub enum PixelType {
     #[default]
     Smart,
@@ -145,7 +158,8 @@ pub enum PixelType {
 }
 
 /// Physical bulb shape, affects display size in the preview renderer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS)]
+#[ts(export)]
 pub enum BulbShape {
     #[default]
     LED,
@@ -179,7 +193,8 @@ impl BulbShape {
 /// A fixture definition. Represents a logical light or string of lights.
 /// This is purely about *what* the light is, not *how* it's connected.
 /// Connection info lives in `Patch` and `Controller`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct FixtureDef {
     pub id: FixtureId,
     pub name: String,
@@ -212,14 +227,16 @@ impl FixtureDef {
 // ── Groups & Targeting ──────────────────────────────────────────────
 
 /// A member of a group: either a direct fixture or a nested sub-group.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum GroupMember {
     Fixture(FixtureId),
     Group(GroupId),
 }
 
 /// A named group of fixtures for targeting effects. Supports hierarchical nesting.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct FixtureGroup {
     pub id: GroupId,
     pub name: String,
@@ -263,7 +280,8 @@ impl FixtureGroup {
 }
 
 /// What an effect targets: a specific set of fixtures or a named group.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum EffectTarget {
     Group(GroupId),
     Fixtures(Vec<FixtureId>),

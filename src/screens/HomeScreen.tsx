@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
-import { Settings } from "lucide-react";
 import type { ProfileSummary } from "../types";
+import { Settings } from "lucide-react";
+import { AppBar } from "../components/AppBar";
+import { ImportWizard } from "../components/ImportWizard";
 
 interface Props {
   onOpenProfile: (slug: string) => void;
@@ -44,64 +45,44 @@ export function HomeScreen({ onOpenProfile, onOpenSettings }: Props) {
     [refresh],
   );
 
-  const handleImportVixen = useCallback(async () => {
-    const configPath = await open({
-      title: "Select Vixen SystemConfig.xml",
-      filters: [{ name: "XML Files", extensions: ["xml"] }],
-    });
-    if (!configPath) return;
+  const [showImportWizard, setShowImportWizard] = useState(false);
 
-    // Ask if they also want to import sequences
-    let seqPaths: string[] = [];
-    const wantSequences = confirm(
-      "Would you also like to import sequence files (.tim)?\n\nClick OK to select sequences, or Cancel to import just the profile.",
-    );
-    if (wantSequences) {
-      const picked = await open({
-        title: "Select Vixen Sequence Files (.tim)",
-        filters: [{ name: "Vixen Sequences", extensions: ["tim"] }],
-        multiple: true,
-      });
-      seqPaths = picked ?? [];
-    }
-
-    invoke<ProfileSummary>("import_vixen", {
-      systemConfigPath: configPath,
-      sequencePaths: seqPaths,
-    })
-      .then((imported) => {
-        refresh();
-        onOpenProfile(imported.slug);
-      })
-      .catch((e) => setError(String(e)));
-  }, [refresh, onOpenProfile]);
+  const handleImportComplete = useCallback(
+    (profileSlug: string) => {
+      setShowImportWizard(false);
+      refresh();
+      onOpenProfile(profileSlug);
+    },
+    [refresh, onOpenProfile],
+  );
 
   return (
     <div className="bg-bg flex h-screen flex-col">
-      {/* Header */}
-      <div className="border-border flex items-center border-b px-6 py-4">
-        <h1 className="text-text text-xl font-bold">VibeShow</h1>
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={handleImportVixen}
-            className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-3 py-1.5 text-xs transition-colors"
-          >
-            Import from Vixen
-          </button>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="bg-primary hover:bg-primary-hover rounded px-3 py-1.5 text-xs font-medium text-white transition-colors"
-          >
-            New Profile
-          </button>
-          <button
-            onClick={onOpenSettings}
-            className="text-text-2 hover:text-text ml-1 p-1.5 transition-colors"
-            title="Settings"
-          >
-            <Settings size={16} />
-          </button>
-        </div>
+      {/* Title bar */}
+      <AppBar />
+
+      {/* Screen toolbar */}
+      <div className="border-border bg-surface flex select-none items-center gap-2 border-b px-4 py-1.5">
+        <div className="flex-1" />
+        <button
+          onClick={() => setShowImportWizard(true)}
+          className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-3 py-1.5 text-xs transition-colors"
+        >
+          Import from Vixen
+        </button>
+        <button
+          onClick={() => setShowCreate(true)}
+          className="bg-primary hover:bg-primary-hover rounded px-3 py-1.5 text-xs font-medium text-white transition-colors"
+        >
+          New Profile
+        </button>
+        <button
+          onClick={onOpenSettings}
+          className="text-text-2 hover:text-text p-1 transition-colors"
+          title="Settings"
+        >
+          <Settings size={14} />
+        </button>
       </div>
 
       {/* Error */}
@@ -169,7 +150,7 @@ export function HomeScreen({ onOpenProfile, onOpenSettings }: Props) {
                     {p.fixture_count} fixture{p.fixture_count !== 1 ? "s" : ""}
                   </span>
                   <span>
-                    {p.show_count} show{p.show_count !== 1 ? "s" : ""}
+                    {p.sequence_count} sequence{p.sequence_count !== 1 ? "s" : ""}
                   </span>
                 </div>
                 <div className="text-text-2 mt-1 text-[10px]">
@@ -189,6 +170,13 @@ export function HomeScreen({ onOpenProfile, onOpenSettings }: Props) {
           </div>
         )}
       </div>
+
+      {showImportWizard && (
+        <ImportWizard
+          onComplete={handleImportComplete}
+          onCancel={() => setShowImportWizard(false)}
+        />
+      )}
     </div>
   );
 }

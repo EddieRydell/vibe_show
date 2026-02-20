@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Settings } from "lucide-react";
 import type {
   Profile,
-  ShowSummary,
+  SequenceSummary,
   MediaFile,
   EffectInfo,
   FixtureDef,
   FixtureGroup,
   FixtureLayout,
 } from "../types";
+import { Settings } from "lucide-react";
+import { AppBar } from "../components/AppBar";
 import { HouseTree } from "../components/house/HouseTree";
 import { FixtureEditor } from "../components/house/FixtureEditor";
 import { GroupEditor } from "../components/house/GroupEditor";
@@ -19,18 +20,18 @@ import { LayoutToolbar } from "../components/layout/LayoutToolbar";
 import { ShapeConfigurator } from "../components/layout/ShapeConfigurator";
 import { FixturePlacer } from "../components/layout/FixturePlacer";
 
-type Tab = "shows" | "music" | "house" | "layout" | "effects";
+type Tab = "sequences" | "music" | "house" | "layout" | "effects";
 
 interface Props {
   slug: string;
   onBack: () => void;
-  onOpenShow: (showSlug: string) => void;
+  onOpenSequence: (sequenceSlug: string) => void;
   onOpenSettings: () => void;
 }
 
-export function ProfileScreen({ slug, onBack, onOpenShow, onOpenSettings }: Props) {
+export function ProfileScreen({ slug, onBack, onOpenSequence, onOpenSettings }: Props) {
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [tab, setTab] = useState<Tab>("shows");
+  const [tab, setTab] = useState<Tab>("sequences");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,7 +41,7 @@ export function ProfileScreen({ slug, onBack, onOpenShow, onOpenSettings }: Prop
   }, [slug]);
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "shows", label: "Shows" },
+    { key: "sequences", label: "Sequences" },
     { key: "music", label: "Music" },
     { key: "house", label: "House Setup" },
     { key: "layout", label: "Layout" },
@@ -49,21 +50,25 @@ export function ProfileScreen({ slug, onBack, onOpenShow, onOpenSettings }: Prop
 
   return (
     <div className="bg-bg text-text flex h-screen flex-col">
-      {/* Header */}
-      <div className="border-border flex items-center border-b px-6 py-3">
+      {/* Title bar */}
+      <AppBar />
+
+      {/* Screen toolbar */}
+      <div className="border-border bg-surface flex select-none items-center gap-2 border-b px-4 py-1.5">
         <button
           onClick={onBack}
-          className="text-text-2 hover:text-text mr-3 text-sm transition-colors"
+          className="text-text-2 hover:text-text mr-1 text-sm transition-colors"
         >
           &larr; Home
         </button>
-        <h2 className="text-text text-lg font-bold">{profile?.name ?? "Loading..."}</h2>
+        <h2 className="text-text text-sm font-bold">{profile?.name ?? "Loading..."}</h2>
+        <div className="flex-1" />
         <button
           onClick={onOpenSettings}
-          className="text-text-2 hover:text-text ml-auto p-1.5 transition-colors"
+          className="text-text-2 hover:text-text p-1 transition-colors"
           title="Settings"
         >
-          <Settings size={16} />
+          <Settings size={14} />
         </button>
       </div>
 
@@ -96,7 +101,7 @@ export function ProfileScreen({ slug, onBack, onOpenShow, onOpenSettings }: Prop
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto">
-        {profile && tab === "shows" && <ShowsTab onOpenShow={onOpenShow} setError={setError} />}
+        {profile && tab === "sequences" && <SequencesTab slug={slug} onOpenSequence={onOpenSequence} setError={setError} />}
         {profile && tab === "music" && <MusicTab setError={setError} />}
         {profile && tab === "house" && (
           <HouseSetupTab profile={profile} onProfileUpdate={setProfile} setError={setError} />
@@ -110,22 +115,25 @@ export function ProfileScreen({ slug, onBack, onOpenShow, onOpenSettings }: Prop
   );
 }
 
-// ── Shows Tab ──────────────────────────────────────────────────────
+// ── Sequences Tab ──────────────────────────────────────────────────
 
-function ShowsTab({
-  onOpenShow,
+function SequencesTab({
+  slug,
+  onOpenSequence,
   setError,
 }: {
-  onOpenShow: (slug: string) => void;
+  slug: string;
+  onOpenSequence: (slug: string) => void;
   setError: (e: string | null) => void;
 }) {
-  const [shows, setShows] = useState<ShowSummary[]>([]);
+  const [sequences, setSequences] = useState<SequenceSummary[]>([]);
   const [newName, setNewName] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [importingVixen, setImportingVixen] = useState(false);
 
   const refresh = useCallback(() => {
-    invoke<ShowSummary[]>("list_shows")
-      .then(setShows)
+    invoke<SequenceSummary[]>("list_sequences")
+      .then(setSequences)
       .catch((e) => setError(String(e)));
   }, [setError]);
 
@@ -133,7 +141,7 @@ function ShowsTab({
 
   const handleCreate = useCallback(() => {
     if (!newName.trim()) return;
-    invoke<ShowSummary>("create_show", { name: newName.trim() })
+    invoke<SequenceSummary>("create_sequence", { name: newName.trim() })
       .then(() => {
         setNewName("");
         setShowCreate(false);
@@ -143,25 +151,60 @@ function ShowsTab({
   }, [newName, refresh, setError]);
 
   const handleDelete = useCallback(
-    (showSlug: string, name: string) => {
-      if (!confirm(`Delete show "${name}"?`)) return;
-      invoke("delete_show", { slug: showSlug })
+    (seqSlug: string, name: string) => {
+      if (!confirm(`Delete sequence "${name}"?`)) return;
+      invoke("delete_sequence", { slug: seqSlug })
         .then(refresh)
         .catch((e) => setError(String(e)));
     },
     [refresh, setError],
   );
 
+  const handleImportVixenSequence = useCallback(async () => {
+    const picked = await open({
+      title: "Select Vixen Sequence Files (.tim)",
+      filters: [{ name: "Vixen Sequences", extensions: ["tim"] }],
+      multiple: true,
+    });
+    if (!picked || picked.length === 0) return;
+
+    setImportingVixen(true);
+    try {
+      for (const timPath of picked) {
+        try {
+          await invoke("import_vixen_sequence", {
+            profileSlug: slug,
+            timPath,
+          });
+        } catch (e) {
+          setError(`Failed to import sequence: ${e}`);
+        }
+      }
+      refresh();
+    } finally {
+      setImportingVixen(false);
+    }
+  }, [slug, refresh, setError]);
+
   return (
     <div className="p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-text text-sm font-medium">Shows</h3>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white transition-colors"
-        >
-          New Show
-        </button>
+        <h3 className="text-text text-sm font-medium">Sequences</h3>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleImportVixenSequence}
+            disabled={importingVixen}
+            className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-3 py-1 text-xs transition-colors disabled:opacity-50"
+          >
+            {importingVixen ? "Importing..." : "Import from Vixen (.tim)"}
+          </button>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white transition-colors"
+          >
+            New Sequence
+          </button>
+        </div>
       </div>
 
       {showCreate && (
@@ -171,7 +214,7 @@ function ShowsTab({
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-            placeholder="Show name"
+            placeholder="Sequence name"
             autoFocus
             className="border-border bg-surface-2 text-text placeholder:text-text-2 flex-1 rounded border px-3 py-1.5 text-sm outline-none focus:border-primary"
           />
@@ -194,22 +237,19 @@ function ShowsTab({
         </div>
       )}
 
-      {shows.length === 0 && !showCreate ? (
+      {sequences.length === 0 && !showCreate ? (
         <p className="text-text-2 mt-8 text-center text-sm">
-          No shows yet. Create one to start sequencing.
+          No sequences yet. Create one to start sequencing.
         </p>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {shows.map((s) => (
+          {sequences.map((s) => (
             <div
               key={s.slug}
-              onClick={() => onOpenShow(s.slug)}
+              onClick={() => onOpenSequence(s.slug)}
               className="border-border bg-surface hover:border-primary group cursor-pointer rounded-lg border p-4 transition-colors"
             >
               <h4 className="text-text text-sm font-medium">{s.name}</h4>
-              <p className="text-text-2 mt-1 text-xs">
-                {s.sequence_count} sequence{s.sequence_count !== 1 ? "s" : ""}
-              </p>
               <button
                 onClick={(e) => {
                   e.stopPropagation();

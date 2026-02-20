@@ -1,5 +1,8 @@
-import { Sun, Moon, Monitor, RotateCcw } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { Sun, Moon, Monitor, RotateCcw, Key, Eye, EyeOff } from "lucide-react";
 import { useUISettings, type ThemeMode } from "../hooks/useUISettings";
+import { AppBar } from "../components/AppBar";
 
 interface Props {
   onBack: () => void;
@@ -22,18 +25,53 @@ const ACCENT_PRESETS = [
 
 export function SettingsScreen({ onBack }: Props) {
   const { settings, update, reset, defaults } = useUISettings();
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [keySaved, setKeySaved] = useState(false);
+
+  // Load existing key status on mount
+  useEffect(() => {
+    invoke<boolean>("has_claude_api_key").then((has) => {
+      if (has) setApiKey("********");
+    }).catch(() => {});
+  }, []);
+
+  const handleSaveApiKey = useCallback(async () => {
+    if (apiKey === "********") return;
+    try {
+      await invoke("set_claude_api_key", { apiKey });
+      setKeySaved(true);
+      if (apiKey) setApiKey("********");
+      setTimeout(() => setKeySaved(false), 1500);
+    } catch (e) {
+      console.error("[VibeLights] Failed to save API key:", e);
+    }
+  }, [apiKey]);
+
+  const handleClearApiKey = useCallback(async () => {
+    try {
+      await invoke("set_claude_api_key", { apiKey: "" });
+      setApiKey("");
+      setKeySaved(false);
+    } catch (e) {
+      console.error("[VibeLights] Failed to clear API key:", e);
+    }
+  }, []);
 
   return (
     <div className="bg-bg text-text flex h-screen flex-col">
-      {/* Header */}
-      <div className="border-border flex items-center border-b px-6 py-3">
+      {/* Title bar */}
+      <AppBar />
+
+      {/* Screen toolbar */}
+      <div className="border-border bg-surface flex select-none items-center gap-2 border-b px-4 py-1.5">
         <button
           onClick={onBack}
-          className="text-text-2 hover:text-text mr-3 text-sm transition-colors"
+          className="text-text-2 hover:text-text mr-1 text-sm transition-colors"
         >
           &larr; Back
         </button>
-        <h2 className="text-text text-lg font-bold">Settings</h2>
+        <h2 className="text-text text-sm font-bold">Settings</h2>
       </div>
 
       {/* Content */}
@@ -131,6 +169,59 @@ export function SettingsScreen({ onBack }: Props) {
             </div>
             <p className="text-text-2 mt-2 text-xs">
               Scales the entire interface. Default is 100%.
+            </p>
+          </Section>
+
+          {/* ── Claude API Key ── */}
+          <Section title="Claude AI">
+            <div className="flex items-center gap-2">
+              <Key size={14} className="text-text-2 flex-shrink-0" />
+              <div className="relative flex-1">
+                <input
+                  type={showKey ? "text" : "password"}
+                  className="border-border bg-surface text-text w-full rounded border px-2 py-1.5 pr-8 font-mono text-xs outline-none focus:border-primary"
+                  placeholder="sk-ant-..."
+                  value={apiKey === "********" ? "********" : apiKey}
+                  onChange={(e) => {
+                    setApiKey(e.target.value);
+                    setKeySaved(false);
+                  }}
+                  onFocus={() => {
+                    if (apiKey === "********") setApiKey("");
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey((s) => !s)}
+                  className="text-text-2 hover:text-text absolute right-2 top-1/2 -translate-y-1/2"
+                >
+                  {showKey ? <EyeOff size={12} /> : <Eye size={12} />}
+                </button>
+              </div>
+              <button
+                onClick={handleSaveApiKey}
+                disabled={!apiKey || apiKey === "********"}
+                className={`rounded border px-3 py-1.5 text-xs transition-colors ${
+                  keySaved
+                    ? "border-green-500/30 bg-green-500/10 text-green-400"
+                    : "border-primary bg-primary/10 text-primary hover:bg-primary/20"
+                } disabled:opacity-50`}
+              >
+                {keySaved ? "Saved" : "Save"}
+              </button>
+              {apiKey && (
+                <button
+                  onClick={handleClearApiKey}
+                  className="text-text-2 hover:text-error text-xs transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <p className="text-text-2 mt-2 text-xs">
+              Your API key is stored locally and used for the embedded chat panel.
+              Get one at{" "}
+              <span className="text-primary">console.anthropic.com</span>
             </p>
           </Section>
 

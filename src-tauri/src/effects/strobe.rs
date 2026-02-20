@@ -1,6 +1,27 @@
-use crate::model::{Color, EffectParams, ParamSchema, ParamType, ParamValue};
+use crate::model::{BlendMode, Color, EffectParams, ParamSchema, ParamType, ParamValue};
 
 use super::Effect;
+
+/// Batch evaluate: extract params once, compute single color, blend all pixels.
+pub fn evaluate_pixels_batch(
+    t: f64,
+    dest: &mut [Color],
+    _global_offset: usize,
+    _total_pixels: usize,
+    params: &EffectParams,
+    blend_mode: BlendMode,
+) {
+    let color = params.color_or("color", Color::WHITE);
+    let rate = params.float_or("rate", 10.0);
+    let duty_cycle = params.float_or("duty_cycle", 0.5).clamp(0.0, 1.0);
+
+    let phase = (t * rate).fract();
+    let effect_color = if phase < duty_cycle { color } else { Color::BLACK };
+
+    for pixel in dest.iter_mut() {
+        *pixel = pixel.blend(effect_color, blend_mode);
+    }
+}
 
 /// Flashes between a color and black at a configurable rate.
 ///

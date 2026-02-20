@@ -1,9 +1,17 @@
+pub mod api;
+pub mod chat;
+#[cfg(feature = "tauri-app")]
 pub mod commands;
 pub mod demo;
+pub mod describe;
+pub mod dispatcher;
 pub mod effects;
 pub mod engine;
 pub mod import;
 pub mod model;
 pub mod profile;
+#[cfg(feature = "tauri-app")]
+pub mod progress;
 pub mod project;
 pub mod settings;
+pub mod state;

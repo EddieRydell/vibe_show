@@ -1,13 +1,18 @@
 // Prevents additional console window on Windows in release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 
-use vibe_show::commands::{self, AppState, PlaybackState};
-use vibe_show::model::Show;
-use vibe_show::settings;
+use vibe_lights::api;
+use vibe_lights::chat::ChatManager;
+use vibe_lights::commands;
+use vibe_lights::dispatcher::CommandDispatcher;
+use vibe_lights::model::Show;
+use vibe_lights::settings;
+use vibe_lights::state::{AppState, PlaybackState};
 
 fn main() {
     tauri::Builder::default()
@@ -20,17 +25,35 @@ fn main() {
 
             let loaded_settings = settings::load_settings(&app_config_dir);
 
-            app.manage(AppState {
+            let state = Arc::new(AppState {
                 show: Mutex::new(Show::empty()),
                 playback: Mutex::new(PlaybackState {
                     playing: false,
                     current_time: 0.0,
                     sequence_index: 0,
                 }),
-                app_config_dir,
+                dispatcher: Mutex::new(CommandDispatcher::new()),
+                chat: Mutex::new(ChatManager::new()),
+                api_port: AtomicU16::new(0),
+                app_config_dir: app_config_dir.clone(),
                 settings: Mutex::new(loaded_settings),
                 current_profile: Mutex::new(None),
-                current_show: Mutex::new(None),
+                current_sequence: Mutex::new(None),
+            });
+
+            app.manage(state.clone());
+
+            // Start the HTTP API server on a background task
+            let api_state = state.clone();
+            tauri::async_runtime::spawn(async move {
+                let port = api::start_api_server(api_state.clone()).await;
+                api_state.api_port.store(port, Ordering::Relaxed);
+
+                // Write port file to app config dir for external tool discovery
+                let port_file = app_config_dir.join(".vibelights-port");
+                let _ = std::fs::write(&port_file, port.to_string());
+
+                eprintln!("[VibeLights] API server listening on http://127.0.0.1:{port}");
             });
 
             Ok(())
@@ -38,6 +61,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             // Settings
             commands::get_settings,
+            commands::get_api_port,
             commands::initialize_data_dir,
             // Profiles
             commands::list_profiles,
@@ -48,12 +72,12 @@ fn main() {
             commands::update_profile_fixtures,
             commands::update_profile_setup,
             commands::update_profile_layout,
-            // Shows
-            commands::list_shows,
-            commands::create_show,
-            commands::open_show,
-            commands::save_current_show,
-            commands::delete_show,
+            // Sequences
+            commands::list_sequences,
+            commands::create_sequence,
+            commands::open_sequence,
+            commands::save_current_sequence,
+            commands::delete_sequence,
             // Media
             commands::list_media,
             commands::import_media,
@@ -63,6 +87,17 @@ fn main() {
             commands::update_sequence_settings,
             // Effects
             commands::list_effects,
+            // Undo / Redo
+            commands::undo,
+            commands::redo,
+            commands::get_undo_state,
+            // Chat
+            commands::send_chat_message,
+            commands::get_chat_history,
+            commands::clear_chat,
+            commands::stop_chat,
+            commands::set_claude_api_key,
+            commands::has_claude_api_key,
             // Engine / playback
             commands::get_show,
             commands::get_frame,
@@ -79,10 +114,14 @@ fn main() {
             commands::delete_effects,
             commands::update_effect_time_range,
             commands::move_effect_to_track,
-            commands::select_sequence,
             // Import
             commands::import_vixen,
+            commands::import_vixen_profile,
+            commands::import_vixen_sequence,
+            commands::scan_vixen_directory,
+            commands::check_vixen_preview_file,
+            commands::execute_vixen_import,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running VibeShow");
+        .expect("error while running VibeLights");
 }

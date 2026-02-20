@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-VibeShow is an AI-integrated light show sequencer (think XLights/Vixen but with AI generation). Built with Tauri v2: Rust backend for the engine, React/TypeScript frontend for the UI.
+VibeLights is an AI-integrated light show sequencer (think XLights/Vixen but with AI generation). Built with Tauri v2: Rust backend for the engine, React/TypeScript frontend for the UI.
 
 ## Build & Dev Commands
 
@@ -90,13 +90,15 @@ Effects are pure functions of (normalized time, pixel position, params) → Colo
 **Hooks**:
 - `useEngine.ts` — Wraps all Tauri IPC (show loading, playback control, frame updates via requestAnimationFrame tick loop)
 
-**Types**:
-- `types.ts` — TypeScript types mirroring Rust model (manually kept in sync)
+**Types** (auto-generated via [ts-rs](https://github.com/Aleph-Alpha/ts-rs)):
+- `src-tauri/bindings/` — Generated TypeScript types from Rust (`#[derive(TS)]` + `#[ts(export)]`). **Do not edit manually.** Regenerate with `pnpm bindings` (or `cd src-tauri && cargo test export_bindings`).
+- `src/types.ts` — Barrel file re-exporting generated bindings + frontend-only types (`BULB_SHAPE_RADIUS`, `InteractionMode`).
+- **When you change a Rust type that has `#[derive(TS)]`, you must run `pnpm bindings` to regenerate.** TypeScript will catch mismatches at compile time (`pnpm check`).
 
 ### Design Principles
 
 - **Make illegal states unrepresentable**: newtypes (`FixtureId`, `GroupId`, `DmxAddress`), validated constructors returning `Option`, exhaustive enums
-- **Single source of truth**: brand colors in Tailwind theme, Rust types as canonical model, TS types mirror them
+- **Single source of truth**: brand colors in Tailwind theme, Rust types as canonical model, TS types auto-generated via ts-rs
 - **Effects are pure functions**: no mutation, no RNG state — same inputs always produce same output
 - **Separation of concerns**: fixture definitions (what) are separate from patching (where) and controllers (how)
 - **Composition over configuration**: effects compose via blend modes on tracks, not via complex parameter hierarchies

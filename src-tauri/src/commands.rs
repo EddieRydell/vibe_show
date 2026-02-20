@@ -1,54 +1,39 @@
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use tauri::State;
 
+use crate::chat::{ChatHistoryEntry, ChatManager};
+use crate::dispatcher::{CommandResult, EditCommand, UndoState};
 use crate::effects::{self, resolve_effect};
 use crate::engine::{self, Frame};
+use crate::import::vixen::{VixenDiscovery, VixenImportConfig, VixenImportResult};
 use crate::model::{
-    BlendMode, EffectInstance, EffectKind, EffectParams, EffectTarget, ParamSchema, ParamValue,
-    Show, TimeRange, Track,
+    BlendMode, EffectKind, EffectTarget, ParamSchema, ParamValue, Show,
 };
-use crate::profile::{self, MediaFile, Profile, ProfileSummary, ShowData, ShowSummary};
+use crate::profile::{self, MediaFile, Profile, ProfileSummary, SequenceSummary};
+use crate::progress::emit_progress;
 use crate::settings::{self, AppSettings};
-
-// ── Application State ──────────────────────────────────────────────
-
-/// Application state shared across Tauri commands.
-pub struct AppState {
-    pub show: Mutex<Show>,
-    pub playback: Mutex<PlaybackState>,
-    pub app_config_dir: PathBuf,
-    pub settings: Mutex<Option<AppSettings>>,
-    pub current_profile: Mutex<Option<String>>,
-    pub current_show: Mutex<Option<String>>,
-}
-
-pub struct PlaybackState {
-    pub playing: bool,
-    pub current_time: f64,
-    pub sequence_index: usize,
-}
-
-#[derive(serde::Serialize)]
-pub struct PlaybackInfo {
-    pub playing: bool,
-    pub current_time: f64,
-    pub duration: f64,
-    pub sequence_index: usize,
-}
+use crate::state::{self, AppState, PlaybackInfo};
 
 // ── Settings commands ──────────────────────────────────────────────
 
 /// Check if settings exist (first launch detection).
 #[tauri::command]
-pub fn get_settings(state: State<AppState>) -> Option<AppSettings> {
+pub fn get_settings(state: State<Arc<AppState>>) -> Option<AppSettings> {
     state.settings.lock().unwrap().clone()
+}
+
+/// Get the API server port (0 if not yet started).
+#[tauri::command]
+pub fn get_api_port(state: State<Arc<AppState>>) -> u16 {
+    state.api_port.load(Ordering::Relaxed)
 }
 
 /// First launch: set data directory, create folder structure, save settings.
 #[tauri::command]
-pub fn initialize_data_dir(state: State<AppState>, data_dir: String) -> Result<AppSettings, String> {
+pub fn initialize_data_dir(state: State<Arc<AppState>>, data_dir: String) -> Result<AppSettings, String> {
     let data_path = PathBuf::from(&data_dir);
 
     // Create the profiles directory
@@ -64,37 +49,31 @@ pub fn initialize_data_dir(state: State<AppState>, data_dir: String) -> Result<A
 
 // ── Profile commands ───────────────────────────────────────────────
 
-fn get_data_dir(state: &State<AppState>) -> Result<PathBuf, String> {
-    state
-        .settings
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|s| s.data_dir.clone())
-        .ok_or_else(|| "No data directory configured".to_string())
+fn get_data_dir(state: &State<Arc<AppState>>) -> Result<std::path::PathBuf, String> {
+    state::get_data_dir(state)
 }
 
 /// List all profiles.
 #[tauri::command]
-pub fn list_profiles(state: State<AppState>) -> Result<Vec<ProfileSummary>, String> {
+pub fn list_profiles(state: State<Arc<AppState>>) -> Result<Vec<ProfileSummary>, String> {
     let data_dir = get_data_dir(&state)?;
     profile::list_profiles(&data_dir).map_err(|e| e.to_string())
 }
 
 /// Create a new empty profile.
 #[tauri::command]
-pub fn create_profile(state: State<AppState>, name: String) -> Result<ProfileSummary, String> {
+pub fn create_profile(state: State<Arc<AppState>>, name: String) -> Result<ProfileSummary, String> {
     let data_dir = get_data_dir(&state)?;
     profile::create_profile(&data_dir, &name).map_err(|e| e.to_string())
 }
 
 /// Load a profile and set it as current.
 #[tauri::command]
-pub fn open_profile(state: State<AppState>, slug: String) -> Result<Profile, String> {
+pub fn open_profile(state: State<Arc<AppState>>, slug: String) -> Result<Profile, String> {
     let data_dir = get_data_dir(&state)?;
     let loaded = profile::load_profile(&data_dir, &slug).map_err(|e| e.to_string())?;
     *state.current_profile.lock().unwrap() = Some(slug.clone());
-    *state.current_show.lock().unwrap() = None;
+    *state.current_sequence.lock().unwrap() = None;
 
     // Update last_profile in settings
     let mut settings_guard = state.settings.lock().unwrap();
@@ -108,7 +87,7 @@ pub fn open_profile(state: State<AppState>, slug: String) -> Result<Profile, Str
 
 /// Delete a profile and all its data.
 #[tauri::command]
-pub fn delete_profile(state: State<AppState>, slug: String) -> Result<(), String> {
+pub fn delete_profile(state: State<Arc<AppState>>, slug: String) -> Result<(), String> {
     let data_dir = get_data_dir(&state)?;
     profile::delete_profile(&data_dir, &slug).map_err(|e| e.to_string())?;
 
@@ -116,7 +95,7 @@ pub fn delete_profile(state: State<AppState>, slug: String) -> Result<(), String
     let mut current = state.current_profile.lock().unwrap();
     if current.as_deref() == Some(&slug) {
         *current = None;
-        *state.current_show.lock().unwrap() = None;
+        *state.current_sequence.lock().unwrap() = None;
     }
 
     Ok(())
@@ -124,7 +103,7 @@ pub fn delete_profile(state: State<AppState>, slug: String) -> Result<(), String
 
 /// Save the current profile's house data.
 #[tauri::command]
-pub fn save_profile(state: State<AppState>) -> Result<(), String> {
+pub fn save_profile(state: State<Arc<AppState>>) -> Result<(), String> {
     let data_dir = get_data_dir(&state)?;
     let slug = state
         .current_profile
@@ -139,7 +118,7 @@ pub fn save_profile(state: State<AppState>) -> Result<(), String> {
 /// Update fixtures and groups on the current profile.
 #[tauri::command]
 pub fn update_profile_fixtures(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     fixtures: Vec<crate::model::FixtureDef>,
     groups: Vec<crate::model::FixtureGroup>,
 ) -> Result<(), String> {
@@ -159,7 +138,7 @@ pub fn update_profile_fixtures(
 /// Update controllers and patches on the current profile.
 #[tauri::command]
 pub fn update_profile_setup(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     controllers: Vec<crate::model::Controller>,
     patches: Vec<crate::model::fixture::Patch>,
 ) -> Result<(), String> {
@@ -179,7 +158,7 @@ pub fn update_profile_setup(
 /// Update the layout on the current profile.
 #[tauri::command]
 pub fn update_profile_layout(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     layout: crate::model::Layout,
 ) -> Result<(), String> {
     let data_dir = get_data_dir(&state)?;
@@ -194,11 +173,11 @@ pub fn update_profile_layout(
     profile::save_profile(&data_dir, &slug, &loaded).map_err(|e| e.to_string())
 }
 
-// ── Show commands ──────────────────────────────────────────────────
+// ── Sequence commands ──────────────────────────────────────────────
 
-/// List shows in the current profile.
+/// List sequences in the current profile.
 #[tauri::command]
-pub fn list_shows(state: State<AppState>) -> Result<Vec<ShowSummary>, String> {
+pub fn list_sequences(state: State<Arc<AppState>>) -> Result<Vec<SequenceSummary>, String> {
     let data_dir = get_data_dir(&state)?;
     let profile_slug = state
         .current_profile
@@ -206,12 +185,12 @@ pub fn list_shows(state: State<AppState>) -> Result<Vec<ShowSummary>, String> {
         .unwrap()
         .clone()
         .ok_or("No profile open")?;
-    profile::list_shows(&data_dir, &profile_slug).map_err(|e| e.to_string())
+    profile::list_sequences(&data_dir, &profile_slug).map_err(|e| e.to_string())
 }
 
-/// Create a new empty show in the current profile.
+/// Create a new empty sequence in the current profile.
 #[tauri::command]
-pub fn create_show(state: State<AppState>, name: String) -> Result<ShowSummary, String> {
+pub fn create_sequence(state: State<Arc<AppState>>, name: String) -> Result<SequenceSummary, String> {
     let data_dir = get_data_dir(&state)?;
     let profile_slug = state
         .current_profile
@@ -219,12 +198,12 @@ pub fn create_show(state: State<AppState>, name: String) -> Result<ShowSummary, 
         .unwrap()
         .clone()
         .ok_or("No profile open")?;
-    profile::create_show(&data_dir, &profile_slug, &name).map_err(|e| e.to_string())
+    profile::create_sequence(&data_dir, &profile_slug, &name).map_err(|e| e.to_string())
 }
 
-/// Load a show into the engine state for editing.
+/// Delete a sequence from the current profile.
 #[tauri::command]
-pub fn open_show(state: State<AppState>, slug: String) -> Result<Show, String> {
+pub fn delete_sequence(state: State<Arc<AppState>>, slug: String) -> Result<(), String> {
     let data_dir = get_data_dir(&state)?;
     let profile_slug = state
         .current_profile
@@ -232,65 +211,10 @@ pub fn open_show(state: State<AppState>, slug: String) -> Result<Show, String> {
         .unwrap()
         .clone()
         .ok_or("No profile open")?;
+    profile::delete_sequence(&data_dir, &profile_slug, &slug).map_err(|e| e.to_string())?;
 
-    let profile_data =
-        profile::load_profile(&data_dir, &profile_slug).map_err(|e| e.to_string())?;
-    let show_data =
-        profile::load_show(&data_dir, &profile_slug, &slug).map_err(|e| e.to_string())?;
-
-    let assembled = profile::assemble_show(&profile_data, &show_data);
-    *state.show.lock().unwrap() = assembled.clone();
-
-    let mut playback = state.playback.lock().unwrap();
-    playback.playing = false;
-    playback.current_time = 0.0;
-    playback.sequence_index = 0;
-
-    *state.current_show.lock().unwrap() = Some(slug);
-
-    Ok(assembled)
-}
-
-/// Save the currently active show back to disk.
-#[tauri::command]
-pub fn save_current_show(state: State<AppState>) -> Result<(), String> {
-    let data_dir = get_data_dir(&state)?;
-    let profile_slug = state
-        .current_profile
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("No profile open")?;
-    let show_slug = state
-        .current_show
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("No show open")?;
-
-    let show = state.show.lock().unwrap();
-    let show_data = ShowData {
-        name: show.name.clone(),
-        sequences: show.sequences.clone(),
-    };
-    profile::save_show(&data_dir, &profile_slug, &show_slug, &show_data)
-        .map_err(|e| e.to_string())
-}
-
-/// Delete a show from the current profile.
-#[tauri::command]
-pub fn delete_show(state: State<AppState>, slug: String) -> Result<(), String> {
-    let data_dir = get_data_dir(&state)?;
-    let profile_slug = state
-        .current_profile
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("No profile open")?;
-    profile::delete_show(&data_dir, &profile_slug, &slug).map_err(|e| e.to_string())?;
-
-    // Clear current show if it was the deleted one
-    let mut current = state.current_show.lock().unwrap();
+    // Clear current sequence if it was the deleted one
+    let mut current = state.current_sequence.lock().unwrap();
     if current.as_deref() == Some(&slug) {
         *current = None;
     }
@@ -298,11 +222,86 @@ pub fn delete_show(state: State<AppState>, slug: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Load a sequence into the engine state for editing.
+#[tauri::command]
+pub async fn open_sequence(
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+    slug: String,
+) -> Result<Show, String> {
+    let data_dir = get_data_dir(&state)?;
+    let profile_slug = state
+        .current_profile
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No profile open")?;
+    let state_arc = (*state).clone();
+    let app = app_handle.clone();
+
+    let assembled = tokio::task::spawn_blocking(move || {
+        emit_progress(&app, "open_sequence", "Loading profile...", 0.1, None);
+        let profile_data =
+            profile::load_profile(&data_dir, &profile_slug).map_err(|e| e.to_string())?;
+
+        emit_progress(&app, "open_sequence", "Loading sequence...", 0.4, None);
+        let sequence =
+            profile::load_sequence(&data_dir, &profile_slug, &slug).map_err(|e| e.to_string())?;
+
+        emit_progress(&app, "open_sequence", "Assembling show...", 0.7, None);
+        let assembled = profile::assemble_show(&profile_data, &sequence);
+
+        *state_arc.show.lock().unwrap() = assembled.clone();
+        state_arc.dispatcher.lock().unwrap().clear();
+
+        let mut playback = state_arc.playback.lock().unwrap();
+        playback.playing = false;
+        playback.current_time = 0.0;
+        playback.sequence_index = 0;
+
+        *state_arc.current_sequence.lock().unwrap() = Some(slug);
+
+        emit_progress(&app, "open_sequence", "Ready", 1.0, None);
+
+        Ok::<Show, String>(assembled)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    Ok(assembled)
+}
+
+/// Save the currently active sequence back to disk.
+#[tauri::command]
+pub fn save_current_sequence(state: State<Arc<AppState>>) -> Result<(), String> {
+    let data_dir = get_data_dir(&state)?;
+    let profile_slug = state
+        .current_profile
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No profile open")?;
+    let seq_slug = state
+        .current_sequence
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("No sequence open")?;
+
+    let show = state.show.lock().unwrap();
+    let sequence = show
+        .sequences
+        .first()
+        .ok_or("No sequence in show")?;
+    profile::save_sequence(&data_dir, &profile_slug, &seq_slug, sequence)
+        .map_err(|e| e.to_string())
+}
+
 // ── Media commands ─────────────────────────────────────────────────
 
 /// List audio files in the current profile.
 #[tauri::command]
-pub fn list_media(state: State<AppState>) -> Result<Vec<MediaFile>, String> {
+pub fn list_media(state: State<Arc<AppState>>) -> Result<Vec<MediaFile>, String> {
     let data_dir = get_data_dir(&state)?;
     let profile_slug = state
         .current_profile
@@ -315,7 +314,7 @@ pub fn list_media(state: State<AppState>) -> Result<Vec<MediaFile>, String> {
 
 /// Import (copy) an audio file into the current profile's media directory.
 #[tauri::command]
-pub fn import_media(state: State<AppState>, source_path: String) -> Result<MediaFile, String> {
+pub fn import_media(state: State<Arc<AppState>>, source_path: String) -> Result<MediaFile, String> {
     let data_dir = get_data_dir(&state)?;
     let profile_slug = state
         .current_profile
@@ -333,7 +332,7 @@ pub fn import_media(state: State<AppState>, source_path: String) -> Result<Media
 
 /// Delete an audio file from the current profile.
 #[tauri::command]
-pub fn delete_media(state: State<AppState>, filename: String) -> Result<(), String> {
+pub fn delete_media(state: State<Arc<AppState>>, filename: String) -> Result<(), String> {
     let data_dir = get_data_dir(&state)?;
     let profile_slug = state
         .current_profile
@@ -348,7 +347,7 @@ pub fn delete_media(state: State<AppState>, filename: String) -> Result<(), Stri
 
 /// Resolve a media filename to its absolute filesystem path.
 #[tauri::command]
-pub fn resolve_media_path(state: State<AppState>, filename: String) -> Result<String, String> {
+pub fn resolve_media_path(state: State<Arc<AppState>>, filename: String) -> Result<String, String> {
     let data_dir = get_data_dir(&state)?;
     let profile_slug = state
         .current_profile
@@ -368,43 +367,30 @@ pub fn resolve_media_path(state: State<AppState>, filename: String) -> Result<St
 /// Partial update of sequence settings. Only provided fields are changed.
 #[tauri::command]
 pub fn update_sequence_settings(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     sequence_index: usize,
     name: Option<String>,
     audio_file: Option<Option<String>>,
     duration: Option<f64>,
     frame_rate: Option<f64>,
 ) -> Result<(), String> {
+    let mut dispatcher = state.dispatcher.lock().unwrap();
     let mut show = state.show.lock().unwrap();
-    let sequence = show
-        .sequences
-        .get_mut(sequence_index)
-        .ok_or("Invalid sequence index")?;
-
-    if let Some(n) = name {
-        sequence.name = n;
-    }
-    if let Some(af) = audio_file {
-        sequence.audio_file = af;
-    }
-    if let Some(d) = duration {
-        if d <= 0.0 {
-            return Err("Duration must be positive".into());
-        }
-        sequence.duration = d;
-    }
-    if let Some(fr) = frame_rate {
-        if fr <= 0.0 {
-            return Err("Frame rate must be positive".into());
-        }
-        sequence.frame_rate = fr;
-    }
+    let cmd = EditCommand::UpdateSequenceSettings {
+        sequence_index,
+        name,
+        audio_file,
+        duration,
+        frame_rate,
+    };
+    dispatcher.execute(&mut show, cmd)?;
     Ok(())
 }
 
 // ── Effects listing ────────────────────────────────────────────────
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct EffectInfo {
     pub kind: EffectKind,
     pub name: String,
@@ -421,6 +407,7 @@ pub fn list_effects() -> Vec<EffectInfo> {
         EffectKind::Strobe,
         EffectKind::Gradient,
         EffectKind::Twinkle,
+        EffectKind::Fade,
     ];
     kinds
         .into_iter()
@@ -435,17 +422,101 @@ pub fn list_effects() -> Vec<EffectInfo> {
         .collect()
 }
 
+// ── Undo / Redo commands ──────────────────────────────────────────
+
+/// Undo the last editing command.
+#[tauri::command]
+pub fn undo(state: State<Arc<AppState>>) -> Result<String, String> {
+    let mut dispatcher = state.dispatcher.lock().unwrap();
+    let mut show = state.show.lock().unwrap();
+    dispatcher.undo(&mut show)
+}
+
+/// Redo the last undone editing command.
+#[tauri::command]
+pub fn redo(state: State<Arc<AppState>>) -> Result<String, String> {
+    let mut dispatcher = state.dispatcher.lock().unwrap();
+    let mut show = state.show.lock().unwrap();
+    dispatcher.redo(&mut show)
+}
+
+/// Get the current undo/redo state.
+#[tauri::command]
+pub fn get_undo_state(state: State<Arc<AppState>>) -> UndoState {
+    state.dispatcher.lock().unwrap().undo_state()
+}
+
+// ── Chat commands ─────────────────────────────────────────────────
+
+/// Send a message to the Claude chat. Starts the agentic tool-use loop.
+#[tauri::command]
+pub async fn send_chat_message(
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+    message: String,
+) -> Result<(), String> {
+    let state_arc = (*state).clone();
+    let emitter = crate::chat::TauriChatEmitter { app_handle };
+    ChatManager::send_message(state_arc, &emitter, message).await
+}
+
+/// Get the chat history for display.
+#[tauri::command]
+pub fn get_chat_history(state: State<Arc<AppState>>) -> Vec<ChatHistoryEntry> {
+    state.chat.lock().unwrap().history_for_display()
+}
+
+/// Clear the chat conversation.
+#[tauri::command]
+pub fn clear_chat(state: State<Arc<AppState>>) {
+    state.chat.lock().unwrap().clear();
+}
+
+/// Cancel any in-flight chat request.
+#[tauri::command]
+pub fn stop_chat(state: State<Arc<AppState>>) {
+    state.chat.lock().unwrap().cancel();
+}
+
+/// Update the Claude API key in settings.
+#[tauri::command]
+pub fn set_claude_api_key(state: State<Arc<AppState>>, api_key: String) -> Result<(), String> {
+    let mut settings_guard = state.settings.lock().unwrap();
+    if let Some(ref mut s) = *settings_guard {
+        s.claude_api_key = if api_key.is_empty() {
+            None
+        } else {
+            Some(api_key)
+        };
+        settings::save_settings(&state.app_config_dir, s).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Check if a Claude API key is configured.
+#[tauri::command]
+pub fn has_claude_api_key(state: State<Arc<AppState>>) -> bool {
+    state
+        .settings
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|s| s.claude_api_key.as_ref())
+        .map(|k| !k.is_empty())
+        .unwrap_or(false)
+}
+
 // ── Engine / playback commands ─────────────────────────────────────
 
 /// Get the full show model as JSON.
 #[tauri::command]
-pub fn get_show(state: State<AppState>) -> Show {
+pub fn get_show(state: State<Arc<AppState>>) -> Show {
     state.show.lock().unwrap().clone()
 }
 
 /// Evaluate and return a single frame at the given time.
 #[tauri::command]
-pub fn get_frame(state: State<AppState>, time: f64) -> Frame {
+pub fn get_frame(state: State<Arc<AppState>>, time: f64) -> Frame {
     let show = state.show.lock().unwrap();
     let playback = state.playback.lock().unwrap();
     engine::evaluate(&show, playback.sequence_index, time)
@@ -453,28 +524,28 @@ pub fn get_frame(state: State<AppState>, time: f64) -> Frame {
 
 /// Start playback.
 #[tauri::command]
-pub fn play(state: State<AppState>) {
+pub fn play(state: State<Arc<AppState>>) {
     let mut playback = state.playback.lock().unwrap();
     playback.playing = true;
 }
 
 /// Pause playback.
 #[tauri::command]
-pub fn pause(state: State<AppState>) {
+pub fn pause(state: State<Arc<AppState>>) {
     let mut playback = state.playback.lock().unwrap();
     playback.playing = false;
 }
 
 /// Seek to a specific time.
 #[tauri::command]
-pub fn seek(state: State<AppState>, time: f64) {
+pub fn seek(state: State<Arc<AppState>>, time: f64) {
     let mut playback = state.playback.lock().unwrap();
     playback.current_time = time.max(0.0);
 }
 
 /// Get current playback state.
 #[tauri::command]
-pub fn get_playback(state: State<AppState>) -> PlaybackInfo {
+pub fn get_playback(state: State<Arc<AppState>>) -> PlaybackInfo {
     let playback = state.playback.lock().unwrap();
     let show = state.show.lock().unwrap();
     let duration = show
@@ -492,7 +563,7 @@ pub fn get_playback(state: State<AppState>) -> PlaybackInfo {
 
 /// Advance playback by dt seconds. Returns the new frame if playing.
 #[tauri::command]
-pub fn tick(state: State<AppState>, dt: f64) -> Option<TickResult> {
+pub fn tick(state: State<Arc<AppState>>, dt: f64) -> Option<TickResult> {
     let mut playback = state.playback.lock().unwrap();
     if !playback.playing {
         return None;
@@ -519,7 +590,8 @@ pub fn tick(state: State<AppState>, dt: f64) -> Option<TickResult> {
     })
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct TickResult {
     pub frame: Frame,
     pub current_time: f64,
@@ -529,7 +601,7 @@ pub struct TickResult {
 /// Pre-render an effect as a thumbnail image for the timeline.
 #[tauri::command]
 pub fn render_effect_thumbnail(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     sequence_index: usize,
     track_index: usize,
     effect_index: usize,
@@ -571,7 +643,8 @@ pub fn render_effect_thumbnail(
     })
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct EffectThumbnail {
     pub width: usize,
     pub height: usize,
@@ -580,20 +653,12 @@ pub struct EffectThumbnail {
     pub end_time: f64,
 }
 
-#[derive(serde::Serialize)]
-pub struct EffectDetail {
-    pub kind: EffectKind,
-    pub schema: Vec<ParamSchema>,
-    pub params: EffectParams,
-    pub time_range: TimeRange,
-    pub track_name: String,
-    pub blend_mode: BlendMode,
-}
+pub use crate::state::EffectDetail;
 
 /// Get the schema, current params, and metadata for a placed effect.
 #[tauri::command]
 pub fn get_effect_detail(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     sequence_index: usize,
     track_index: usize,
     effect_index: usize,
@@ -618,192 +683,146 @@ pub fn get_effect_detail(
 /// Update a single parameter on a placed effect.
 #[tauri::command]
 pub fn update_effect_param(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     sequence_index: usize,
     track_index: usize,
     effect_index: usize,
     key: String,
     value: ParamValue,
 ) -> bool {
+    let mut dispatcher = state.dispatcher.lock().unwrap();
     let mut show = state.show.lock().unwrap();
-    let Some(sequence) = show.sequences.get_mut(sequence_index) else {
-        return false;
+    let cmd = EditCommand::UpdateEffectParam {
+        sequence_index,
+        track_index,
+        effect_index,
+        key,
+        value,
     };
-    let Some(track) = sequence.tracks.get_mut(track_index) else {
-        return false;
-    };
-    let Some(effect_instance) = track.effects.get_mut(effect_index) else {
-        return false;
-    };
-    effect_instance.params.set_mut(key, value);
-    true
+    match dispatcher.execute(&mut show, cmd) {
+        Ok(CommandResult::Bool(v)) => v,
+        Ok(_) => true,
+        Err(_) => false,
+    }
 }
 
 /// Add a new effect to a track with default params.
 #[tauri::command]
 pub fn add_effect(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     sequence_index: usize,
     track_index: usize,
     kind: EffectKind,
     start: f64,
     end: f64,
 ) -> Result<usize, String> {
-    let time_range = TimeRange::new(start, end).ok_or("Invalid time range")?;
+    let mut dispatcher = state.dispatcher.lock().unwrap();
     let mut show = state.show.lock().unwrap();
-    let sequence = show
-        .sequences
-        .get_mut(sequence_index)
-        .ok_or("Invalid sequence index")?;
-    let track = sequence
-        .tracks
-        .get_mut(track_index)
-        .ok_or("Invalid track index")?;
-    let effect = EffectInstance {
+    let cmd = EditCommand::AddEffect {
+        sequence_index,
+        track_index,
         kind,
-        params: EffectParams::new(),
-        time_range,
+        start,
+        end,
     };
-    track.effects.push(effect);
-    Ok(track.effects.len() - 1)
+    match dispatcher.execute(&mut show, cmd)? {
+        CommandResult::Index(idx) => Ok(idx),
+        _ => Ok(0),
+    }
 }
 
 /// Add a new track to a sequence.
 #[tauri::command]
 pub fn add_track(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     sequence_index: usize,
     name: String,
     target: EffectTarget,
     blend_mode: BlendMode,
 ) -> Result<usize, String> {
+    let mut dispatcher = state.dispatcher.lock().unwrap();
     let mut show = state.show.lock().unwrap();
-    let sequence = show
-        .sequences
-        .get_mut(sequence_index)
-        .ok_or("Invalid sequence index")?;
-    let track = Track {
+    let cmd = EditCommand::AddTrack {
+        sequence_index,
         name,
         target,
-        effects: Vec::new(),
         blend_mode,
     };
-    sequence.tracks.push(track);
-    Ok(sequence.tracks.len() - 1)
+    match dispatcher.execute(&mut show, cmd)? {
+        CommandResult::Index(idx) => Ok(idx),
+        _ => Ok(0),
+    }
 }
 
 /// Delete multiple effects across tracks. Targets are (track_index, effect_index) pairs.
 #[tauri::command]
 pub fn delete_effects(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     sequence_index: usize,
     targets: Vec<(usize, usize)>,
 ) -> Result<(), String> {
+    let mut dispatcher = state.dispatcher.lock().unwrap();
     let mut show = state.show.lock().unwrap();
-    let sequence = show
-        .sequences
-        .get_mut(sequence_index)
-        .ok_or("Invalid sequence index")?;
-
-    // Group by track index, then sort effect indices descending to preserve indices during removal
-    let mut by_track: std::collections::HashMap<usize, Vec<usize>> =
-        std::collections::HashMap::new();
-    for (track_idx, effect_idx) in targets {
-        by_track.entry(track_idx).or_default().push(effect_idx);
-    }
-    for (track_idx, mut effect_indices) in by_track {
-        let track = sequence
-            .tracks
-            .get_mut(track_idx)
-            .ok_or(format!("Invalid track index {track_idx}"))?;
-        effect_indices.sort_unstable();
-        effect_indices.dedup();
-        // Remove from highest index first
-        for &idx in effect_indices.iter().rev() {
-            if idx < track.effects.len() {
-                track.effects.remove(idx);
-            }
-        }
-    }
+    let cmd = EditCommand::DeleteEffects {
+        sequence_index,
+        targets,
+    };
+    dispatcher.execute(&mut show, cmd)?;
     Ok(())
 }
 
 /// Update the time range of an effect.
 #[tauri::command]
 pub fn update_effect_time_range(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     sequence_index: usize,
     track_index: usize,
     effect_index: usize,
     start: f64,
     end: f64,
 ) -> Result<bool, String> {
-    let time_range = TimeRange::new(start, end).ok_or("Invalid time range")?;
+    let mut dispatcher = state.dispatcher.lock().unwrap();
     let mut show = state.show.lock().unwrap();
-    let Some(sequence) = show.sequences.get_mut(sequence_index) else {
-        return Ok(false);
+    let cmd = EditCommand::UpdateEffectTimeRange {
+        sequence_index,
+        track_index,
+        effect_index,
+        start,
+        end,
     };
-    let Some(track) = sequence.tracks.get_mut(track_index) else {
-        return Ok(false);
-    };
-    let Some(effect) = track.effects.get_mut(effect_index) else {
-        return Ok(false);
-    };
-    effect.time_range = time_range;
-    Ok(true)
+    match dispatcher.execute(&mut show, cmd)? {
+        CommandResult::Bool(v) => Ok(v),
+        _ => Ok(true),
+    }
 }
 
 /// Move an effect from one track to another. Returns the new effect index in the destination track.
 #[tauri::command]
 pub fn move_effect_to_track(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     sequence_index: usize,
     from_track: usize,
     effect_index: usize,
     to_track: usize,
 ) -> Result<usize, String> {
+    let mut dispatcher = state.dispatcher.lock().unwrap();
     let mut show = state.show.lock().unwrap();
-    let sequence = show
-        .sequences
-        .get_mut(sequence_index)
-        .ok_or("Invalid sequence index")?;
-
-    if from_track >= sequence.tracks.len() {
-        return Err(format!("Invalid source track index {from_track}"));
+    let cmd = EditCommand::MoveEffectToTrack {
+        sequence_index,
+        from_track,
+        effect_index,
+        to_track,
+    };
+    match dispatcher.execute(&mut show, cmd)? {
+        CommandResult::Index(idx) => Ok(idx),
+        _ => Ok(0),
     }
-    if to_track >= sequence.tracks.len() {
-        return Err(format!("Invalid destination track index {to_track}"));
-    }
-    if effect_index >= sequence.tracks[from_track].effects.len() {
-        return Err(format!("Invalid effect index {effect_index}"));
-    }
-
-    let effect = sequence.tracks[from_track].effects.remove(effect_index);
-    sequence.tracks[to_track].effects.push(effect);
-    Ok(sequence.tracks[to_track].effects.len() - 1)
-}
-
-/// Switch to a different sequence by index.
-#[tauri::command]
-pub fn select_sequence(state: State<AppState>, index: usize) -> Option<PlaybackInfo> {
-    let show = state.show.lock().unwrap();
-    let sequence = show.sequences.get(index)?;
-    let mut playback = state.playback.lock().unwrap();
-    playback.sequence_index = index;
-    playback.current_time = 0.0;
-    playback.playing = false;
-    Some(PlaybackInfo {
-        playing: false,
-        current_time: 0.0,
-        duration: sequence.duration,
-        sequence_index: index,
-    })
 }
 
 /// Import a Vixen 3 show into the current profile, creating a new profile + show from the import.
 #[tauri::command]
 pub fn import_vixen(
-    state: State<AppState>,
+    state: State<Arc<AppState>>,
     system_config_path: String,
     sequence_paths: Vec<String>,
 ) -> Result<ProfileSummary, String> {
@@ -819,6 +838,7 @@ pub fn import_vixen(
             .map_err(|e| e.to_string())?;
     }
 
+    let guid_map = importer.guid_map().clone();
     let show = importer.into_show();
 
     // Create a profile from the imported data
@@ -841,15 +861,16 @@ pub fn import_vixen(
     };
     profile::save_profile(&data_dir, &summary.slug, &prof).map_err(|e| e.to_string())?;
 
-    // Create a show with the sequences
-    if !show.sequences.is_empty() {
-        let show_summary =
-            profile::create_show(&data_dir, &summary.slug, "Imported Show").map_err(|e| e.to_string())?;
-        let show_data = ShowData {
-            name: "Imported Show".into(),
-            sequences: show.sequences,
-        };
-        profile::save_show(&data_dir, &summary.slug, &show_summary.slug, &show_data)
+    // Persist the GUID map for future sequence imports
+    profile::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map)
+        .map_err(|e| e.to_string())?;
+
+    // Save sequences directly into the profile
+    for seq in &show.sequences {
+        profile::create_sequence(&data_dir, &summary.slug, &seq.name)
+            .map_err(|e| e.to_string())?;
+        let seq_slug = crate::project::slugify(&seq.name);
+        profile::save_sequence(&data_dir, &summary.slug, &seq_slug, seq)
             .map_err(|e| e.to_string())?;
     }
 
@@ -861,4 +882,422 @@ pub fn import_vixen(
         .unwrap_or(summary);
 
     Ok(updated_summary)
+}
+
+/// Import only the Vixen profile (fixtures, groups, controllers) from SystemConfig.xml.
+/// No sequences are imported. Returns the new profile summary.
+#[tauri::command]
+pub fn import_vixen_profile(
+    state: State<Arc<AppState>>,
+    system_config_path: String,
+) -> Result<ProfileSummary, String> {
+    let data_dir = get_data_dir(&state)?;
+
+    let mut importer = crate::import::vixen::VixenImporter::new();
+    importer
+        .parse_system_config(std::path::Path::new(&system_config_path))
+        .map_err(|e| e.to_string())?;
+
+    let guid_map = importer.guid_map().clone();
+    let show = importer.into_show();
+
+    let profile_name = "Vixen Import".to_string();
+    let summary = profile::create_profile(&data_dir, &profile_name).map_err(|e| e.to_string())?;
+
+    let prof = Profile {
+        name: profile_name,
+        slug: summary.slug.clone(),
+        fixtures: show.fixtures.clone(),
+        groups: show.groups.clone(),
+        controllers: show.controllers.clone(),
+        patches: show.patches.clone(),
+        layout: show.layout.clone(),
+    };
+    profile::save_profile(&data_dir, &summary.slug, &prof).map_err(|e| e.to_string())?;
+
+    // Persist the GUID map for future sequence imports
+    profile::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map)
+        .map_err(|e| e.to_string())?;
+
+    // Re-read summary to get accurate counts
+    let profiles = profile::list_profiles(&data_dir).map_err(|e| e.to_string())?;
+    let updated_summary = profiles
+        .into_iter()
+        .find(|p| p.slug == summary.slug)
+        .unwrap_or(summary);
+
+    Ok(updated_summary)
+}
+
+/// Import a single Vixen sequence (.tim) into an existing profile.
+/// Requires the profile to have a saved GUID map from a prior profile import.
+#[tauri::command]
+pub fn import_vixen_sequence(
+    state: State<Arc<AppState>>,
+    profile_slug: String,
+    tim_path: String,
+) -> Result<SequenceSummary, String> {
+    let data_dir = get_data_dir(&state)?;
+
+    let prof = profile::load_profile(&data_dir, &profile_slug).map_err(|e| e.to_string())?;
+    let guid_map =
+        profile::load_vixen_guid_map(&data_dir, &profile_slug).map_err(|e| e.to_string())?;
+
+    if guid_map.is_empty() {
+        return Err(
+            "No Vixen GUID map found for this profile. Import the profile from Vixen first."
+                .to_string(),
+        );
+    }
+
+    let mut importer = crate::import::vixen::VixenImporter::from_profile(
+        prof.fixtures,
+        prof.groups,
+        prof.controllers,
+        prof.patches,
+        guid_map,
+    );
+
+    importer
+        .parse_sequence(std::path::Path::new(&tim_path))
+        .map_err(|e| e.to_string())?;
+
+    let sequences = importer.into_sequences();
+    let seq = sequences
+        .into_iter()
+        .next()
+        .ok_or("No sequence parsed from file")?;
+
+    let seq_slug = crate::project::slugify(&seq.name);
+
+    // Create and save the sequence
+    let _ = profile::create_sequence(&data_dir, &profile_slug, &seq.name);
+    profile::save_sequence(&data_dir, &profile_slug, &seq_slug, &seq)
+        .map_err(|e| e.to_string())?;
+
+    Ok(SequenceSummary {
+        name: seq.name,
+        slug: seq_slug,
+    })
+}
+
+/// Scan a Vixen 3 data directory and return a summary of what's available for import.
+#[tauri::command]
+pub fn scan_vixen_directory(vixen_dir: String) -> Result<VixenDiscovery, String> {
+    use crate::import::vixen_preview;
+
+    let vixen_path = std::path::Path::new(&vixen_dir);
+
+    // Validate directory structure
+    let config_path = vixen_path.join("SystemData").join("SystemConfig.xml");
+    if !config_path.exists() {
+        return Err(format!(
+            "Not a valid Vixen 3 directory: SystemData/SystemConfig.xml not found in {}",
+            vixen_dir
+        ));
+    }
+
+    // Parse SystemConfig.xml to count fixtures, groups, controllers
+    let mut importer = crate::import::vixen::VixenImporter::new();
+    importer
+        .parse_system_config(&config_path)
+        .map_err(|e| e.to_string())?;
+
+    let fixtures_found = importer.fixture_count();
+    let groups_found = importer.group_count();
+    let controllers_found = importer.controller_count();
+
+    // Check for preview data
+    let preview_file = vixen_preview::find_preview_file(vixen_path);
+    let (preview_available, preview_item_count) = if let Some(ref pf) = preview_file {
+        match vixen_preview::parse_preview_file(pf) {
+            Ok(data) => (!data.display_items.is_empty(), data.display_items.len()),
+            Err(_) => (false, 0),
+        }
+    } else {
+        (false, 0)
+    };
+    let preview_file_path = preview_file.map(|p| p.to_string_lossy().to_string());
+
+    // Scan for sequence files (.tim)
+    let mut sequences = Vec::new();
+    let seq_dir = vixen_path.join("Sequence");
+    if seq_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&seq_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if ext == "tim" {
+                        let filename = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                        sequences.push(crate::import::vixen::VixenSequenceInfo {
+                            filename,
+                            path: path.to_string_lossy().to_string(),
+                            size_bytes,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    sequences.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+    // Scan for media files
+    let mut media_files = Vec::new();
+    let media_dir = vixen_path.join("Media");
+    let audio_extensions = ["mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"];
+    if media_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&media_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if audio_extensions.contains(&ext.as_str()) {
+                        let filename = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                        media_files.push(crate::import::vixen::VixenMediaInfo {
+                            filename,
+                            path: path.to_string_lossy().to_string(),
+                            size_bytes,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    media_files.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+    Ok(VixenDiscovery {
+        vixen_dir,
+        fixtures_found,
+        groups_found,
+        controllers_found,
+        preview_available,
+        preview_item_count,
+        preview_file_path,
+        sequences,
+        media_files,
+    })
+}
+
+/// Validate a user-selected file as containing Vixen preview/layout data.
+/// Returns the number of display items found, or an error if the file doesn't
+/// contain valid preview data.
+#[tauri::command]
+pub fn check_vixen_preview_file(file_path: String) -> Result<usize, String> {
+    use crate::import::vixen_preview;
+
+    let path = std::path::Path::new(&file_path);
+    if !path.exists() {
+        return Err("File not found".into());
+    }
+
+    let data = vixen_preview::parse_preview_file(path).map_err(|e| e.to_string())?;
+    if data.display_items.is_empty() {
+        return Err(
+            "File was parsed but no display items were found. \
+             The file may not contain Vixen preview/layout data."
+                .into(),
+        );
+    }
+
+    Ok(data.display_items.len())
+}
+
+/// Execute a full Vixen import based on user-selected configuration from the wizard.
+#[tauri::command]
+pub async fn execute_vixen_import(
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+    config: VixenImportConfig,
+) -> Result<VixenImportResult, String> {
+    let data_dir = get_data_dir(&state)?;
+    let app = app_handle.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let vixen_path = std::path::Path::new(&config.vixen_dir);
+        let config_path = vixen_path.join("SystemData").join("SystemConfig.xml");
+
+        // Phase 1: Parse SystemConfig
+        emit_progress(&app, "import", "Parsing system config...", 0.05, None);
+        let mut importer = crate::import::vixen::VixenImporter::new();
+        importer
+            .parse_system_config(&config_path)
+            .map_err(|e| e.to_string())?;
+
+        // Phase 2: Parse preview layout if requested
+        let layout_items = if config.import_layout {
+            emit_progress(&app, "import", "Parsing layout...", 0.1, None);
+            let override_path = config
+                .preview_file_override
+                .as_deref()
+                .map(std::path::Path::new);
+            match importer.parse_preview(vixen_path, override_path) {
+                Ok(layouts) => layouts,
+                Err(e) => {
+                    eprintln!("[VibeLights] Preview import warning: {e}");
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        // Phase 3: Parse selected sequences
+        let total_seqs = config.sequence_paths.len();
+        let mut sequences_imported = 0usize;
+        for (i, seq_path) in config.sequence_paths.iter().enumerate() {
+            let progress = 0.15 + 0.45 * (i as f64 / total_seqs.max(1) as f64);
+            emit_progress(
+                &app,
+                "import",
+                "Parsing sequences...",
+                progress,
+                Some(&format!("Sequence {} of {}", i + 1, total_seqs)),
+            );
+            match importer.parse_sequence(std::path::Path::new(seq_path)) {
+                Ok(()) => sequences_imported += 1,
+                Err(e) => {
+                    eprintln!("[VibeLights] Sequence import warning: {e}");
+                }
+            }
+        }
+
+        let guid_map = importer.guid_map().clone();
+        let warnings: Vec<String> = importer.warnings().to_vec();
+        let show = importer.into_show();
+
+        let fixtures_imported = show.fixtures.len();
+        let groups_imported = show.groups.len();
+        let controllers_imported = if config.import_controllers {
+            show.controllers.len()
+        } else {
+            0
+        };
+        let layout_items_imported = layout_items.len();
+
+        // Phase 4: Save profile
+        emit_progress(&app, "import", "Saving profile...", 0.65, None);
+        let profile_name = if config.profile_name.trim().is_empty() {
+            "Vixen Import".to_string()
+        } else {
+            config.profile_name.trim().to_string()
+        };
+        let summary =
+            profile::create_profile(&data_dir, &profile_name).map_err(|e| e.to_string())?;
+
+        let layout = if layout_items.is_empty() {
+            show.layout.clone()
+        } else {
+            crate::model::show::Layout {
+                fixtures: layout_items,
+            }
+        };
+
+        let prof = Profile {
+            name: profile_name,
+            slug: summary.slug.clone(),
+            fixtures: show.fixtures.clone(),
+            groups: show.groups.clone(),
+            controllers: if config.import_controllers {
+                show.controllers.clone()
+            } else {
+                Vec::new()
+            },
+            patches: if config.import_controllers {
+                show.patches.clone()
+            } else {
+                Vec::new()
+            },
+            layout,
+        };
+        profile::save_profile(&data_dir, &summary.slug, &prof).map_err(|e| e.to_string())?;
+
+        profile::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map)
+            .map_err(|e| e.to_string())?;
+
+        // Phase 5: Copy media (before saving sequences so audio_file can be remapped)
+        let mut media_imported = 0usize;
+        if !config.media_filenames.is_empty() {
+            emit_progress(&app, "import", "Copying media files...", 0.70, None);
+            for media_filename in &config.media_filenames {
+                let source = vixen_path.join("Media").join(media_filename);
+                if source.exists() {
+                    match profile::import_media(&data_dir, &summary.slug, &source) {
+                        Ok(_) => media_imported += 1,
+                        Err(e) => {
+                            eprintln!("[VibeLights] Media import warning: {e}");
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 6: Save sequences (remap audio_file to local media filename)
+        emit_progress(&app, "import", "Saving sequences...", 0.75, None);
+        for (i, seq) in show.sequences.iter().enumerate() {
+            let progress = 0.75 + 0.15 * (i as f64 / show.sequences.len().max(1) as f64);
+            emit_progress(
+                &app,
+                "import",
+                "Saving sequences...",
+                progress,
+                Some(&format!("Sequence {} of {}", i + 1, show.sequences.len())),
+            );
+            let mut seq = seq.clone();
+            // Remap audio_file: extract the filename from the Vixen path and check
+            // if it matches one of the imported media files.
+            if let Some(ref audio_path) = seq.audio_file {
+                let audio_basename = std::path::Path::new(audio_path)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string());
+                if let Some(ref basename) = audio_basename {
+                    if config.media_filenames.iter().any(|m| m == basename) {
+                        seq.audio_file = Some(basename.clone());
+                    } else {
+                        // Media wasn't selected for import — clear the path since it
+                        // points to the original Vixen location which may not exist.
+                        seq.audio_file = None;
+                    }
+                }
+            }
+            let _ = profile::create_sequence(&data_dir, &summary.slug, &seq.name);
+            let seq_slug = crate::project::slugify(&seq.name);
+            profile::save_sequence(&data_dir, &summary.slug, &seq_slug, &seq)
+                .map_err(|e| e.to_string())?;
+        }
+
+        // Done
+        emit_progress(&app, "import", "Import complete", 1.0, None);
+
+        Ok(VixenImportResult {
+            profile_slug: summary.slug,
+            fixtures_imported,
+            groups_imported,
+            controllers_imported,
+            layout_items_imported,
+            sequences_imported,
+            media_imported,
+            warnings,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

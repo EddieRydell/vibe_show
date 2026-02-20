@@ -32,10 +32,32 @@ export function EffectBlock({
   compact,
   refreshKey,
 }: EffectBlockProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [loaded, setLoaded] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
 
+  // IntersectionObserver: only mark visible once, then disconnect
   useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Only fire the IPC thumbnail call once visible
+  useEffect(() => {
+    if (!isVisible) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -61,11 +83,11 @@ export function EffectBlock({
         ctx.putImageData(imageData, 0, 0);
         setLoaded(true);
       })
-      .catch((e) => console.error("[VibeShow] Thumbnail render failed:", e));
-  }, [sequenceIndex, trackIndex, effectIndex, refreshKey]);
+      .catch((e) => console.error("[VibeLights] Thumbnail render failed:", e));
+  }, [isVisible, sequenceIndex, trackIndex, effectIndex, refreshKey]);
 
   return (
-    <div className="relative flex h-full w-full items-end overflow-hidden">
+    <div ref={containerRef} className="relative flex h-full w-full items-end overflow-hidden">
       <canvas
         ref={canvasRef}
         className="absolute inset-0 h-full w-full"

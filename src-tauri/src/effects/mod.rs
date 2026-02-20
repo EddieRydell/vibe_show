@@ -1,11 +1,12 @@
 pub mod chase;
+pub mod fade;
 pub mod gradient;
 pub mod rainbow;
 pub mod solid;
 pub mod strobe;
 pub mod twinkle;
 
-use crate::model::{Color, EffectKind, EffectParams, ParamSchema};
+use crate::model::{BlendMode, Color, EffectKind, EffectParams, ParamSchema};
 
 /// The core effect abstraction. An effect is a pure function from
 /// (time, spatial position, parameters) → color.
@@ -46,5 +47,56 @@ pub fn resolve_effect(kind: &EffectKind) -> Box<dyn Effect> {
         EffectKind::Strobe => Box::new(strobe::StrobeEffect),
         EffectKind::Gradient => Box::new(gradient::GradientEffect),
         EffectKind::Twinkle => Box::new(twinkle::TwinkleEffect),
+        EffectKind::Fade => Box::new(fade::FadeEffect),
+    }
+}
+
+/// Enum dispatch for built-in effects. Zero-allocation, inlineable.
+/// The `Effect` trait remains for future user-defined effects.
+#[derive(Debug, Clone, Copy)]
+pub enum BuiltinEffect {
+    Solid,
+    Chase,
+    Rainbow,
+    Strobe,
+    Gradient,
+    Twinkle,
+    Fade,
+}
+
+impl BuiltinEffect {
+    pub fn from_kind(kind: &EffectKind) -> Self {
+        match kind {
+            EffectKind::Solid => Self::Solid,
+            EffectKind::Chase => Self::Chase,
+            EffectKind::Rainbow => Self::Rainbow,
+            EffectKind::Strobe => Self::Strobe,
+            EffectKind::Gradient => Self::Gradient,
+            EffectKind::Twinkle => Self::Twinkle,
+            EffectKind::Fade => Self::Fade,
+        }
+    }
+
+    /// Evaluate all pixels in a fixture in bulk.
+    /// Extracts params once, then loops over pixels, blending in-place.
+    #[inline]
+    pub fn evaluate_pixels(
+        &self,
+        t: f64,
+        dest: &mut [Color],
+        global_offset: usize,
+        total_pixels: usize,
+        params: &EffectParams,
+        blend_mode: BlendMode,
+    ) {
+        match self {
+            Self::Solid => solid::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
+            Self::Chase => chase::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
+            Self::Rainbow => rainbow::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
+            Self::Strobe => strobe::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
+            Self::Gradient => gradient::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
+            Self::Twinkle => twinkle::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
+            Self::Fade => fade::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode),
+        }
     }
 }

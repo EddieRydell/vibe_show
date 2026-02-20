@@ -1,12 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use ts_rs::TS;
 
 use super::color::Color;
+use super::color_gradient::ColorGradient;
+use super::curve::Curve;
 use super::fixture::EffectTarget;
 
 /// A time range within a sequence. Start must be < end, both in seconds.
 /// Constructed via `TimeRange::new` which enforces this invariant.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct TimeRange {
     start: f64,
     end: f64,
@@ -46,7 +50,8 @@ impl TimeRange {
 }
 
 /// How multiple effect layers combine their output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum BlendMode {
     /// Top layer fully replaces the layer below.
     Override,
@@ -61,15 +66,18 @@ pub enum BlendMode {
 }
 
 /// Type-safe parameter values for effects. Extensible without stringly-typed nonsense.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum ParamValue {
     Float(f64),
-    Int(i64),
+    Int(i32),
     Bool(bool),
     Color(Color),
     ColorList(Vec<Color>),
     /// A text value (for future DSL expressions, etc.)
     Text(String),
+    Curve(Curve),
+    ColorGradient(ColorGradient),
 }
 
 impl ParamValue {
@@ -81,7 +89,7 @@ impl ParamValue {
         }
     }
 
-    pub fn as_int(&self) -> Option<i64> {
+    pub fn as_int(&self) -> Option<i32> {
         match self {
             ParamValue::Int(v) => Some(*v),
             _ => None,
@@ -115,20 +123,39 @@ impl ParamValue {
             _ => None,
         }
     }
+
+    pub fn as_curve(&self) -> Option<&Curve> {
+        match self {
+            ParamValue::Curve(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_color_gradient(&self) -> Option<&ColorGradient> {
+        match self {
+            ParamValue::ColorGradient(v) => Some(v),
+            _ => None,
+        }
+    }
 }
 
 /// Describes the type and constraints for an effect parameter, used to drive UI generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum ParamType {
     Float { min: f64, max: f64, step: f64 },
-    Int { min: i64, max: i64 },
+    Int { min: i32, max: i32 },
     Bool,
     Color,
     ColorList { min_colors: usize, max_colors: usize },
+    Curve,
+    ColorGradient { min_stops: usize, max_stops: usize },
+    Select { options: Vec<String> },
 }
 
 /// Schema entry for one effect parameter: key, label, type constraints, and default value.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ParamSchema {
     pub key: String,
     pub label: String,
@@ -137,29 +164,28 @@ pub struct ParamSchema {
 }
 
 /// Named, typed parameters for an effect instance.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct EffectParams {
-    params: HashMap<String, ParamValue>,
-}
+/// Serializes as a flat JSON object (transparent over the inner HashMap).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
+#[serde(transparent)]
+#[ts(export)]
+pub struct EffectParams(HashMap<String, ParamValue>);
 
 impl EffectParams {
     pub fn new() -> Self {
-        Self {
-            params: HashMap::new(),
-        }
+        Self(HashMap::new())
     }
 
     pub fn set(mut self, key: impl Into<String>, value: ParamValue) -> Self {
-        self.params.insert(key.into(), value);
+        self.0.insert(key.into(), value);
         self
     }
 
     pub fn set_mut(&mut self, key: impl Into<String>, value: ParamValue) {
-        self.params.insert(key.into(), value);
+        self.0.insert(key.into(), value);
     }
 
     pub fn get(&self, key: &str) -> Option<&ParamValue> {
-        self.params.get(key)
+        self.0.get(key)
     }
 
     /// Get a float param with a default fallback.
@@ -183,11 +209,33 @@ impl EffectParams {
     pub fn bool_or(&self, key: &str, default: bool) -> bool {
         self.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
     }
+
+    /// Get a curve param with a default fallback.
+    pub fn curve_or<'a>(&'a self, key: &str, default: &'a Curve) -> &'a Curve {
+        self.get(key)
+            .and_then(|v| v.as_curve())
+            .unwrap_or(default)
+    }
+
+    /// Get a color gradient param with a default fallback.
+    pub fn gradient_or<'a>(&'a self, key: &str, default: &'a ColorGradient) -> &'a ColorGradient {
+        self.get(key)
+            .and_then(|v| v.as_color_gradient())
+            .unwrap_or(default)
+    }
+
+    /// Get a text param with a default fallback.
+    pub fn text_or<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
+        self.get(key)
+            .and_then(|v| v.as_text())
+            .unwrap_or(default)
+    }
 }
 
 /// Which built-in effect type an instance uses.
 /// Future: this will be extended with Custom(String) for user-defined effects.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum EffectKind {
     Solid,
     Chase,
@@ -195,10 +243,12 @@ pub enum EffectKind {
     Strobe,
     Gradient,
     Twinkle,
+    Fade,
 }
 
 /// A placed effect on the timeline. Fully describes what happens, when, and to what.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct EffectInstance {
     pub kind: EffectKind,
     pub params: EffectParams,
@@ -207,7 +257,8 @@ pub struct EffectInstance {
 
 /// A track targets a set of fixtures and contains a list of non-overlapping effect instances.
 /// Tracks are layered bottom-to-top with a blend mode.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct Track {
     pub name: String,
     pub target: EffectTarget,
@@ -216,7 +267,8 @@ pub struct Track {
 }
 
 /// A sequence is the top-level timeline container. One sequence per song/show.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct Sequence {
     pub name: String,
     /// Duration in seconds.

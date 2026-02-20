@@ -1,12 +1,15 @@
-import type { PlaybackInfo } from "../types";
+import type { PlaybackInfo, UndoState } from "../types";
 
 interface ToolbarProps {
   playback: PlaybackInfo | null;
+  undoState: UndoState | null;
   onPlay: () => void;
   onPause: () => void;
   onStop: () => void;
   onSkipBack: () => void;
   onSkipForward: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
 }
 
 function formatTime(seconds: number): string {
@@ -20,19 +23,25 @@ function ToolBtn({
   children,
   onClick,
   active = false,
+  disabled = false,
+  title,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   active?: boolean;
+  disabled?: boolean;
+  title?: string;
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
+      title={title}
       className={`rounded border px-3 py-1.5 text-xs font-semibold transition-colors duration-100 ${
         active
           ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
           : "border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text"
-      }`}
+      } disabled:cursor-not-allowed disabled:opacity-30`}
     >
       {children}
     </button>
@@ -41,11 +50,14 @@ function ToolBtn({
 
 export function Toolbar({
   playback,
+  undoState,
   onPlay,
   onPause,
   onStop,
   onSkipBack,
   onSkipForward,
+  onUndo,
+  onRedo,
 }: ToolbarProps) {
   const playing = playback?.playing ?? false;
   const currentTime = playback?.current_time ?? 0;
@@ -71,6 +83,17 @@ export function Toolbar({
       </ToolBtn>
       <ToolBtn onClick={onSkipForward}>
         <SkipForwardIcon />
+      </ToolBtn>
+
+      {/* Divider */}
+      <div className="border-border mx-1 h-5 border-l" />
+
+      {/* Undo / Redo */}
+      <ToolBtn onClick={onUndo} disabled={!undoState?.can_undo} title={undoState?.undo_description ? `Undo: ${undoState.undo_description}` : "Undo (Ctrl+Z)"}>
+        <UndoIcon />
+      </ToolBtn>
+      <ToolBtn onClick={onRedo} disabled={!undoState?.can_redo} title={undoState?.redo_description ? `Redo: ${undoState.redo_description}` : "Redo (Ctrl+Shift+Z)"}>
+        <RedoIcon />
       </ToolBtn>
 
       {/* Time display */}
@@ -128,6 +151,24 @@ function SkipForwardIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
       <path d="M12 2h2v12h-2zM2 2l8 6-8 6z" />
+    </svg>
+  );
+}
+
+function UndoIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7h7a3 3 0 0 1 0 6H9" />
+      <path d="M6 4L3 7l3 3" />
+    </svg>
+  );
+}
+
+function RedoIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 7H6a3 3 0 0 0 0 6h1" />
+      <path d="M10 4l3 3-3 3" />
     </svg>
   );
 }

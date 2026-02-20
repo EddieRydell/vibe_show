@@ -121,7 +121,7 @@ pub(crate) fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T
 
 // ── Save / Load ─────────────────────────────────────────────────────
 
-/// Save a Show to a .vibeshow project directory.
+/// Save a Show to a .vibelights project directory.
 pub fn save_project(show: &Show, dir: &Path) -> Result<(), ProjectError> {
     // Create the directory structure
     fs::create_dir_all(dir)?;
@@ -177,7 +177,7 @@ pub fn save_project(show: &Show, dir: &Path) -> Result<(), ProjectError> {
     Ok(())
 }
 
-/// Load a Show from a .vibeshow project directory.
+/// Load a Show from a .vibelights project directory.
 pub fn load_project(dir: &Path) -> Result<Show, ProjectError> {
     // project.json
     let meta: ProjectMeta = read_json(&dir.join("project.json"))?;

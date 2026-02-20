@@ -1,6 +1,35 @@
-use crate::model::{Color, EffectParams, ParamSchema, ParamType, ParamValue};
+use crate::model::{BlendMode, Color, EffectParams, ParamSchema, ParamType, ParamValue};
 
 use super::Effect;
+
+/// Batch evaluate: extract params once, loop over pixels.
+pub fn evaluate_pixels_batch(
+    t: f64,
+    dest: &mut [Color],
+    global_offset: usize,
+    total_pixels: usize,
+    params: &EffectParams,
+    blend_mode: BlendMode,
+) {
+    let speed = params.float_or("speed", 1.0);
+    let spread = params.float_or("spread", 1.0);
+    let saturation = params.float_or("saturation", 1.0).clamp(0.0, 1.0);
+    let brightness = params.float_or("brightness", 1.0).clamp(0.0, 1.0);
+
+    let time_offset = t * speed * 360.0;
+    let spatial_scale = if total_pixels > 1 {
+        spread / (total_pixels as f64) * 360.0
+    } else {
+        0.0
+    };
+
+    for (i, pixel) in dest.iter_mut().enumerate() {
+        let spatial = (global_offset + i) as f64 * spatial_scale;
+        let hue = (time_offset + spatial) % 360.0;
+        let effect_color = Color::from_hsv(hue, saturation, brightness);
+        *pixel = pixel.blend(effect_color, blend_mode);
+    }
+}
 
 /// Cycles through HSV hue across space and/or time.
 ///

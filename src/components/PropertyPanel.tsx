@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { Color, EffectDetail, ParamSchema, ParamValue } from "../types";
-import { FloatSlider, IntSlider, BoolToggle, ColorInput, ColorListEditor } from "./controls";
+import type { Color, ColorStop, CurvePoint, EffectDetail, ParamSchema, ParamValue } from "../types";
+import {
+  FloatSlider,
+  IntSlider,
+  BoolToggle,
+  ColorInput,
+  ColorListEditor,
+  CurveEditor,
+  GradientEditor,
+  SelectInput,
+} from "./controls";
 
 interface PropertyPanelProps {
   selectedEffect: string | null;
@@ -83,6 +92,53 @@ function getDefaultColorList(schema: ParamSchema): Color[] {
   ];
 }
 
+function getParamCurve(
+  params: Record<string, ParamValue>,
+  key: string,
+  fallback: CurvePoint[],
+): CurvePoint[] {
+  const v = params[key];
+  if (v && "Curve" in v) return v.Curve.points;
+  return fallback;
+}
+
+function getDefaultCurve(schema: ParamSchema): CurvePoint[] {
+  if ("Curve" in schema.default) return schema.default.Curve.points;
+  return [
+    { x: 0, y: 0 },
+    { x: 1, y: 1 },
+  ];
+}
+
+function getParamGradient(
+  params: Record<string, ParamValue>,
+  key: string,
+  fallback: ColorStop[],
+): ColorStop[] {
+  const v = params[key];
+  if (v && "ColorGradient" in v) return v.ColorGradient.stops;
+  return fallback;
+}
+
+function getDefaultGradient(schema: ParamSchema): ColorStop[] {
+  if ("ColorGradient" in schema.default) return schema.default.ColorGradient.stops;
+  return [
+    { position: 0, color: { r: 255, g: 255, b: 255, a: 255 } },
+    { position: 1, color: { r: 255, g: 255, b: 255, a: 255 } },
+  ];
+}
+
+function getParamText(params: Record<string, ParamValue>, key: string, fallback: string): string {
+  const v = params[key];
+  if (v && "Text" in v) return v.Text;
+  return fallback;
+}
+
+function getDefaultText(schema: ParamSchema): string {
+  if ("Text" in schema.default) return schema.default.Text;
+  return "";
+}
+
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = (seconds % 60).toFixed(1);
@@ -123,7 +179,7 @@ export function PropertyPanel({
           setDetail(d);
         }
       })
-      .catch((e) => console.error("[VibeShow] Failed to get effect detail:", e))
+      .catch((e) => console.error("[VibeLights] Failed to get effect detail:", e))
       .finally(() => setLoading(false));
   }, [selectedEffect, sequenceIndex]);
 
@@ -150,7 +206,7 @@ export function PropertyPanel({
           value,
         })
           .then(() => onParamChange())
-          .catch((e) => console.error("[VibeShow] Failed to update param:", e));
+          .catch((e) => console.error("[VibeLights] Failed to update param:", e));
       }, DEBOUNCE_MS);
     },
     [selectedEffect, sequenceIndex, onParamChange],
@@ -271,6 +327,42 @@ function ParamControl({ schema, params, onChange }: ParamControlProps) {
         minColors={pt.ColorList.min_colors}
         maxColors={pt.ColorList.max_colors}
         onChange={(v) => onChange({ ColorList: v })}
+      />
+    );
+  }
+
+  if (pt === "Curve") {
+    const value = getParamCurve(params, schema.key, getDefaultCurve(schema));
+    return (
+      <CurveEditor
+        label={schema.label}
+        value={value}
+        onChange={(v) => onChange({ Curve: { points: v } })}
+      />
+    );
+  }
+
+  if (typeof pt === "object" && "ColorGradient" in pt) {
+    const value = getParamGradient(params, schema.key, getDefaultGradient(schema));
+    return (
+      <GradientEditor
+        label={schema.label}
+        value={value}
+        minStops={pt.ColorGradient.min_stops}
+        maxStops={pt.ColorGradient.max_stops}
+        onChange={(v) => onChange({ ColorGradient: { stops: v } })}
+      />
+    );
+  }
+
+  if (typeof pt === "object" && "Select" in pt) {
+    const value = getParamText(params, schema.key, getDefaultText(schema));
+    return (
+      <SelectInput
+        label={schema.label}
+        value={value}
+        options={pt.Select.options}
+        onChange={(v) => onChange({ Text: v })}
       />
     );
   }
