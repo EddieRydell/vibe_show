@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod color;
 pub mod color_gradient;
 pub mod curve;
@@ -16,5 +17,10 @@ pub use fixture::{
 pub use show::{Layout, LayoutShape, Show};
 pub use timeline::{
     BlendMode, ColorMode, EffectInstance, EffectKind, EffectParams, ParamKey, ParamSchema,
-    ParamType, ParamValue, Sequence, TimeRange, Track,
+    ParamType, ParamValue, Sequence, TimeRange, Track, WipeDirection,
+};
+pub use analysis::{
+    AnalysisFeatures, AudioAnalysis, BeatAnalysis, ChordEvent, DrumAnalysis, HarmonyAnalysis,
+    LowLevelFeatures, LyricWord, LyricsAnalysis, MoodAnalysis, NoteEvent, PitchAnalysis,
+    PythonEnvStatus, SongSection, StemAnalysis, StructureAnalysis, VocalPresence, VocalSegment,
 };

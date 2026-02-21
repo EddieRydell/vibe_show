@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EffectBlock } from "./EffectBlock";
-import type { BlendMode, InteractionMode, PlaybackInfo, Show, Track } from "../types";
+import type { AudioAnalysis, BlendMode, InteractionMode, PlaybackInfo, Show, Track } from "../types";
 import type { WaveformData } from "../hooks/useAudio";
 
 interface TimelineProps {
@@ -19,9 +19,18 @@ interface TimelineProps {
     newStart: number,
     newEnd: number,
   ) => Promise<void>;
+  onResizeEffect?: (
+    trackIndex: number,
+    effectIndex: number,
+    newStart: number,
+    newEnd: number,
+  ) => Promise<void>;
   waveform?: WaveformData | null;
   mode?: InteractionMode;
   onModeChange?: (mode: InteractionMode) => void;
+  region?: [number, number] | null;
+  onRegionChange?: (region: [number, number] | null) => void;
+  analysis?: AudioAnalysis | null;
 }
 
 const LABEL_WIDTH = 160;
@@ -42,6 +51,21 @@ function formatRulerTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return m > 0 ? `${m}:${s.toString().padStart(2, "0")}` : `${s}s`;
+}
+
+/** Map song section labels to semi-transparent background colors. */
+function sectionColor(label: string): string {
+  const colors: Record<string, string> = {
+    intro: "rgba(100, 149, 237, 0.12)",
+    verse: "rgba(60, 179, 113, 0.12)",
+    chorus: "rgba(255, 165, 0, 0.15)",
+    bridge: "rgba(186, 85, 211, 0.12)",
+    outro: "rgba(100, 149, 237, 0.12)",
+    solo: "rgba(255, 99, 71, 0.12)",
+    inst: "rgba(255, 215, 0, 0.12)",
+  };
+  const key = label.toLowerCase().replace(/[0-9]/g, "").trim();
+  return colors[key] ?? "rgba(128, 128, 128, 0.08)";
 }
 
 /** Resolve a group to its fixture IDs with memoization. */
@@ -251,9 +275,13 @@ export function Timeline({
   onAddEffect,
   onRefresh,
   onMoveEffect,
+  onResizeEffect,
   waveform,
   mode = "select",
   onModeChange,
+  region = null,
+  onRegionChange,
+  analysis = null,
 }: TimelineProps) {
   const duration = playback?.duration ?? 0;
   const currentTime = playback?.current_time ?? 0;
@@ -400,7 +428,8 @@ export function Timeline({
       const container = scrollContainerRef.current;
       if (!container || rowOffsets.length === 0) return null;
       const rect = container.getBoundingClientRect();
-      const y = clientY - rect.top - RULER_HEIGHT + container.scrollTop;
+      const waveH = waveform ? WAVEFORM_LANE_HEIGHT : 0;
+      const y = clientY - rect.top - RULER_HEIGHT - waveH + container.scrollTop;
       for (const row of rowOffsets) {
         if (y >= row.top && y < row.bottom) return row.fixtureId;
       }
@@ -408,7 +437,7 @@ export function Timeline({
       if (y < 0) return rowOffsets[0].fixtureId;
       return rowOffsets[rowOffsets.length - 1].fixtureId;
     },
-    [rowOffsets],
+    [rowOffsets, waveform],
   );
 
   /** Hit-test which effect keys fall inside a screen-space rectangle (relative to track area). */
@@ -503,13 +532,61 @@ export function Timeline({
     [selectedEffects, onSelectionChange, mode],
   );
 
-  const handleRulerClick = useCallback(
+  // ── Ruler drag state (region selection) ──────────────────────────
+
+  const rulerDragRef = useRef<{ startClientX: number; startTime: number } | null>(null);
+  const [rulerDragPreview, setRulerDragPreview] = useState<[number, number] | null>(null);
+
+  const handleRulerMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
       const time = timeFromClientX(e.clientX);
-      onSeek(time);
+      rulerDragRef.current = { startClientX: e.clientX, startTime: time };
+
+      const handleRulerMouseMove = (me: MouseEvent) => {
+        const drag = rulerDragRef.current;
+        if (!drag) return;
+        const dist = Math.abs(me.clientX - drag.startClientX);
+        if (dist >= DRAG_THRESHOLD) {
+          const endTime = timeFromClientX(me.clientX);
+          const lo = Math.min(drag.startTime, endTime);
+          const hi = Math.max(drag.startTime, endTime);
+          setRulerDragPreview([lo, hi]);
+        }
+      };
+
+      const handleRulerMouseUp = (me: MouseEvent) => {
+        document.removeEventListener("mousemove", handleRulerMouseMove);
+        document.removeEventListener("mouseup", handleRulerMouseUp);
+        const drag = rulerDragRef.current;
+        rulerDragRef.current = null;
+        if (!drag) return;
+
+        const dist = Math.abs(me.clientX - drag.startClientX);
+        if (dist < DRAG_THRESHOLD) {
+          // Click: clear region and seek
+          setRulerDragPreview(null);
+          onRegionChange?.(null);
+          onSeek(timeFromClientX(me.clientX));
+        } else {
+          // Drag completed: commit region
+          const endTime = timeFromClientX(me.clientX);
+          const lo = Math.min(drag.startTime, endTime);
+          const hi = Math.max(drag.startTime, endTime);
+          setRulerDragPreview(null);
+          onRegionChange?.([lo, hi]);
+        }
+      };
+
+      document.addEventListener("mousemove", handleRulerMouseMove);
+      document.addEventListener("mouseup", handleRulerMouseUp);
     },
-    [timeFromClientX, onSeek],
+    [timeFromClientX, onSeek, onRegionChange],
   );
+
+  // The effective region to display (committed or being dragged)
+  const displayRegion = rulerDragPreview ?? region;
 
   // ── Track area mousedown (marquee in Select mode, swipe in Swipe mode) ──
 
@@ -705,18 +782,12 @@ export function Timeline({
         newStart = Math.max(0, newStart);
         newEnd = Math.min(duration, newEnd);
 
-        try {
-          const { invoke } = await import("@tauri-apps/api/core");
-          await invoke("update_effect_time_range", {
-            sequenceIndex: playback?.sequence_index ?? 0,
-            trackIndex: ds.trackIndex,
-            effectIndex: ds.effectIndex,
-            start: newStart,
-            end: newEnd,
-          });
-          onRefresh?.();
-        } catch (err) {
-          console.error("[VibeLights] Resize failed:", err);
+        if (onResizeEffect) {
+          try {
+            await onResizeEffect(ds.trackIndex, ds.effectIndex, newStart, newEnd);
+          } catch (err) {
+            console.error("[VibeLights] Resize failed:", err);
+          }
         }
       } else if (ds.type === "move") {
         if (!ds.didDrag) {
@@ -746,12 +817,18 @@ export function Timeline({
           }
         }
       } else if (ds.type === "marquee") {
-        // Selection was already updated during mousemove — just clear marquee rect
         setMarqueeRect(null);
-        justFinishedDragRef.current = true;
+        // Only suppress the click event if the mouse actually moved (real drag).
+        // Zero-distance clicks fall through to handleTrackAreaClick → seek + clear selection.
+        const dist = Math.abs(e.clientX - ds.startClientX) + Math.abs(e.clientY - ds.startClientY);
+        if (dist >= DRAG_THRESHOLD) {
+          justFinishedDragRef.current = true;
+        }
       } else if (ds.type === "swipe") {
-        // Selection was already updated during mousemove — nothing to finalize
-        justFinishedDragRef.current = true;
+        // Only suppress click if effects were actually swiped
+        if (ds.swipedKeys.size > 0) {
+          justFinishedDragRef.current = true;
+        }
       }
 
       setDragPreview(null);
@@ -824,8 +901,8 @@ export function Timeline({
 
     const update = () => {
       const waveH = waveform ? WAVEFORM_LANE_HEIGHT : 0;
-      setScrollTop(Math.max(0, container.scrollTop - RULER_HEIGHT - waveH));
-      setViewportHeight(container.clientHeight);
+      setScrollTop(container.scrollTop);
+      setViewportHeight(container.clientHeight - RULER_HEIGHT - waveH);
     };
     update();
 
@@ -846,14 +923,13 @@ export function Timeline({
     if (!container || !labels) return;
 
     const syncScroll = () => {
-      // The main scroll container has ruler + waveform + track rows as content.
-      // The ruler is sticky, so scrollTop directly maps to vertical offset of
-      // the non-sticky content. The waveform row is above the track rows,
-      // so the labels (which start after the waveform label) need to scroll by
-      // the same amount minus the waveform height (since the waveform label is
-      // rendered inline in the label panel).
-      const waveH = waveform ? WAVEFORM_LANE_HEIGHT : 0;
-      labels.scrollTop = Math.max(0, container.scrollTop - RULER_HEIGHT - waveH);
+      // Both the ruler and waveform are sticky in the main scroll container,
+      // so they always occupy RULER_HEIGHT + WAVEFORM_LANE_HEIGHT at the top.
+      // The label panel has matching fixed-height spacers for the ruler and
+      // waveform labels, so the label scroll area and the track content area
+      // start at the same vertical offset. Syncing scrollTop directly keeps
+      // labels perfectly aligned with their corresponding track rows.
+      labels.scrollTop = container.scrollTop;
     };
 
     container.addEventListener("scroll", syncScroll, { passive: true });
@@ -987,7 +1063,7 @@ export function Timeline({
             <div
               className="border-border bg-bg/95 sticky top-0 z-20 cursor-pointer border-b backdrop-blur-sm"
               style={{ height: RULER_HEIGHT }}
-              onClick={handleRulerClick}
+              onMouseDown={handleRulerMouseDown}
             >
               <div className="relative h-full" style={{ width: contentWidth }}>
                 {ticks.map((t) => (
@@ -998,34 +1074,98 @@ export function Timeline({
                     </span>
                   </div>
                 ))}
+                {/* Region highlight on ruler */}
+                {displayRegion && (
+                  <div
+                    className="absolute inset-y-0 z-[5]"
+                    style={{
+                      left: displayRegion[0] * pxPerSec,
+                      width: (displayRegion[1] - displayRegion[0]) * pxPerSec,
+                      background: "color-mix(in srgb, var(--primary) 25%, transparent)",
+                      borderLeft: "2px solid var(--primary)",
+                      borderRight: "2px solid var(--primary)",
+                    }}
+                  />
+                )}
                 {/* Ruler playhead */}
                 <div
                   className="bg-primary absolute inset-y-0 z-10 w-0.5"
-                  style={{ left: playheadX }}
+                  style={{ left: playheadX, transform: "translateX(-50%)" }}
                 />
               </div>
             </div>
 
-            {/* Waveform lane */}
+            {/* Waveform lane — sticky below ruler */}
             {waveform && (
               <div
-                className="border-border/40 relative cursor-pointer border-b"
+                className="border-border/40 bg-bg relative cursor-pointer border-b"
                 style={{
+                  position: "sticky",
+                  top: RULER_HEIGHT,
+                  zIndex: 15,
                   height: WAVEFORM_LANE_HEIGHT,
                   ...tickBackground,
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   ["--border-tick" as any]: "color-mix(in srgb, var(--border) 15%, transparent)",
                 }}
-                onClick={handleRulerClick}
+                onMouseDown={handleRulerMouseDown}
               >
                 <canvas
                   ref={waveformLaneCanvasRef}
                   className="pointer-events-none absolute top-0 left-0"
                 />
+                {/* Region highlight on waveform */}
+                {displayRegion && (
+                  <div
+                    className="pointer-events-none absolute inset-y-0 z-[5]"
+                    style={{
+                      left: displayRegion[0] * pxPerSec,
+                      width: (displayRegion[1] - displayRegion[0]) * pxPerSec,
+                      background: "color-mix(in srgb, var(--primary) 15%, transparent)",
+                    }}
+                  />
+                )}
+                {/* Analysis: Section regions */}
+                {analysis?.structure?.sections.map((section, i) => (
+                  <div
+                    key={`section-${i}`}
+                    className="pointer-events-none absolute inset-y-0 z-[3] border-l"
+                    style={{
+                      left: section.start * pxPerSec,
+                      width: (section.end - section.start) * pxPerSec,
+                      background: sectionColor(section.label),
+                      borderColor: "color-mix(in srgb, var(--text-2) 30%, transparent)",
+                    }}
+                  >
+                    <span
+                      className="absolute top-0 left-0.5 text-[8px] leading-none opacity-70"
+                      style={{ color: "var(--text)" }}
+                    >
+                      {section.label}
+                    </span>
+                  </div>
+                ))}
+                {/* Analysis: Beat markers */}
+                {analysis?.beats?.beats.map((beat, i) => {
+                  const isDownbeat = analysis.beats?.downbeats.includes(beat);
+                  return (
+                    <div
+                      key={`beat-${i}`}
+                      className="pointer-events-none absolute inset-y-0 z-[4]"
+                      style={{
+                        left: beat * pxPerSec,
+                        width: isDownbeat ? 1.5 : 0.5,
+                        background: isDownbeat
+                          ? "color-mix(in srgb, var(--primary) 60%, transparent)"
+                          : "color-mix(in srgb, var(--text-2) 25%, transparent)",
+                      }}
+                    />
+                  );
+                })}
                 {/* Playhead */}
                 <div
                   className="bg-primary pointer-events-none absolute inset-y-0 z-10 w-0.5"
-                  style={{ left: playheadX }}
+                  style={{ left: playheadX, transform: "translateX(-50%)" }}
                 />
               </div>
             )}
@@ -1218,10 +1358,22 @@ export function Timeline({
                 );
               })}
 
+              {/* Region overlay on track area */}
+              {displayRegion && (
+                <div
+                  className="pointer-events-none absolute inset-y-0 z-[2]"
+                  style={{
+                    left: displayRegion[0] * pxPerSec,
+                    width: (displayRegion[1] - displayRegion[0]) * pxPerSec,
+                    background: "color-mix(in srgb, var(--primary) 8%, transparent)",
+                  }}
+                />
+              )}
+
               {/* Single playhead line spanning all rows */}
               <div
                 className="bg-primary pointer-events-none absolute inset-y-0 z-30 w-0.5"
-                style={{ left: playheadX }}
+                style={{ left: playheadX, transform: "translateX(-50%)" }}
               />
             </div>
           </div>

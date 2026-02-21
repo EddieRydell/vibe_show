@@ -1,9 +1,12 @@
 import type { PlaybackInfo, UndoState } from "../types";
+import { formatTimeTransport } from "../utils/formatTime";
 
 interface ToolbarProps {
   playback: PlaybackInfo | null;
   undoState: UndoState | null;
   previewOpen: boolean;
+  looping: boolean;
+  hasAnalysis: boolean;
   onPlay: () => void;
   onPause: () => void;
   onStop: () => void;
@@ -12,13 +15,8 @@ interface ToolbarProps {
   onUndo: () => void;
   onRedo: () => void;
   onTogglePreview: () => void;
-}
-
-function formatTime(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  const ms = Math.floor((seconds % 1) * 100);
-  return `${m}:${s.toString().padStart(2, "0")}.${ms.toString().padStart(2, "0")}`;
+  onToggleLoop: () => void;
+  onAnalyze: () => void;
 }
 
 function ToolBtn({
@@ -54,6 +52,8 @@ export function Toolbar({
   playback,
   undoState,
   previewOpen,
+  looping,
+  hasAnalysis,
   onPlay,
   onPause,
   onStop,
@@ -62,6 +62,8 @@ export function Toolbar({
   onUndo,
   onRedo,
   onTogglePreview,
+  onToggleLoop,
+  onAnalyze,
 }: ToolbarProps) {
   const playing = playback?.playing ?? false;
   const currentTime = playback?.current_time ?? 0;
@@ -108,11 +110,24 @@ export function Toolbar({
         <PreviewIcon />
       </ToolBtn>
 
+      {/* Loop */}
+      <ToolBtn onClick={onToggleLoop} active={looping} title="Toggle loop (L)">
+        <LoopIcon />
+      </ToolBtn>
+
+      {/* Divider */}
+      <div className="border-border mx-1 h-5 border-l" />
+
+      {/* Analyze */}
+      <ToolBtn onClick={onAnalyze} active={hasAnalysis} title="Analyze audio">
+        <AnalyzeIcon />
+      </ToolBtn>
+
       {/* Time display */}
       <div className="border-border bg-bg text-text ml-3 min-w-36 rounded border px-3 py-1 text-center font-mono text-sm">
-        {formatTime(currentTime)}
+        {formatTimeTransport(currentTime)}
         <span className="text-text-2 mx-1">/</span>
-        {formatTime(duration)}
+        {formatTimeTransport(duration)}
       </div>
 
       {/* Spacer */}
@@ -190,6 +205,26 @@ function PreviewIcon() {
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <rect x="1" y="3" width="14" height="10" rx="1.5" />
       <circle cx="8" cy="8" r="2" />
+    </svg>
+  );
+}
+
+function LoopIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 1l3 3-3 3" />
+      <path d="M14 4H5a3 3 0 0 0 0 6h1" />
+      <path d="M5 15l-3-3 3-3" />
+      <path d="M2 12h9a3 3 0 0 0 0-6h-1" />
+    </svg>
+  );
+}
+
+function AnalyzeIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12l3-4 2 2 3-5 4 7" />
+      <path d="M2 14h12" />
     </svg>
   );
 }

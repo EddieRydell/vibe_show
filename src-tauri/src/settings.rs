@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::model::AnalysisFeatures;
 use crate::project::{read_json, write_json, ProjectError};
 
 /// Application-level settings stored in the OS config directory.
@@ -14,6 +15,12 @@ pub struct AppSettings {
     pub last_profile: Option<String>,
     #[serde(default)]
     pub claude_api_key: Option<String>,
+    /// Whether to attempt GPU acceleration for audio analysis (requires NVIDIA CUDA).
+    #[serde(default)]
+    pub use_gpu: bool,
+    /// Default features to run when analyzing audio. None = all enabled.
+    #[serde(default)]
+    pub default_analysis_features: Option<AnalysisFeatures>,
 }
 
 const SETTINGS_VERSION: u32 = 1;
@@ -25,6 +32,8 @@ impl AppSettings {
             data_dir,
             last_profile: None,
             claude_api_key: None,
+            use_gpu: false,
+            default_analysis_features: None,
         }
     }
 }
@@ -53,7 +62,7 @@ pub fn save_settings(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

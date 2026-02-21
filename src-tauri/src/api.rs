@@ -10,12 +10,12 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use crate::chat::{ChatHistoryEntry, ChatManager, NoopChatEmitter};
 use crate::describe;
 use crate::dispatcher::{CommandResult, EditCommand, UndoState};
-use crate::effects::{self, resolve_effect};
+use crate::effects::resolve_effect;
 use crate::engine::{self, Frame};
 use crate::model::Show;
-use crate::profile::{self, MediaFile, ProfileSummary, SequenceSummary};
+use crate::profile::{self, MediaFile, ProfileSummary, SequenceSummary, MEDIA_EXTENSIONS};
 use crate::settings::{self, AppSettings};
-use crate::state::{self, AppState, EffectDetail};
+use crate::state::{self, AppState, EffectDetail, EffectInfo, PlaybackInfo};
 
 /// JSON response envelope for API calls.
 #[derive(Serialize)]
@@ -93,59 +93,24 @@ async fn get_show(AxumState(state): AppArc) -> Json<ApiResponse<Show>> {
     ApiResponse::success(show)
 }
 
-#[derive(Serialize)]
-struct EffectInfo {
-    kind: crate::model::EffectKind,
-    name: String,
-    schema: Vec<crate::model::ParamSchema>,
-}
-
 async fn get_effects(_: AppArc) -> Json<ApiResponse<Vec<EffectInfo>>> {
-    let kinds = [
-        crate::model::EffectKind::Solid,
-        crate::model::EffectKind::Chase,
-        crate::model::EffectKind::Rainbow,
-        crate::model::EffectKind::Strobe,
-        crate::model::EffectKind::Gradient,
-        crate::model::EffectKind::Twinkle,
-        crate::model::EffectKind::Fade,
-        crate::model::EffectKind::Wipe,
-    ];
-    let effects: Vec<EffectInfo> = kinds
-        .into_iter()
-        .map(|kind| {
-            let effect = effects::resolve_effect(&kind);
-            EffectInfo {
-                kind,
-                name: effect.name().to_string(),
-                schema: effect.param_schema(),
-            }
-        })
-        .collect();
-    ApiResponse::success(effects)
+    ApiResponse::success(state::all_effect_info())
 }
 
-#[derive(Serialize)]
-struct PlaybackResponse {
-    playing: bool,
-    current_time: f64,
-    duration: f64,
-    sequence_index: usize,
-}
-
-async fn get_playback(AxumState(state): AppArc) -> Json<ApiResponse<PlaybackResponse>> {
+async fn get_playback(AxumState(state): AppArc) -> Json<ApiResponse<PlaybackInfo>> {
     let playback = state.playback.lock();
     let show = state.show.lock();
     let duration = show
         .sequences
         .get(playback.sequence_index)
-        .map(|s| s.duration)
-        .unwrap_or(0.0);
-    ApiResponse::success(PlaybackResponse {
+        .map_or(0.0, |s| s.duration);
+    ApiResponse::success(PlaybackInfo {
         playing: playback.playing,
         current_time: playback.current_time,
         duration,
         sequence_index: playback.sequence_index,
+        region: playback.region,
+        looping: playback.looping,
     })
 }
 
@@ -157,10 +122,11 @@ async fn get_effect_detail(
     let sequence = show.sequences.get(seq).ok_or_else(|| error_response("Invalid sequence index".into()))?;
     let t = sequence.tracks.get(track).ok_or_else(|| error_response("Invalid track index".into()))?;
     let effect_instance = t.effects.get(idx).ok_or_else(|| error_response("Invalid effect index".into()))?;
-    let effect = resolve_effect(&effect_instance.kind);
+    let schema = resolve_effect(&effect_instance.kind)
+        .map_or_else(Vec::new, |e| e.param_schema());
     Ok(ApiResponse::success(EffectDetail {
         kind: effect_instance.kind.clone(),
-        schema: effect.param_schema(),
+        schema,
         params: effect_instance.params.clone(),
         time_range: effect_instance.time_range,
         track_name: t.name.clone(),
@@ -191,11 +157,11 @@ async fn post_command(
     let mut dispatcher = state.dispatcher.lock();
     let mut show = state.show.lock();
     let result = dispatcher
-        .execute(&mut show, cmd)
+        .execute(&mut show, &cmd)
         .map_err(|e| error_response(e.to_string()))?;
     let result_str = match result {
-        CommandResult::Index(i) => format!("{}", i),
-        CommandResult::Bool(b) => format!("{}", b),
+        CommandResult::Index(i) => format!("{i}"),
+        CommandResult::Bool(b) => format!("{b}"),
         CommandResult::Unit => "ok".to_string(),
     };
     Ok(ApiResponse::success_with_desc(
@@ -219,12 +185,16 @@ async fn post_redo(AxumState(state): AppArc) -> ApiResult<String> {
 }
 
 async fn post_play(AxumState(state): AppArc) -> Json<ApiResponse<()>> {
-    state.playback.lock().playing = true;
+    let mut playback = state.playback.lock();
+    playback.playing = true;
+    playback.last_tick = Some(std::time::Instant::now());
     ApiResponse::success(())
 }
 
 async fn post_pause(AxumState(state): AppArc) -> Json<ApiResponse<()>> {
-    state.playback.lock().playing = false;
+    let mut playback = state.playback.lock();
+    playback.playing = false;
+    playback.last_tick = None;
     ApiResponse::success(())
 }
 
@@ -237,7 +207,11 @@ async fn post_seek(
     AxumState(state): AppArc,
     Json(body): Json<SeekBody>,
 ) -> Json<ApiResponse<()>> {
-    state.playback.lock().current_time = body.time.max(0.0);
+    let mut playback = state.playback.lock();
+    playback.current_time = body.time.max(0.0);
+    if playback.playing {
+        playback.last_tick = Some(std::time::Instant::now());
+    }
     ApiResponse::success(())
 }
 
@@ -319,7 +293,9 @@ async fn get_profile(
     let mut settings_guard = state.settings.lock();
     if let Some(ref mut s) = *settings_guard {
         s.last_profile = Some(slug);
-        let _ = settings::save_settings(&state.app_config_dir, s);
+        if let Err(e) = settings::save_settings(&state.app_config_dir, s) {
+            eprintln!("[VibeLights] Failed to save settings: {e}");
+        }
     }
 
     Ok(ApiResponse::success(loaded))
@@ -512,7 +488,7 @@ async fn get_frame(
 ) -> Json<ApiResponse<Frame>> {
     let show = state.show.lock();
     let playback = state.playback.lock();
-    let frame = engine::evaluate(&show, playback.sequence_index, q.time, None);
+    let frame = engine::evaluate(&show, playback.sequence_index, q.time, None, None);
     ApiResponse::success(frame)
 }
 
@@ -535,7 +511,7 @@ async fn get_describe(
 
     if let Some(t) = q.frame_time {
         let playback = state.playback.lock();
-        let frame = engine::evaluate(&show, playback.sequence_index, t, None);
+        let frame = engine::evaluate(&show, playback.sequence_index, t, None, None);
         text.push_str("\n\n");
         text.push_str(&describe::describe_frame(&show, &frame));
     }
@@ -672,14 +648,13 @@ async fn post_vixen_scan(
 
     let mut media_files = Vec::new();
     let media_dir = vixen_path.join("Media");
-    let audio_extensions = ["mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"];
     if media_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(&media_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
                     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-                    if audio_extensions.contains(&ext.as_str()) {
+                    if MEDIA_EXTENSIONS.contains(&ext.as_str()) {
                         let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
                         let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
                         media_files.push(crate::import::vixen::VixenMediaInfo {
@@ -929,7 +904,7 @@ pub async fn start_api_server(state: Arc<AppState>) -> u16 {
 pub async fn start_api_server_on_port(state: Arc<AppState>, port: u16) -> u16 {
     let app = build_router(state);
 
-    let addr = format!("127.0.0.1:{}", port);
+    let addr = format!("127.0.0.1:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     let actual_port = listener.local_addr().unwrap().port();
 

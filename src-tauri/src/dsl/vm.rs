@@ -1,0 +1,775 @@
+use super::compiler::{CompiledScript, Op};
+use crate::model::color::Color;
+use crate::model::color_gradient::ColorGradient;
+use crate::model::curve::Curve;
+
+/// Maximum stack depth to prevent runaway scripts.
+const MAX_STACK: usize = 256;
+
+/// Runtime value on the VM stack.
+#[derive(Debug, Clone, Copy)]
+enum Value {
+    Float(f64),
+    Color(Color),
+    Vec2(f64, f64),
+}
+
+impl Value {
+    fn as_float(self) -> f64 {
+        match self {
+            Self::Float(f) => f,
+            Self::Color(_) | Self::Vec2(_, _) => 0.0,
+        }
+    }
+
+    fn as_color(self) -> Color {
+        match self {
+            Self::Color(c) => c,
+            _ => Color::BLACK,
+        }
+    }
+}
+
+/// Runtime context provided per-pixel.
+pub struct VmContext<'a> {
+    pub t: f64,
+    pub pixel: usize,
+    pub pixels: usize,
+    pub pos: f64,
+    pub pos2d: (f64, f64),
+    pub param_values: &'a [f64],
+    pub gradients: &'a [Option<&'a ColorGradient>],
+    pub curves: &'a [Option<&'a Curve>],
+}
+
+/// Execute a compiled script for one pixel, returning the output color.
+#[allow(clippy::too_many_lines)]
+pub fn execute(script: &CompiledScript, ctx: &VmContext<'_>) -> Color {
+    let mut stack: Vec<Value> = Vec::with_capacity(64);
+    let mut locals: Vec<Value> = vec![Value::Float(0.0); script.local_count as usize];
+    let mut ip: usize = 0;
+    let ops = &script.ops;
+    let consts = &script.constants;
+
+    while ip < ops.len() {
+        if stack.len() >= MAX_STACK {
+            return Color::BLACK;
+        }
+
+        match ops[ip] {
+            Op::PushConst(idx) => {
+                stack.push(Value::Float(consts[idx as usize]));
+            }
+            Op::PushParam(idx) => {
+                let val = ctx.param_values.get(idx as usize).copied().unwrap_or(0.0);
+                stack.push(Value::Float(val));
+            }
+            Op::LoadLocal(idx) => {
+                let val = locals.get(idx as usize).copied().unwrap_or(Value::Float(0.0));
+                stack.push(val);
+            }
+            Op::StoreLocal(idx) => {
+                if let Some(val) = stack.pop() {
+                    if (idx as usize) < locals.len() {
+                        locals[idx as usize] = val;
+                    }
+                }
+            }
+            Op::Pop => {
+                stack.pop();
+            }
+
+            // Arithmetic
+            Op::Add => float_binop(&mut stack, |a, b| a + b),
+            Op::Sub => float_binop(&mut stack, |a, b| a - b),
+            Op::Mul => float_binop(&mut stack, |a, b| a * b),
+            Op::Div => float_binop(&mut stack, |a, b| if b == 0.0 { 0.0 } else { a / b }),
+            Op::Mod => float_binop(&mut stack, |a, b| if b == 0.0 { 0.0 } else { a % b }),
+            Op::Neg => {
+                if let Some(val) = stack.pop() {
+                    stack.push(Value::Float(-val.as_float()));
+                }
+            }
+
+            // Comparison
+            Op::Lt => float_cmp(&mut stack, |a, b| a < b),
+            Op::Gt => float_cmp(&mut stack, |a, b| a > b),
+            Op::Le => float_cmp(&mut stack, |a, b| a <= b),
+            Op::Ge => float_cmp(&mut stack, |a, b| a >= b),
+            Op::Eq => float_cmp(&mut stack, |a, b| (a - b).abs() < f64::EPSILON),
+            Op::Ne => float_cmp(&mut stack, |a, b| (a - b).abs() >= f64::EPSILON),
+
+            // Logic
+            Op::And => float_binop(&mut stack, |a, b| {
+                if a != 0.0 && b != 0.0 { 1.0 } else { 0.0 }
+            }),
+            Op::Or => float_binop(&mut stack, |a, b| {
+                if a != 0.0 || b != 0.0 { 1.0 } else { 0.0 }
+            }),
+            Op::Not => {
+                if let Some(val) = stack.pop() {
+                    stack.push(Value::Float(if val.as_float() == 0.0 { 1.0 } else { 0.0 }));
+                }
+            }
+
+            // Math (1-arg)
+            Op::Sin => float_unary(&mut stack, f64::sin),
+            Op::Cos => float_unary(&mut stack, f64::cos),
+            Op::Tan => float_unary(&mut stack, f64::tan),
+            Op::Abs => float_unary(&mut stack, f64::abs),
+            Op::Floor => float_unary(&mut stack, f64::floor),
+            Op::Ceil => float_unary(&mut stack, f64::ceil),
+            Op::Round => float_unary(&mut stack, f64::round),
+            Op::Fract => float_unary(&mut stack, f64::fract),
+            Op::Sqrt => float_unary(&mut stack, f64::sqrt),
+
+            // Math (2-arg)
+            Op::Pow => float_binop(&mut stack, f64::powf),
+            Op::Min => float_binop(&mut stack, f64::min),
+            Op::Max => float_binop(&mut stack, f64::max),
+            Op::Step => float_binop(&mut stack, |edge, x| if x < edge { 0.0 } else { 1.0 }),
+            Op::Atan2 => float_binop(&mut stack, f64::atan2),
+
+            // Math (3-arg)
+            Op::Clamp => {
+                if stack.len() >= 3 {
+                    let max_val = stack.pop().map_or(0.0, Value::as_float);
+                    let min_val = stack.pop().map_or(0.0, Value::as_float);
+                    let x = stack.pop().map_or(0.0, Value::as_float);
+                    stack.push(Value::Float(x.clamp(min_val, max_val)));
+                }
+            }
+            Op::Mix => {
+                if stack.len() >= 3 {
+                    let t = stack.pop().map_or(0.0, Value::as_float);
+                    let b = stack.pop().map_or(0.0, Value::as_float);
+                    let a = stack.pop().map_or(0.0, Value::as_float);
+                    stack.push(Value::Float(a + (b - a) * t));
+                }
+            }
+            Op::Smoothstep => {
+                if stack.len() >= 3 {
+                    let x = stack.pop().map_or(0.0, Value::as_float);
+                    let edge1 = stack.pop().map_or(0.0, Value::as_float);
+                    let edge0 = stack.pop().map_or(0.0, Value::as_float);
+                    let t = if edge0 >= edge1 {
+                        0.0
+                    } else {
+                        ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0)
+                    };
+                    stack.push(Value::Float(t * t * (3.0 - 2.0 * t)));
+                }
+            }
+
+            // Color constructors
+            Op::Rgb => {
+                if stack.len() >= 3 {
+                    let b = stack.pop().map_or(0.0, Value::as_float);
+                    let g = stack.pop().map_or(0.0, Value::as_float);
+                    let r = stack.pop().map_or(0.0, Value::as_float);
+                    stack.push(Value::Color(Color::rgb(
+                        float_to_u8(r),
+                        float_to_u8(g),
+                        float_to_u8(b),
+                    )));
+                }
+            }
+            Op::Hsv => {
+                if stack.len() >= 3 {
+                    let v = stack.pop().map_or(0.0, Value::as_float);
+                    let s = stack.pop().map_or(0.0, Value::as_float);
+                    let h = stack.pop().map_or(0.0, Value::as_float);
+                    stack.push(Value::Color(Color::from_hsv(h, s, v)));
+                }
+            }
+            Op::Rgba => {
+                if stack.len() >= 4 {
+                    let a = stack.pop().map_or(0.0, Value::as_float);
+                    let b = stack.pop().map_or(0.0, Value::as_float);
+                    let g = stack.pop().map_or(0.0, Value::as_float);
+                    let r = stack.pop().map_or(0.0, Value::as_float);
+                    stack.push(Value::Color(Color::rgba(
+                        float_to_u8(r),
+                        float_to_u8(g),
+                        float_to_u8(b),
+                        float_to_u8(a),
+                    )));
+                }
+            }
+            Op::ColorScale => {
+                if stack.len() >= 2 {
+                    let factor = stack.pop().map_or(0.0, Value::as_float);
+                    let color = stack.pop().map_or(Color::BLACK, Value::as_color);
+                    stack.push(Value::Color(color.scale(factor)));
+                }
+            }
+            Op::ColorR => {
+                if let Some(val) = stack.pop() {
+                    let c = val.as_color();
+                    stack.push(Value::Float(f64::from(c.r) / 255.0));
+                }
+            }
+            Op::ColorG => {
+                if let Some(val) = stack.pop() {
+                    let c = val.as_color();
+                    stack.push(Value::Float(f64::from(c.g) / 255.0));
+                }
+            }
+            Op::ColorB => {
+                if let Some(val) = stack.pop() {
+                    let c = val.as_color();
+                    stack.push(Value::Float(f64::from(c.b) / 255.0));
+                }
+            }
+            Op::ColorA => {
+                if let Some(val) = stack.pop() {
+                    let c = val.as_color();
+                    stack.push(Value::Float(f64::from(c.a) / 255.0));
+                }
+            }
+
+            // Vec2
+            Op::MakeVec2 => {
+                if stack.len() >= 2 {
+                    let y = stack.pop().map_or(0.0, Value::as_float);
+                    let x = stack.pop().map_or(0.0, Value::as_float);
+                    stack.push(Value::Vec2(x, y));
+                }
+            }
+            Op::Vec2X => {
+                if let Some(val) = stack.pop() {
+                    match val {
+                        Value::Vec2(x, _) => stack.push(Value::Float(x)),
+                        _ => stack.push(Value::Float(0.0)),
+                    }
+                }
+            }
+            Op::Vec2Y => {
+                if let Some(val) = stack.pop() {
+                    match val {
+                        Value::Vec2(_, y) => stack.push(Value::Float(y)),
+                        _ => stack.push(Value::Float(0.0)),
+                    }
+                }
+            }
+            Op::Distance => {
+                if stack.len() >= 2 {
+                    let b = stack.pop().unwrap_or(Value::Float(0.0));
+                    let a = stack.pop().unwrap_or(Value::Float(0.0));
+                    match (a, b) {
+                        (Value::Vec2(ax, ay), Value::Vec2(bx, by)) => {
+                            let dx = bx - ax;
+                            let dy = by - ay;
+                            stack.push(Value::Float((dx * dx + dy * dy).sqrt()));
+                        }
+                        _ => stack.push(Value::Float(0.0)),
+                    }
+                }
+            }
+            Op::Length => {
+                if let Some(val) = stack.pop() {
+                    match val {
+                        Value::Vec2(x, y) => stack.push(Value::Float((x * x + y * y).sqrt())),
+                        _ => stack.push(Value::Float(0.0)),
+                    }
+                }
+            }
+
+            // Gradient/Curve evaluation
+            Op::EvalGradient(param_idx) => {
+                if let Some(t_val) = stack.pop() {
+                    let t = t_val.as_float();
+                    let color = ctx.gradients.get(param_idx as usize)
+                        .and_then(|g| g.as_ref())
+                        .map_or(Color::BLACK, |g| g.evaluate(t));
+                    stack.push(Value::Color(color));
+                }
+            }
+            Op::EvalCurve(param_idx) => {
+                if let Some(x_val) = stack.pop() {
+                    let x = x_val.as_float();
+                    let y = ctx.curves.get(param_idx as usize)
+                        .and_then(|c| c.as_ref())
+                        .map_or(0.0, |c| c.evaluate(x));
+                    stack.push(Value::Float(y));
+                }
+            }
+
+            // Hash (deterministic pseudo-random)
+            Op::Hash => {
+                if stack.len() >= 2 {
+                    let b = stack.pop().map_or(0.0, Value::as_float);
+                    let a = stack.pop().map_or(0.0, Value::as_float);
+                    stack.push(Value::Float(hash_f64(a, b)));
+                }
+            }
+
+            // Enum/Flags
+            #[allow(clippy::cast_sign_loss)]
+            Op::EnumEq(variant_idx) => {
+                if let Some(val) = stack.pop() {
+                    let param_val = val.as_float() as u32;
+                    stack.push(Value::Float(
+                        if param_val == u32::from(variant_idx) { 1.0 } else { 0.0 }
+                    ));
+                }
+            }
+            #[allow(clippy::cast_sign_loss)]
+            Op::FlagTest(bit_mask) => {
+                if let Some(val) = stack.pop() {
+                    let flags = val.as_float() as u32;
+                    stack.push(Value::Float(
+                        if flags & bit_mask != 0 { 1.0 } else { 0.0 }
+                    ));
+                }
+            }
+
+            // Control flow
+            Op::JumpIfFalse(target) => {
+                if let Some(val) = stack.pop() {
+                    if val.as_float() == 0.0 {
+                        ip = target as usize;
+                        continue;
+                    }
+                }
+            }
+            Op::Jump(target) => {
+                ip = target as usize;
+                continue;
+            }
+
+            // Type conversion
+            Op::IntToFloat => {
+                // Int is already stored as f64, so this is a no-op in our VM
+            }
+
+            // Builtin variables
+            Op::PushT => stack.push(Value::Float(ctx.t)),
+            #[allow(clippy::cast_precision_loss)]
+            Op::PushPixel => stack.push(Value::Float(ctx.pixel as f64)),
+            #[allow(clippy::cast_precision_loss)]
+            Op::PushPixels => stack.push(Value::Float(ctx.pixels as f64)),
+            Op::PushPos => stack.push(Value::Float(ctx.pos)),
+            Op::PushPos2d => stack.push(Value::Vec2(ctx.pos2d.0, ctx.pos2d.1)),
+
+            Op::Return => break,
+        }
+
+        ip += 1;
+    }
+
+    // Top of stack is the result color
+    stack.pop().map_or(Color::BLACK, Value::as_color)
+}
+
+/// Convert a float in [0.0, 1.0] to a u8 in [0, 255], clamped.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn float_to_u8(f: f64) -> u8 {
+    (f.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// Binary operation on two floats from the stack.
+fn float_binop(stack: &mut Vec<Value>, op: impl FnOnce(f64, f64) -> f64) {
+    if stack.len() >= 2 {
+        let b = stack.pop().map_or(0.0, Value::as_float);
+        let a = stack.pop().map_or(0.0, Value::as_float);
+        stack.push(Value::Float(op(a, b)));
+    }
+}
+
+/// Comparison producing a bool (stored as 0.0 or 1.0).
+fn float_cmp(stack: &mut Vec<Value>, op: impl FnOnce(f64, f64) -> bool) {
+    if stack.len() >= 2 {
+        let b = stack.pop().map_or(0.0, Value::as_float);
+        let a = stack.pop().map_or(0.0, Value::as_float);
+        stack.push(Value::Float(if op(a, b) { 1.0 } else { 0.0 }));
+    }
+}
+
+/// Unary float operation.
+fn float_unary(stack: &mut Vec<Value>, op: impl FnOnce(f64) -> f64) {
+    if let Some(val) = stack.pop() {
+        stack.push(Value::Float(op(val.as_float())));
+    }
+}
+
+/// Deterministic hash function: maps two floats to [0, 1].
+/// Based on the classic sin-based hash used in GLSL shaders.
+fn hash_f64(a: f64, b: f64) -> f64 {
+    let dot = a * 12.9898 + b * 78.233;
+    let s = (dot.sin() * 43758.5453).fract();
+    s.abs()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::dsl::compiler::compile;
+    use crate::dsl::lexer::lex;
+    use crate::dsl::parser::parse;
+    use crate::dsl::typeck::type_check;
+
+    fn run(src: &str) -> Color {
+        run_with_ctx(src, 0.5, 0, 10)
+    }
+
+    fn run_with_ctx(src: &str, t: f64, pixel: usize, pixels: usize) -> Color {
+        let tokens = lex(src).unwrap();
+        let script = parse(tokens).unwrap();
+        let typed = type_check(&script).unwrap();
+        let compiled = compile(&typed).unwrap();
+
+        let pos = if pixels > 1 { pixel as f64 / (pixels - 1) as f64 } else { 0.0 };
+        let ctx = VmContext {
+            t,
+            pixel,
+            pixels,
+            pos,
+            pos2d: (pos, 0.0),
+            param_values: &[],
+            gradients: &[],
+            curves: &[],
+        };
+
+        execute(&compiled, &ctx)
+    }
+
+    #[test]
+    fn solid_red() {
+        let color = run("rgb(1.0, 0.0, 0.0)");
+        assert_eq!(color.r, 255);
+        assert_eq!(color.g, 0);
+        assert_eq!(color.b, 0);
+    }
+
+    #[test]
+    fn solid_white() {
+        let color = run("rgb(1.0, 1.0, 1.0)");
+        assert_eq!(color.r, 255);
+        assert_eq!(color.g, 255);
+        assert_eq!(color.b, 255);
+    }
+
+    #[test]
+    fn color_literal() {
+        let color = run("#ff8000");
+        assert_eq!(color.r, 255);
+        assert_eq!(color.g, 128);
+        assert_eq!(color.b, 0);
+    }
+
+    #[test]
+    fn let_binding() {
+        let color = run("let v = 0.5\nrgb(v, v, v)");
+        assert_eq!(color.r, 128);
+        assert_eq!(color.g, 128);
+        assert_eq!(color.b, 128);
+    }
+
+    #[test]
+    fn time_variable() {
+        // At t=0.5, sin(0.5 * PI) ≈ 1.0
+        let color = run("let s = sin(t * PI)\nrgb(s, s, s)");
+        assert!(color.r > 250, "Expected near-white, got r={}", color.r);
+    }
+
+    #[test]
+    fn pixel_variable() {
+        // pixel 0 of 10 → pos = 0.0
+        let c0 = run_with_ctx("rgb(pos, 0.0, 0.0)", 0.0, 0, 10);
+        assert_eq!(c0.r, 0);
+
+        // pixel 9 of 10 → pos = 1.0
+        let c9 = run_with_ctx("rgb(pos, 0.0, 0.0)", 0.0, 9, 10);
+        assert_eq!(c9.r, 255);
+    }
+
+    #[test]
+    fn if_else() {
+        let color_true = run_with_ctx("if t > 0.3 {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 0.0, 1.0)\n}", 0.5, 0, 10);
+        assert_eq!(color_true.r, 255);
+        assert_eq!(color_true.b, 0);
+
+        let color_false = run_with_ctx("if t > 0.3 {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 0.0, 1.0)\n}", 0.1, 0, 10);
+        assert_eq!(color_false.r, 0);
+        assert_eq!(color_false.b, 255);
+    }
+
+    #[test]
+    fn math_operations() {
+        // clamp(2.0, 0.0, 1.0) = 1.0
+        let color = run("let x = clamp(2.0, 0.0, 1.0)\nrgb(x, x, x)");
+        assert_eq!(color.r, 255);
+
+        // abs(-0.5) = 0.5
+        let color2 = run("let x = abs(-0.5)\nrgb(x, x, x)");
+        assert_eq!(color2.r, 128);
+    }
+
+    #[test]
+    fn hsv_color() {
+        // HSV(0, 1, 1) = pure red
+        let color = run("hsv(0.0, 1.0, 1.0)");
+        assert_eq!(color.r, 255);
+        assert_eq!(color.g, 0);
+        assert_eq!(color.b, 0);
+    }
+
+    #[test]
+    fn color_scale() {
+        let color = run("rgb(1.0, 1.0, 1.0).scale(0.5)");
+        assert_eq!(color.r, 128);
+        assert_eq!(color.g, 128);
+        assert_eq!(color.b, 128);
+    }
+
+    #[test]
+    fn hash_deterministic() {
+        let c1 = run("let h = hash(1.0, 2.0)\nrgb(h, h, h)");
+        let c2 = run("let h = hash(1.0, 2.0)\nrgb(h, h, h)");
+        assert_eq!(c1.r, c2.r);
+        assert_eq!(c1.g, c2.g);
+    }
+
+    #[test]
+    fn complex_rainbow() {
+        // Rainbow effect: hue varies with position
+        let c0 = run_with_ctx("hsv(pos * 360.0, 1.0, 1.0)", 0.0, 0, 10);
+        let c5 = run_with_ctx("hsv(pos * 360.0, 1.0, 1.0)", 0.0, 5, 10);
+        // Different pixels should give different colors
+        assert_ne!(c0, c5);
+    }
+
+    #[test]
+    fn gradient_param() {
+        let src = "param palette: gradient = #000000, #ffffff\npalette(t)";
+        let tokens = lex(src).unwrap();
+        let script = parse(tokens).unwrap();
+        let typed = type_check(&script).unwrap();
+        let compiled = compile(&typed).unwrap();
+
+        let gradient = ColorGradient::two_color(Color::BLACK, Color::WHITE);
+        let gradients: Vec<Option<&ColorGradient>> = vec![Some(&gradient)];
+
+        let ctx = VmContext {
+            t: 0.5,
+            pixel: 0,
+            pixels: 10,
+            pos: 0.0,
+            pos2d: (0.0, 0.0),
+            param_values: &[0.0], // gradient params don't use this slot
+            gradients: &gradients,
+            curves: &[],
+        };
+
+        let color = execute(&compiled, &ctx);
+        // At t=0.5, gradient should be ~mid-gray
+        assert!((color.r as i16 - 127).abs() <= 2, "Expected ~127, got r={}", color.r);
+    }
+
+    #[test]
+    fn user_function() {
+        let color = run("fn half(x: float) -> float {\nx * 0.5\n}\nlet v = half(1.0)\nrgb(v, v, v)");
+        assert_eq!(color.r, 128);
+    }
+
+    #[test]
+    fn enum_param() {
+        let src = "enum Mode { Red, Green, Blue }\nparam mode: Mode = Red\nif mode == Mode.Red {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 1.0, 0.0)\n}";
+        let tokens = lex(src).unwrap();
+        let script = parse(tokens).unwrap();
+        let typed = type_check(&script).unwrap();
+        let compiled = compile(&typed).unwrap();
+
+        // mode = 0 (Red)
+        let ctx = VmContext {
+            t: 0.0,
+            pixel: 0,
+            pixels: 1,
+            pos: 0.0,
+            pos2d: (0.0, 0.0),
+            param_values: &[0.0],
+            gradients: &[],
+            curves: &[],
+        };
+        let color = execute(&compiled, &ctx);
+        assert_eq!(color.r, 255);
+        assert_eq!(color.g, 0);
+
+        // mode = 1 (Green)
+        let ctx2 = VmContext {
+            t: 0.0,
+            pixel: 0,
+            pixels: 1,
+            pos: 0.0,
+            pos2d: (0.0, 0.0),
+            param_values: &[1.0],
+            gradients: &[],
+            curves: &[],
+        };
+        let color2 = execute(&compiled, &ctx2);
+        assert_eq!(color2.r, 0);
+        assert_eq!(color2.g, 255);
+    }
+
+    // ── Phase 6: Validation tests ────────────────────────────────
+    // Compare DSL script output with native Rust effects pixel-for-pixel.
+
+    #[test]
+    fn validate_solid_red_matches_native() {
+        // DSL solid red using float params for r/g/b
+        let src = r#"
+param r: float(0.0, 1.0) = 1.0
+param g: float(0.0, 1.0) = 0.0
+param b: float(0.0, 1.0) = 0.0
+rgb(r, g, b)
+"#;
+        let tokens = lex(src).unwrap();
+        let script = parse(tokens).unwrap();
+        let typed = type_check(&script).unwrap();
+        let compiled = compile(&typed).unwrap();
+
+        // Native solid: Color::rgb(255, 0, 0)
+        let native = Color::rgb(255, 0, 0);
+
+        for pixel in 0..10 {
+            let pos = if pixel > 0 { pixel as f64 / 9.0 } else { 0.0 };
+            let ctx = VmContext {
+                t: 0.5,
+                pixel,
+                pixels: 10,
+                pos,
+                pos2d: (pos, 0.0),
+                param_values: &[1.0, 0.0, 0.0], // r=1.0, g=0.0, b=0.0
+                gradients: &[],
+                curves: &[],
+            };
+            let dsl_color = execute(&compiled, &ctx);
+            assert_eq!(dsl_color.r, native.r, "pixel {pixel}: r mismatch");
+            assert_eq!(dsl_color.g, native.g, "pixel {pixel}: g mismatch");
+            assert_eq!(dsl_color.b, native.b, "pixel {pixel}: b mismatch");
+        }
+    }
+
+    #[test]
+    fn validate_solid_literal_matches_native() {
+        // DSL solid using literal color (simpler, no params needed)
+        let dsl_src = "rgb(1.0, 0.0, 0.0)";
+        let native = Color::rgb(255, 0, 0);
+
+        for pixel in 0..10 {
+            let dsl_color = run_with_ctx(dsl_src, 0.5, pixel, 10);
+            assert_eq!(dsl_color, native, "pixel {pixel}: color mismatch");
+        }
+    }
+
+    #[test]
+    fn validate_rainbow_matches_native() {
+        // Native rainbow: spatial = pixel_index / pixel_count * spread (divides by total, not total-1)
+        // hue = ((t * speed + spatial) * 360.0) % 360.0
+        //
+        // DSL must use `pixel * 1.0 / pixels` (not `pos`, which is pixel/(pixels-1))
+        let dsl_src = r#"
+param speed: float(0.1, 20.0) = 1.0
+param spread: float(0.1, 10.0) = 1.0
+let spatial = pixel * 1.0 / pixels * spread
+let hue = (t * speed + spatial) * 360.0 % 360.0
+hsv(hue, 1.0, 1.0)
+"#;
+        let tokens = lex(dsl_src).unwrap();
+        let script = parse(tokens).unwrap();
+        let typed = type_check(&script).unwrap();
+        let compiled = compile(&typed).unwrap();
+
+        let pixel_count = 10usize;
+        let test_times = [0.0, 0.25, 0.5, 0.75, 1.0];
+
+        for &t in &test_times {
+            for pixel in 0..pixel_count {
+                // Native calculation
+                let spatial_native = if pixel_count > 1 {
+                    (pixel as f64) / (pixel_count as f64) * 1.0
+                } else {
+                    0.0
+                };
+                let hue_native = ((t * 1.0 + spatial_native) * 360.0) % 360.0;
+                let native = Color::from_hsv(hue_native, 1.0, 1.0);
+
+                // DSL calculation
+                let pos = if pixel_count > 1 { pixel as f64 / (pixel_count - 1) as f64 } else { 0.0 };
+                let ctx = VmContext {
+                    t,
+                    pixel,
+                    pixels: pixel_count,
+                    pos,
+                    pos2d: (pos, 0.0),
+                    param_values: &[1.0, 1.0], // speed=1.0, spread=1.0
+                    gradients: &[],
+                    curves: &[],
+                };
+                let dsl_color = execute(&compiled, &ctx);
+
+                // Allow ±1 tolerance due to floating point → u8 rounding
+                assert!(
+                    (dsl_color.r as i16 - native.r as i16).abs() <= 1
+                    && (dsl_color.g as i16 - native.g as i16).abs() <= 1
+                    && (dsl_color.b as i16 - native.b as i16).abs() <= 1,
+                    "t={t}, pixel={pixel}: DSL=({},{},{}) native=({},{},{})",
+                    dsl_color.r, dsl_color.g, dsl_color.b,
+                    native.r, native.g, native.b
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn validate_strobe_matches_native() {
+        // Native strobe: phase = (t * rate).fract(); if phase < duty_cycle { color } else { black }
+        // DSL equivalent:
+        let dsl_src = r#"
+param rate: float(1.0, 50.0) = 10.0
+param duty_cycle: float(0.0, 1.0) = 0.5
+let phase = fract(t * rate)
+if phase < duty_cycle {
+    rgb(1.0, 1.0, 1.0)
+} else {
+    rgb(0.0, 0.0, 0.0)
+}
+"#;
+        let tokens = lex(dsl_src).unwrap();
+        let script = parse(tokens).unwrap();
+        let typed = type_check(&script).unwrap();
+        let compiled = compile(&typed).unwrap();
+
+        let rate = 10.0f64;
+        let duty_cycle = 0.5f64;
+        let test_times = [0.0, 0.02, 0.05, 0.08, 0.12, 0.25, 0.5, 0.75, 0.99];
+
+        for &t in &test_times {
+            // Native
+            let phase = (t * rate).fract();
+            let native = if phase < duty_cycle { Color::WHITE } else { Color::BLACK };
+
+            // DSL
+            let ctx = VmContext {
+                t,
+                pixel: 0,
+                pixels: 1,
+                pos: 0.0,
+                pos2d: (0.0, 0.0),
+                param_values: &[rate, duty_cycle],
+                gradients: &[],
+                curves: &[],
+            };
+            let dsl_color = execute(&compiled, &ctx);
+
+            assert_eq!(
+                dsl_color, native,
+                "t={t}: DSL=({},{},{}) native=({},{},{})",
+                dsl_color.r, dsl_color.g, dsl_color.b,
+                native.r, native.g, native.b
+            );
+        }
+    }
+}

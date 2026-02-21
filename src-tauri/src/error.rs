@@ -18,6 +18,11 @@ pub enum AppError {
     NoSettings,
     ApiError { message: String },
     ImportError { message: String },
+    SettingsSaveError { message: String },
+    PythonNotReady,
+    PythonError { message: String },
+    AnalysisError { message: String },
+    ModelNotInstalled { model: String },
 }
 
 impl fmt::Display for AppError {
@@ -34,6 +39,15 @@ impl fmt::Display for AppError {
             AppError::NoSettings => write!(f, "Settings not initialized"),
             AppError::ApiError { message } => write!(f, "API error: {message}"),
             AppError::ImportError { message } => write!(f, "Import error: {message}"),
+            AppError::SettingsSaveError { message } => {
+                write!(f, "Failed to save settings: {message}")
+            }
+            AppError::PythonNotReady => write!(f, "Python environment not ready"),
+            AppError::PythonError { message } => write!(f, "Python error: {message}"),
+            AppError::AnalysisError { message } => write!(f, "Analysis error: {message}"),
+            AppError::ModelNotInstalled { model } => {
+                write!(f, "Required model not installed: {model}")
+            }
         }
     }
 }

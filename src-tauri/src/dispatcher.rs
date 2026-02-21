@@ -3,8 +3,8 @@ use ts_rs::TS;
 
 use crate::error::AppError;
 use crate::model::{
-    BlendMode, EffectInstance, EffectKind, EffectParams, EffectTarget, ParamKey, ParamValue,
-    Sequence, TimeRange,
+    BlendMode, ColorGradient, Curve, EffectInstance, EffectKind, EffectParams, EffectTarget,
+    ParamKey, ParamValue, Sequence, TimeRange,
 };
 
 /// An undoable editing command. Each variant corresponds to one user action.
@@ -48,6 +48,10 @@ pub enum EditCommand {
         name: String,
         target: EffectTarget,
     },
+    DeleteTrack {
+        sequence_index: usize,
+        track_index: usize,
+    },
     UpdateSequenceSettings {
         sequence_index: usize,
         name: Option<String>,
@@ -59,33 +63,85 @@ pub enum EditCommand {
         description: String,
         commands: Vec<EditCommand>,
     },
+    SetScript {
+        sequence_index: usize,
+        name: String,
+        source: String,
+    },
+    DeleteScript {
+        sequence_index: usize,
+        name: String,
+    },
+    SetGradient {
+        sequence_index: usize,
+        name: String,
+        gradient: ColorGradient,
+    },
+    DeleteGradient {
+        sequence_index: usize,
+        name: String,
+    },
+    RenameGradient {
+        sequence_index: usize,
+        old_name: String,
+        new_name: String,
+    },
+    SetCurve {
+        sequence_index: usize,
+        name: String,
+        curve: Curve,
+    },
+    DeleteCurve {
+        sequence_index: usize,
+        name: String,
+    },
+    RenameCurve {
+        sequence_index: usize,
+        old_name: String,
+        new_name: String,
+    },
 }
 
 impl EditCommand {
     /// Human-readable description for UI tooltips and chat context.
     pub fn description(&self) -> String {
         match self {
-            EditCommand::AddEffect { kind, .. } => format!("Add {:?} effect", kind),
+            EditCommand::AddEffect { kind, .. } => format!("Add {kind:?} effect"),
             EditCommand::DeleteEffects { targets, .. } => {
                 let n = targets.len();
                 if n == 1 {
                     "Delete effect".to_string()
                 } else {
-                    format!("Delete {} effects", n)
+                    format!("Delete {n} effects")
                 }
             }
-            EditCommand::UpdateEffectParam { key, .. } => format!("Update {:?}", key),
+            EditCommand::UpdateEffectParam { key, .. } => format!("Update {key:?}"),
             EditCommand::UpdateEffectTimeRange { .. } => "Update effect timing".to_string(),
             EditCommand::MoveEffectToTrack { .. } => "Move effect to track".to_string(),
-            EditCommand::AddTrack { name, .. } => format!("Add track \"{}\"", name),
+            EditCommand::AddTrack { name, .. } => format!("Add track \"{name}\""),
+            EditCommand::DeleteTrack { track_index, .. } => {
+                format!("Delete track {track_index}")
+            }
             EditCommand::UpdateSequenceSettings { name, .. } => {
                 if let Some(n) = name {
-                    format!("Rename sequence to \"{}\"", n)
+                    format!("Rename sequence to \"{n}\"")
                 } else {
                     "Update sequence settings".to_string()
                 }
             }
             EditCommand::Batch { description, .. } => description.clone(),
+            EditCommand::SetScript { name, .. } => format!("Set script \"{name}\""),
+            EditCommand::DeleteScript { name, .. } => format!("Delete script \"{name}\""),
+            EditCommand::SetGradient { name, .. } => format!("Set gradient \"{name}\""),
+            EditCommand::DeleteGradient { name, .. } => format!("Delete gradient \"{name}\""),
+            EditCommand::RenameGradient { old_name, new_name, .. } => {
+                format!("Rename gradient \"{old_name}\" → \"{new_name}\"")
+            }
+            EditCommand::SetCurve { name, .. } => format!("Set curve \"{name}\""),
+            EditCommand::DeleteCurve { name, .. } => format!("Delete curve \"{name}\""),
+            EditCommand::RenameCurve { old_name, new_name, .. } => {
+                format!("Rename curve \"{old_name}\" → \"{new_name}\"")
+            }
         }
     }
 
@@ -98,9 +154,18 @@ impl EditCommand {
             | EditCommand::UpdateEffectTimeRange { sequence_index, .. }
             | EditCommand::MoveEffectToTrack { sequence_index, .. }
             | EditCommand::AddTrack { sequence_index, .. }
-            | EditCommand::UpdateSequenceSettings { sequence_index, .. } => *sequence_index,
+            | EditCommand::DeleteTrack { sequence_index, .. }
+            | EditCommand::UpdateSequenceSettings { sequence_index, .. }
+            | EditCommand::SetScript { sequence_index, .. }
+            | EditCommand::DeleteScript { sequence_index, .. }
+            | EditCommand::SetGradient { sequence_index, .. }
+            | EditCommand::DeleteGradient { sequence_index, .. }
+            | EditCommand::RenameGradient { sequence_index, .. }
+            | EditCommand::SetCurve { sequence_index, .. }
+            | EditCommand::DeleteCurve { sequence_index, .. }
+            | EditCommand::RenameCurve { sequence_index, .. } => *sequence_index,
             EditCommand::Batch { commands, .. } => {
-                commands.first().map(|c| c.sequence_index()).unwrap_or(0)
+                commands.first().map_or(0, EditCommand::sequence_index)
             }
         }
     }
@@ -154,7 +219,7 @@ impl CommandDispatcher {
     pub fn execute(
         &mut self,
         show: &mut crate::model::Show,
-        cmd: EditCommand,
+        cmd: &EditCommand,
     ) -> Result<CommandResult, AppError> {
         let seq_idx = cmd.sequence_index();
         let description = cmd.description();
@@ -170,7 +235,7 @@ impl CommandDispatcher {
             .clone();
 
         // Execute the command
-        let result = self.apply(show, &cmd)?;
+        let result = self.apply(show, cmd)?;
 
         // Push undo entry and clear redo stack
         self.undo_stack.push(UndoEntry {
@@ -265,6 +330,7 @@ impl CommandDispatcher {
     }
 
     /// Apply a command to the show, returning the result. Does not manage undo state.
+    #[allow(clippy::self_only_used_in_recursion)]
     fn apply(
         &self,
         show: &mut crate::model::Show,
@@ -375,7 +441,7 @@ impl CommandDispatcher {
                         what: "effect".into(),
                         index: *effect_index,
                     })?;
-                effect.params.set_mut(*key, value.clone());
+                effect.params.set_mut(key.clone(), value.clone());
                 Ok(CommandResult::Bool(true))
             }
 
@@ -446,14 +512,23 @@ impl CommandDispatcher {
                         index: *to_track,
                     });
                 }
-                if *effect_index >= sequence.tracks[*from_track].effects.len() {
+                let from = sequence.tracks.get(*from_track).ok_or_else(|| {
+                    AppError::InvalidIndex {
+                        what: "source track".into(),
+                        index: *from_track,
+                    }
+                })?;
+                if *effect_index >= from.effects.len() {
                     return Err(AppError::InvalidIndex {
                         what: "effect".into(),
                         index: *effect_index,
                     });
                 }
-                let effect = sequence.tracks[*from_track].effects.remove(*effect_index);
-                let dest_track = &mut sequence.tracks[*to_track];
+                let effect = sequence.tracks.get_mut(*from_track)
+                    .ok_or_else(|| AppError::InvalidIndex { what: "source track".into(), index: *from_track })?
+                    .effects.remove(*effect_index);
+                let dest_track = sequence.tracks.get_mut(*to_track)
+                    .ok_or_else(|| AppError::InvalidIndex { what: "destination track".into(), index: *to_track })?;
                 let insert_pos = dest_track.effects.partition_point(|e| {
                     e.time_range.start() < effect.time_range.start()
                 });
@@ -482,6 +557,27 @@ impl CommandDispatcher {
                 Ok(CommandResult::Index(sequence.tracks.len() - 1))
             }
 
+            EditCommand::DeleteTrack {
+                sequence_index,
+                track_index,
+            } => {
+                let sequence = show
+                    .sequences
+                    .get_mut(*sequence_index)
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
+                if *track_index >= sequence.tracks.len() {
+                    return Err(AppError::InvalidIndex {
+                        what: "track".into(),
+                        index: *track_index,
+                    });
+                }
+                sequence.tracks.remove(*track_index);
+                Ok(CommandResult::Unit)
+            }
+
             EditCommand::UpdateSequenceSettings {
                 sequence_index,
                 name,
@@ -497,10 +593,10 @@ impl CommandDispatcher {
                         index: *sequence_index,
                     })?;
                 if let Some(n) = name {
-                    sequence.name = n.clone();
+                    sequence.name.clone_from(n);
                 }
                 if let Some(af) = audio_file {
-                    sequence.audio_file = af.clone();
+                    sequence.audio_file.clone_from(af);
                 }
                 if let Some(d) = duration {
                     if *d <= 0.0 {
@@ -517,6 +613,155 @@ impl CommandDispatcher {
                         });
                     }
                     sequence.frame_rate = *fr;
+                }
+                Ok(CommandResult::Unit)
+            }
+
+            EditCommand::SetScript {
+                sequence_index,
+                name,
+                source,
+            } => {
+                let sequence = show
+                    .sequences
+                    .get_mut(*sequence_index)
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
+                sequence.scripts.insert(name.clone(), source.clone());
+                Ok(CommandResult::Unit)
+            }
+
+            EditCommand::DeleteScript {
+                sequence_index,
+                name,
+            } => {
+                let sequence = show
+                    .sequences
+                    .get_mut(*sequence_index)
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
+                sequence.scripts.remove(name);
+                Ok(CommandResult::Unit)
+            }
+
+            EditCommand::SetGradient {
+                sequence_index,
+                name,
+                gradient,
+            } => {
+                let sequence = show
+                    .sequences
+                    .get_mut(*sequence_index)
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
+                sequence.gradient_library.insert(name.clone(), gradient.clone());
+                Ok(CommandResult::Unit)
+            }
+
+            EditCommand::DeleteGradient {
+                sequence_index,
+                name,
+            } => {
+                let sequence = show
+                    .sequences
+                    .get_mut(*sequence_index)
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
+                sequence.gradient_library.remove(name);
+                Ok(CommandResult::Unit)
+            }
+
+            EditCommand::RenameGradient {
+                sequence_index,
+                old_name,
+                new_name,
+            } => {
+                let sequence = show
+                    .sequences
+                    .get_mut(*sequence_index)
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
+                if let Some(gradient) = sequence.gradient_library.remove(old_name) {
+                    sequence.gradient_library.insert(new_name.clone(), gradient);
+                    // Update all GradientRef params that referenced the old name
+                    for track in &mut sequence.tracks {
+                        for effect in &mut track.effects {
+                            for val in effect.params.values_mut() {
+                                if matches!(val, ParamValue::GradientRef(n) if n == old_name) {
+                                    *val = ParamValue::GradientRef(new_name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(CommandResult::Unit)
+            }
+
+            EditCommand::SetCurve {
+                sequence_index,
+                name,
+                curve,
+            } => {
+                let sequence = show
+                    .sequences
+                    .get_mut(*sequence_index)
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
+                sequence.curve_library.insert(name.clone(), curve.clone());
+                Ok(CommandResult::Unit)
+            }
+
+            EditCommand::DeleteCurve {
+                sequence_index,
+                name,
+            } => {
+                let sequence = show
+                    .sequences
+                    .get_mut(*sequence_index)
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
+                sequence.curve_library.remove(name);
+                Ok(CommandResult::Unit)
+            }
+
+            EditCommand::RenameCurve {
+                sequence_index,
+                old_name,
+                new_name,
+            } => {
+                let sequence = show
+                    .sequences
+                    .get_mut(*sequence_index)
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
+                if let Some(curve) = sequence.curve_library.remove(old_name) {
+                    sequence.curve_library.insert(new_name.clone(), curve);
+                    // Update all CurveRef params that referenced the old name
+                    for track in &mut sequence.tracks {
+                        for effect in &mut track.effects {
+                            for val in effect.params.values_mut() {
+                                if matches!(val, ParamValue::CurveRef(n) if n == old_name) {
+                                    *val = ParamValue::CurveRef(new_name.clone());
+                                }
+                            }
+                        }
+                    }
                 }
                 Ok(CommandResult::Unit)
             }

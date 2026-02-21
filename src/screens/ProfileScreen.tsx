@@ -9,6 +9,10 @@ import type {
   FixtureDef,
   FixtureGroup,
   FixtureLayout,
+  ColorGradient,
+  ColorStop,
+  Curve,
+  CurvePoint,
 } from "../types";
 import { Settings } from "lucide-react";
 import { AppBar } from "../components/AppBar";
@@ -20,8 +24,11 @@ import { LayoutCanvas } from "../components/layout/LayoutCanvas";
 import { LayoutToolbar } from "../components/layout/LayoutToolbar";
 import { ShapeConfigurator } from "../components/layout/ShapeConfigurator";
 import { FixturePlacer } from "../components/layout/FixturePlacer";
+import { GradientEditor } from "../components/controls/GradientEditor";
+import { CurveEditor } from "../components/controls/CurveEditor";
+import { ScriptEditorDialog } from "../components/ScriptEditorDialog";
 
-type Tab = "sequences" | "music" | "house" | "layout" | "effects";
+type Tab = "sequences" | "music" | "house" | "layout" | "effects" | "gradients" | "curves";
 
 interface Props {
   slug: string;
@@ -47,6 +54,8 @@ export function ProfileScreen({ slug, onBack, onOpenSequence, onOpenSettings }: 
     { key: "house", label: "House Setup" },
     { key: "layout", label: "Layout" },
     { key: "effects", label: "Effects" },
+    { key: "gradients", label: "Gradients" },
+    { key: "curves", label: "Curves" },
   ];
 
   return (
@@ -110,7 +119,9 @@ export function ProfileScreen({ slug, onBack, onOpenSequence, onOpenSettings }: 
         {profile && tab === "layout" && (
           <LayoutTab profile={profile} onProfileUpdate={setProfile} setError={setError} />
         )}
-        {profile && tab === "effects" && <EffectsTab />}
+        {profile && tab === "effects" && <EffectsTab setError={setError} />}
+        {profile && tab === "gradients" && <GradientsTab setError={setError} />}
+        {profile && tab === "curves" && <CurvesTab setError={setError} />}
       </div>
     </div>
   );
@@ -693,44 +704,500 @@ function LayoutTab({
   );
 }
 
-// ── Effects Tab (Read-only) ────────────────────────────────────────
+// ── Effects Tab ────────────────────────────────────────────────────
 
-function EffectsTab() {
+function EffectsTab({ setError }: { setError: (e: string | null) => void }) {
   const [effects, setEffects] = useState<EffectInfo[]>([]);
+  const [scripts, setScripts] = useState<[string, string][]>([]);
+  const [editingScript, setEditingScript] = useState<{ name: string; source: string } | null>(null);
+  const [creatingScript, setCreatingScript] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
-  useEffect(() => {
-    invoke<EffectInfo[]>("list_effects")
-      .then(setEffects)
-      .catch(console.error);
+  const refreshEffects = useCallback(() => {
+    invoke<EffectInfo[]>("list_effects").then(setEffects).catch(console.error);
   }, []);
+
+  const refreshScripts = useCallback(() => {
+    invoke<[string, string][]>("list_profile_scripts")
+      .then(setScripts)
+      .catch((e) => setError(String(e)));
+  }, [setError]);
+
+  useEffect(refreshEffects, [refreshEffects]);
+  useEffect(refreshScripts, [refreshScripts]);
+
+  const handleDeleteScript = useCallback(() => {
+    if (!deleteTarget) return;
+    invoke("delete_profile_script", { name: deleteTarget })
+      .then(refreshScripts)
+      .catch((e) => setError(String(e)));
+    setDeleteTarget(null);
+  }, [deleteTarget, refreshScripts, setError]);
+
+  return (
+    <div className="p-6 space-y-8">
+      {/* Built-in effects */}
+      <section>
+        <h3 className="text-text mb-4 text-sm font-medium">Built-in Effects</h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {effects.map((fx) => (
+            <div
+              key={fx.name}
+              className="border-border bg-surface rounded-lg border p-4"
+            >
+              <h4 className="text-text mb-2 text-sm font-medium">{fx.name}</h4>
+              {fx.schema.length > 0 && (
+                <div className="text-text-2 space-y-1 text-xs">
+                  {fx.schema.map((param) => (
+                    <div key={String(param.key)} className="flex justify-between">
+                      <span>{param.label}</span>
+                      <span className="text-text-2">
+                        {typeof param.param_type === "string"
+                          ? param.param_type
+                          : Object.keys(param.param_type)[0]}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Custom scripts */}
+      <section>
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-text text-sm font-medium">Custom Scripts</h3>
+          <button
+            onClick={() => setCreatingScript(true)}
+            className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white transition-colors"
+          >
+            New Script
+          </button>
+        </div>
+
+        {scripts.length === 0 ? (
+          <p className="text-text-2 text-center text-sm">
+            No custom scripts yet. Create one to define custom effects.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {scripts.map(([name, source]) => (
+              <div
+                key={name}
+                onClick={() => setEditingScript({ name, source })}
+                className="border-border bg-surface hover:border-primary group cursor-pointer rounded-lg border p-4 transition-colors"
+              >
+                <h4 className="text-text text-sm font-medium">{name}</h4>
+                <span className="text-text-2 text-xs">{source.split("\n").length} lines</span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteTarget(name);
+                  }}
+                  className="text-text-2 hover:text-error ml-2 text-[10px] opacity-0 transition-all group-hover:opacity-100"
+                >
+                  Delete
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Script editor dialog */}
+      {(editingScript || creatingScript) && (
+        <ScriptEditorDialog
+          scriptName={editingScript?.name ?? null}
+          initialSource={editingScript?.source ?? ""}
+          compileCommand="compile_profile_script"
+          listCommand="list_profile_scripts"
+          onSaved={() => {
+            setEditingScript(null);
+            setCreatingScript(false);
+            refreshScripts();
+          }}
+          onCancel={() => {
+            setEditingScript(null);
+            setCreatingScript(false);
+          }}
+        />
+      )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete script"
+          message={`Delete script "${deleteTarget}"? This cannot be undone.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={handleDeleteScript}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Gradients Tab ──────────────────────────────────────────────────
+
+function GradientsTab({ setError }: { setError: (e: string | null) => void }) {
+  const [gradients, setGradients] = useState<[string, ColorGradient][]>([]);
+  const [expandedName, setExpandedName] = useState<string | null>(null);
+  const [renamingName, setRenamingName] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  const refresh = useCallback(() => {
+    invoke<[string, ColorGradient][]>("list_profile_gradients")
+      .then(setGradients)
+      .catch((e) => setError(String(e)));
+  }, [setError]);
+
+  useEffect(refresh, [refresh]);
+
+  const handleCreate = useCallback(() => {
+    const existingNames = gradients.map(([n]) => n);
+    let idx = 1;
+    while (existingNames.includes(`Gradient ${idx}`)) idx++;
+    const name = `Gradient ${idx}`;
+    const defaultGradient: ColorGradient = {
+      stops: [
+        { position: 0, color: { r: 255, g: 0, b: 0, a: 255 } },
+        { position: 1, color: { r: 0, g: 0, b: 255, a: 255 } },
+      ],
+    };
+    invoke("set_profile_gradient", { name, gradient: defaultGradient })
+      .then(() => {
+        refresh();
+        setExpandedName(name);
+      })
+      .catch((e) => setError(String(e)));
+  }, [gradients, refresh, setError]);
+
+  const handleUpdate = useCallback(
+    (name: string, stops: ColorStop[]) => {
+      const gradient: ColorGradient = { stops };
+      invoke("set_profile_gradient", { name, gradient })
+        .then(refresh)
+        .catch((e) => setError(String(e)));
+    },
+    [refresh, setError],
+  );
+
+  const handleRename = useCallback(
+    (oldName: string) => {
+      if (!renameValue.trim() || renameValue === oldName) {
+        setRenamingName(null);
+        return;
+      }
+      invoke("rename_profile_gradient", { oldName, newName: renameValue.trim() })
+        .then(() => {
+          if (expandedName === oldName) setExpandedName(renameValue.trim());
+          setRenamingName(null);
+          refresh();
+        })
+        .catch((e) => setError(String(e)));
+    },
+    [renameValue, expandedName, refresh, setError],
+  );
+
+  const confirmDelete = useCallback(() => {
+    if (!deleteTarget) return;
+    invoke("delete_profile_gradient", { name: deleteTarget })
+      .then(() => {
+        if (expandedName === deleteTarget) setExpandedName(null);
+        refresh();
+      })
+      .catch((e) => setError(String(e)));
+    setDeleteTarget(null);
+  }, [deleteTarget, expandedName, refresh, setError]);
 
   return (
     <div className="p-6">
-      <h3 className="text-text mb-4 text-sm font-medium">Built-in Effects</h3>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {effects.map((fx) => (
-          <div
-            key={fx.name}
-            className="border-border bg-surface rounded-lg border p-4"
-          >
-            <h4 className="text-text mb-2 text-sm font-medium">{fx.name}</h4>
-            {fx.schema.length > 0 && (
-              <div className="text-text-2 space-y-1 text-xs">
-                {fx.schema.map((param) => (
-                  <div key={param.key} className="flex justify-between">
-                    <span>{param.label}</span>
-                    <span className="text-text-2">
-                      {typeof param.param_type === "string"
-                        ? param.param_type
-                        : Object.keys(param.param_type)[0]}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-text text-sm font-medium">Gradients</h3>
+        <button
+          onClick={handleCreate}
+          className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white transition-colors"
+        >
+          New Gradient
+        </button>
       </div>
+
+      {gradients.length === 0 ? (
+        <p className="text-text-2 mt-8 text-center text-sm">
+          No gradients yet. Create one to use in your effects.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {gradients.map(([name, gradient]) => (
+            <div
+              key={name}
+              className="border-border bg-surface rounded-lg border"
+            >
+              {/* Card header */}
+              <div
+                className="flex cursor-pointer items-center gap-3 px-4 py-3"
+                onClick={() => setExpandedName(expandedName === name ? null : name)}
+              >
+                {/* Gradient preview bar */}
+                <GradientPreview stops={gradient.stops} className="h-4 w-20 rounded" />
+
+                {/* Name (double-click to rename) */}
+                {renamingName === name ? (
+                  <input
+                    type="text"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={() => handleRename(name)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleRename(name);
+                      if (e.key === "Escape") setRenamingName(null);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    autoFocus
+                    className="border-border bg-surface-2 text-text rounded border px-2 py-0.5 text-sm outline-none focus:border-primary"
+                  />
+                ) : (
+                  <span
+                    className="text-text flex-1 text-sm font-medium"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setRenamingName(name);
+                      setRenameValue(name);
+                    }}
+                  >
+                    {name}
+                  </span>
+                )}
+
+                <span className="text-text-2 text-xs">{gradient.stops.length} stops</span>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteTarget(name);
+                  }}
+                  className="text-text-2 hover:text-error text-xs opacity-0 transition-all group-hover:opacity-100 hover:opacity-100"
+                >
+                  Delete
+                </button>
+              </div>
+
+              {/* Expanded editor */}
+              {expandedName === name && (
+                <div className="border-border border-t px-4 py-3">
+                  <GradientEditor
+                    label="Edit Gradient"
+                    value={gradient.stops}
+                    minStops={1}
+                    maxStops={10}
+                    onChange={(stops) => handleUpdate(name, stops)}
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete gradient"
+          message={`Delete gradient "${deleteTarget}"? This cannot be undone.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Tiny inline gradient preview using CSS linear-gradient. */
+function GradientPreview({ stops, className }: { stops: ColorStop[]; className?: string }) {
+  const sorted = [...stops].sort((a, b) => a.position - b.position);
+  const gradientCSS = sorted
+    .map((s) => `rgba(${s.color.r},${s.color.g},${s.color.b},${s.color.a / 255}) ${s.position * 100}%`)
+    .join(", ");
+  return (
+    <div
+      className={`border-border border ${className ?? ""}`}
+      style={{ background: `linear-gradient(to right, ${gradientCSS})` }}
+    />
+  );
+}
+
+// ── Curves Tab ─────────────────────────────────────────────────────
+
+function CurvesTab({ setError }: { setError: (e: string | null) => void }) {
+  const [curves, setCurves] = useState<[string, Curve][]>([]);
+  const [expandedName, setExpandedName] = useState<string | null>(null);
+  const [renamingName, setRenamingName] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  const refresh = useCallback(() => {
+    invoke<[string, Curve][]>("list_profile_curves")
+      .then(setCurves)
+      .catch((e) => setError(String(e)));
+  }, [setError]);
+
+  useEffect(refresh, [refresh]);
+
+  const handleCreate = useCallback(() => {
+    const existingNames = curves.map(([n]) => n);
+    let idx = 1;
+    while (existingNames.includes(`Curve ${idx}`)) idx++;
+    const name = `Curve ${idx}`;
+    const defaultCurve: Curve = {
+      points: [
+        { x: 0, y: 0 },
+        { x: 1, y: 1 },
+      ],
+    };
+    invoke("set_profile_curve", { name, curve: defaultCurve })
+      .then(() => {
+        refresh();
+        setExpandedName(name);
+      })
+      .catch((e) => setError(String(e)));
+  }, [curves, refresh, setError]);
+
+  const handleUpdate = useCallback(
+    (name: string, points: CurvePoint[]) => {
+      const curve: Curve = { points };
+      invoke("set_profile_curve", { name, curve })
+        .then(refresh)
+        .catch((e) => setError(String(e)));
+    },
+    [refresh, setError],
+  );
+
+  const handleRename = useCallback(
+    (oldName: string) => {
+      if (!renameValue.trim() || renameValue === oldName) {
+        setRenamingName(null);
+        return;
+      }
+      invoke("rename_profile_curve", { oldName, newName: renameValue.trim() })
+        .then(() => {
+          if (expandedName === oldName) setExpandedName(renameValue.trim());
+          setRenamingName(null);
+          refresh();
+        })
+        .catch((e) => setError(String(e)));
+    },
+    [renameValue, expandedName, refresh, setError],
+  );
+
+  const confirmDelete = useCallback(() => {
+    if (!deleteTarget) return;
+    invoke("delete_profile_curve", { name: deleteTarget })
+      .then(() => {
+        if (expandedName === deleteTarget) setExpandedName(null);
+        refresh();
+      })
+      .catch((e) => setError(String(e)));
+    setDeleteTarget(null);
+  }, [deleteTarget, expandedName, refresh, setError]);
+
+  return (
+    <div className="p-6">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-text text-sm font-medium">Curves</h3>
+        <button
+          onClick={handleCreate}
+          className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white transition-colors"
+        >
+          New Curve
+        </button>
+      </div>
+
+      {curves.length === 0 ? (
+        <p className="text-text-2 mt-8 text-center text-sm">
+          No curves yet. Create one to use in your effects.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {curves.map(([name, curve]) => (
+            <div
+              key={name}
+              className="border-border bg-surface rounded-lg border"
+            >
+              {/* Card header */}
+              <div
+                className="flex cursor-pointer items-center gap-3 px-4 py-3"
+                onClick={() => setExpandedName(expandedName === name ? null : name)}
+              >
+                {/* Name (double-click to rename) */}
+                {renamingName === name ? (
+                  <input
+                    type="text"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={() => handleRename(name)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleRename(name);
+                      if (e.key === "Escape") setRenamingName(null);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    autoFocus
+                    className="border-border bg-surface-2 text-text rounded border px-2 py-0.5 text-sm outline-none focus:border-primary"
+                  />
+                ) : (
+                  <span
+                    className="text-text flex-1 text-sm font-medium"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setRenamingName(name);
+                      setRenameValue(name);
+                    }}
+                  >
+                    {name}
+                  </span>
+                )}
+
+                <span className="text-text-2 text-xs">{curve.points.length} points</span>
+
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteTarget(name);
+                  }}
+                  className="text-text-2 hover:text-error text-xs opacity-0 transition-all group-hover:opacity-100 hover:opacity-100"
+                >
+                  Delete
+                </button>
+              </div>
+
+              {/* Expanded editor */}
+              {expandedName === name && (
+                <div className="border-border border-t px-4 py-3">
+                  <CurveEditor
+                    label="Edit Curve"
+                    value={curve.points}
+                    onChange={(points) => handleUpdate(name, points)}
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete curve"
+          message={`Delete curve "${deleteTarget}"? This cannot be undone.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
     </div>
   );
 }

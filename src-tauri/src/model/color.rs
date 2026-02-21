@@ -21,15 +21,19 @@ impl Color {
     pub const WHITE: Color = Color { r: 255, g: 255, b: 255, a: 255 };
     pub const TRANSPARENT: Color = Color { r: 0, g: 0, b: 0, a: 0 };
 
+    #[must_use]
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b, a: 255 }
     }
 
+    #[must_use]
     pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
     }
 
     /// Create from HSV (hue 0-360, saturation 0-1, value 0-1)
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::many_single_char_names)]
     pub fn from_hsv(h: f64, s: f64, v: f64) -> Self {
         let h = h % 360.0;
         let c = v * s;
@@ -53,28 +57,33 @@ impl Color {
     }
 
     /// Linear interpolation between two colors. t is clamped to [0, 1].
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn lerp(self, other: Self, t: f64) -> Self {
         let t = t.clamp(0.0, 1.0);
         let inv = 1.0 - t;
         Self {
-            r: (self.r as f64 * inv + other.r as f64 * t) as u8,
-            g: (self.g as f64 * inv + other.g as f64 * t) as u8,
-            b: (self.b as f64 * inv + other.b as f64 * t) as u8,
-            a: (self.a as f64 * inv + other.a as f64 * t) as u8,
+            r: (f64::from(self.r) * inv + f64::from(other.r) * t) as u8,
+            g: (f64::from(self.g) * inv + f64::from(other.g) * t) as u8,
+            b: (f64::from(self.b) * inv + f64::from(other.b) * t) as u8,
+            a: (f64::from(self.a) * inv + f64::from(other.a) * t) as u8,
         }
     }
 
     /// Multiplicative blend (0-255 scale).
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
     pub fn multiply(self, other: Self) -> Self {
         Self {
-            r: ((self.r as u16 * other.r as u16) / 255) as u8,
-            g: ((self.g as u16 * other.g as u16) / 255) as u8,
-            b: ((self.b as u16 * other.b as u16) / 255) as u8,
+            r: ((u16::from(self.r) * u16::from(other.r)) / 255) as u8,
+            g: ((u16::from(self.g) * u16::from(other.g)) / 255) as u8,
+            b: ((u16::from(self.b) * u16::from(other.b)) / 255) as u8,
             a: 255,
         }
     }
 
     /// Per-channel maximum.
+    #[must_use]
     pub fn max(self, other: Self) -> Self {
         Self {
             r: self.r.max(other.r),
@@ -85,17 +94,20 @@ impl Color {
     }
 
     /// Scale brightness by a factor (0.0 - 1.0).
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn scale(self, factor: f64) -> Self {
         let f = factor.clamp(0.0, 1.0);
         Self {
-            r: (self.r as f64 * f).round() as u8,
-            g: (self.g as f64 * f).round() as u8,
-            b: (self.b as f64 * f).round() as u8,
+            r: (f64::from(self.r) * f).round() as u8,
+            g: (f64::from(self.g) * f).round() as u8,
+            b: (f64::from(self.b) * f).round() as u8,
             a: self.a,
         }
     }
 
     /// Saturating subtraction per channel.
+    #[must_use]
     pub fn subtract(self, other: Self) -> Self {
         Self {
             r: self.r.saturating_sub(other.r),
@@ -106,6 +118,7 @@ impl Color {
     }
 
     /// Per-channel minimum.
+    #[must_use]
     pub fn min(self, other: Self) -> Self {
         Self {
             r: self.r.min(other.r),
@@ -116,48 +129,55 @@ impl Color {
     }
 
     /// Per-channel average.
+    #[must_use]
     pub fn average(self, other: Self) -> Self {
         Self {
-            r: ((self.r as u16 + other.r as u16) / 2) as u8,
-            g: ((self.g as u16 + other.g as u16) / 2) as u8,
-            b: ((self.b as u16 + other.b as u16) / 2) as u8,
+            r: u8::midpoint(self.r, other.r),
+            g: u8::midpoint(self.g, other.g),
+            b: u8::midpoint(self.b, other.b),
             a: 255,
         }
     }
 
     /// Screen blend: complement of multiply.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
     pub fn screen(self, other: Self) -> Self {
         Self {
-            r: 255 - (((255 - self.r as u16) * (255 - other.r as u16)) / 255) as u8,
-            g: 255 - (((255 - self.g as u16) * (255 - other.g as u16)) / 255) as u8,
-            b: 255 - (((255 - self.b as u16) * (255 - other.b as u16)) / 255) as u8,
+            r: 255 - (((255 - u16::from(self.r)) * (255 - u16::from(other.r))) / 255) as u8,
+            g: 255 - (((255 - u16::from(self.g)) * (255 - u16::from(other.g))) / 255) as u8,
+            b: 255 - (((255 - u16::from(self.b)) * (255 - u16::from(other.b))) / 255) as u8,
             a: 255,
         }
     }
 
     /// Rec. 709 luma (perceived brightness), returns 0.0..1.0.
+    #[must_use]
     pub fn brightness(self) -> f64 {
-        (0.2126 * self.r as f64 + 0.7152 * self.g as f64 + 0.0722 * self.b as f64) / 255.0
+        (0.2126 * f64::from(self.r) + 0.7152 * f64::from(self.g) + 0.0722 * f64::from(self.b)) / 255.0
     }
 
     /// Alpha-composite `self` over `other` (self is foreground).
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn over(self, other: Self) -> Self {
-        let fa = self.a as f64 / 255.0;
-        let ba = other.a as f64 / 255.0;
+        let fa = f64::from(self.a) / 255.0;
+        let ba = f64::from(other.a) / 255.0;
         let out_a = fa + ba * (1.0 - fa);
         if out_a == 0.0 {
             return Self::TRANSPARENT;
         }
         Self {
-            r: ((self.r as f64 * fa + other.r as f64 * ba * (1.0 - fa)) / out_a) as u8,
-            g: ((self.g as f64 * fa + other.g as f64 * ba * (1.0 - fa)) / out_a) as u8,
-            b: ((self.b as f64 * fa + other.b as f64 * ba * (1.0 - fa)) / out_a) as u8,
+            r: ((f64::from(self.r) * fa + f64::from(other.r) * ba * (1.0 - fa)) / out_a) as u8,
+            g: ((f64::from(self.g) * fa + f64::from(other.g) * ba * (1.0 - fa)) / out_a) as u8,
+            b: ((f64::from(self.b) * fa + f64::from(other.b) * ba * (1.0 - fa)) / out_a) as u8,
             a: (out_a * 255.0) as u8,
         }
     }
 
     /// Blend `fg` onto `self` (background) using the given blend mode.
     #[inline]
+    #[must_use]
     pub fn blend(self, fg: Self, mode: BlendMode) -> Self {
         match mode {
             BlendMode::Override => fg,
@@ -202,7 +222,12 @@ impl ops::Add for Color {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::cast_lossless,
+)]
 mod tests {
     use super::*;
 

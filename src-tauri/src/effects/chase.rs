@@ -1,6 +1,9 @@
 use std::sync::LazyLock;
 
-use crate::model::{BlendMode, Color, ColorGradient, ColorMode, Curve, EffectParams, ParamKey, ParamSchema, ParamType, ParamValue};
+use crate::model::{
+    BlendMode, Color, ColorGradient, ColorMode, Curve, EffectParams, ParamKey, ParamSchema,
+    ParamType, ParamValue,
+};
 
 use super::Effect;
 
@@ -9,7 +12,14 @@ static DEFAULT_PULSE: LazyLock<Curve> = LazyLock::new(Curve::triangle);
 static DEFAULT_WHITE_GRADIENT: LazyLock<ColorGradient> =
     LazyLock::new(|| ColorGradient::solid(Color::WHITE));
 
+const DEFAULT_SPEED: f64 = 1.0;
+const DEFAULT_PULSE_WIDTH: f64 = 0.3;
+const DEFAULT_BACKGROUND_LEVEL: f64 = 0.0;
+const DEFAULT_REVERSE: bool = false;
+const DEFAULT_COLOR_MODE: ColorMode = ColorMode::Static;
+
 /// Batch evaluate: extract params once, loop over pixels.
+#[allow(clippy::too_many_arguments, clippy::cast_precision_loss, clippy::similar_names)]
 pub fn evaluate_pixels_batch(
     t: f64,
     dest: &mut [Color],
@@ -22,11 +32,11 @@ pub fn evaluate_pixels_batch(
     let gradient = params.gradient_or(ParamKey::Gradient, &DEFAULT_WHITE_GRADIENT);
     let movement_curve = params.curve_or(ParamKey::MovementCurve, &DEFAULT_MOVEMENT);
     let pulse_curve = params.curve_or(ParamKey::PulseCurve, &DEFAULT_PULSE);
-    let color_mode = params.color_mode_or(ParamKey::ColorMode, ColorMode::Static);
-    let speed = params.float_or(ParamKey::Speed, 1.0);
-    let pulse_width = params.float_or(ParamKey::PulseWidth, 0.3).clamp(0.01, 1.0);
-    let background_level = params.float_or(ParamKey::BackgroundLevel, 0.0).clamp(0.0, 1.0);
-    let reverse = params.bool_or(ParamKey::Reverse, false);
+    let color_mode = params.color_mode_or(ParamKey::ColorMode, DEFAULT_COLOR_MODE);
+    let speed = params.float_or(ParamKey::Speed, DEFAULT_SPEED);
+    let pulse_width = params.float_or(ParamKey::PulseWidth, DEFAULT_PULSE_WIDTH).clamp(0.01, 1.0);
+    let background_level = params.float_or(ParamKey::BackgroundLevel, DEFAULT_BACKGROUND_LEVEL).clamp(0.0, 1.0);
+    let reverse = params.bool_or(ParamKey::Reverse, DEFAULT_REVERSE);
 
     if total_pixels == 0 {
         return;
@@ -60,9 +70,8 @@ pub fn evaluate_pixels_batch(
             }
             ColorMode::GradientThroughEffect => gradient.evaluate(t),
             ColorMode::GradientAcrossItems => gradient.evaluate(pos),
-            ColorMode::Static => gradient.evaluate(0.0),
-            // GradientPerPulse when outside the pulse — fall back to static
-            ColorMode::GradientPerPulse => gradient.evaluate(0.0),
+            // Static, or GradientPerPulse when outside the pulse
+            ColorMode::Static | ColorMode::GradientPerPulse => gradient.evaluate(0.0),
         };
 
         let effect_color = color.scale(intensity * opacity);
@@ -75,6 +84,7 @@ pub fn evaluate_pixels_batch(
 pub struct ChaseEffect;
 
 impl Effect for ChaseEffect {
+    #[allow(clippy::cast_precision_loss)]
     fn evaluate(
         &self,
         t: f64,
@@ -85,11 +95,11 @@ impl Effect for ChaseEffect {
         let gradient = params.gradient_or(ParamKey::Gradient, &DEFAULT_WHITE_GRADIENT);
         let movement_curve = params.curve_or(ParamKey::MovementCurve, &DEFAULT_MOVEMENT);
         let pulse_curve = params.curve_or(ParamKey::PulseCurve, &DEFAULT_PULSE);
-        let color_mode = params.color_mode_or(ParamKey::ColorMode, ColorMode::Static);
-        let speed = params.float_or(ParamKey::Speed, 1.0);
-        let pulse_width = params.float_or(ParamKey::PulseWidth, 0.3).clamp(0.01, 1.0);
-        let background_level = params.float_or(ParamKey::BackgroundLevel, 0.0).clamp(0.0, 1.0);
-        let reverse = params.bool_or(ParamKey::Reverse, false);
+        let color_mode = params.color_mode_or(ParamKey::ColorMode, DEFAULT_COLOR_MODE);
+        let speed = params.float_or(ParamKey::Speed, DEFAULT_SPEED);
+        let pulse_width = params.float_or(ParamKey::PulseWidth, DEFAULT_PULSE_WIDTH).clamp(0.01, 1.0);
+        let background_level = params.float_or(ParamKey::BackgroundLevel, DEFAULT_BACKGROUND_LEVEL).clamp(0.0, 1.0);
+        let reverse = params.bool_or(ParamKey::Reverse, DEFAULT_REVERSE);
 
         if pixel_count == 0 {
             return Color::BLACK;
@@ -117,9 +127,8 @@ impl Effect for ChaseEffect {
             }
             ColorMode::GradientThroughEffect => gradient.evaluate(t),
             ColorMode::GradientAcrossItems => gradient.evaluate(pos),
-            ColorMode::Static => gradient.evaluate(0.0),
-            // GradientPerPulse when outside the pulse — fall back to static
-            ColorMode::GradientPerPulse => gradient.evaluate(0.0),
+            // Static, or GradientPerPulse when outside the pulse
+            ColorMode::Static | ColorMode::GradientPerPulse => gradient.evaluate(0.0),
         };
 
         color.scale(intensity)
@@ -143,8 +152,8 @@ impl Effect for ChaseEffect {
             ParamSchema {
                 key: ParamKey::ColorMode,
                 label: "Color Mode".into(),
-                param_type: ParamType::ColorMode,
-                default: ParamValue::ColorMode(ColorMode::Static),
+                param_type: ParamType::ColorMode { options: crate::util::serde_variant_names(ColorMode::all()) },
+                default: ParamValue::ColorMode(DEFAULT_COLOR_MODE),
             },
             ParamSchema {
                 key: ParamKey::MovementCurve,
@@ -166,7 +175,7 @@ impl Effect for ChaseEffect {
                     max: 20.0,
                     step: 0.1,
                 },
-                default: ParamValue::Float(1.0),
+                default: ParamValue::Float(DEFAULT_SPEED),
             },
             ParamSchema {
                 key: ParamKey::PulseWidth,
@@ -176,7 +185,7 @@ impl Effect for ChaseEffect {
                     max: 1.0,
                     step: 0.01,
                 },
-                default: ParamValue::Float(0.3),
+                default: ParamValue::Float(DEFAULT_PULSE_WIDTH),
             },
             ParamSchema {
                 key: ParamKey::BackgroundLevel,
@@ -186,20 +195,20 @@ impl Effect for ChaseEffect {
                     max: 1.0,
                     step: 0.01,
                 },
-                default: ParamValue::Float(0.0),
+                default: ParamValue::Float(DEFAULT_BACKGROUND_LEVEL),
             },
             ParamSchema {
                 key: ParamKey::Reverse,
                 label: "Reverse".into(),
                 param_type: ParamType::Bool,
-                default: ParamValue::Bool(false),
+                default: ParamValue::Bool(DEFAULT_REVERSE),
             },
         ]
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

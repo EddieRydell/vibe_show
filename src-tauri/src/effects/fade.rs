@@ -8,7 +8,10 @@ static DEFAULT_INTENSITY: LazyLock<Curve> = LazyLock::new(Curve::triangle);
 static DEFAULT_GRADIENT: LazyLock<ColorGradient> =
     LazyLock::new(|| ColorGradient::solid(Color::WHITE));
 
+const DEFAULT_COLOR_MODE: ColorMode = ColorMode::GradientThroughEffect;
+
 /// Batch evaluate: extract params once, loop over pixels.
+#[allow(clippy::too_many_arguments, clippy::cast_precision_loss)]
 pub fn evaluate_pixels_batch(
     t: f64,
     dest: &mut [Color],
@@ -20,7 +23,7 @@ pub fn evaluate_pixels_batch(
 ) {
     let intensity_curve = params.curve_or(ParamKey::IntensityCurve, &DEFAULT_INTENSITY);
     let gradient = params.gradient_or(ParamKey::Gradient, &DEFAULT_GRADIENT);
-    let color_mode = params.color_mode_or(ParamKey::ColorMode, ColorMode::GradientThroughEffect);
+    let color_mode = params.color_mode_or(ParamKey::ColorMode, DEFAULT_COLOR_MODE);
 
     let intensity = intensity_curve.evaluate(t);
     let inv_total = if total_pixels > 0 {
@@ -34,8 +37,10 @@ pub fn evaluate_pixels_batch(
 
         let color = match color_mode {
             ColorMode::GradientAcrossItems => gradient.evaluate(pos),
+            ColorMode::GradientThroughEffect | ColorMode::GradientPerPulse => {
+                gradient.evaluate(t)
+            }
             ColorMode::Static => gradient.evaluate(0.0),
-            _ => gradient.evaluate(t),
         };
 
         let effect_color = color.scale(intensity * opacity);
@@ -48,6 +53,7 @@ pub fn evaluate_pixels_batch(
 pub struct FadeEffect;
 
 impl Effect for FadeEffect {
+    #[allow(clippy::cast_precision_loss)]
     fn evaluate(
         &self,
         t: f64,
@@ -57,7 +63,7 @@ impl Effect for FadeEffect {
     ) -> Color {
         let intensity_curve = params.curve_or(ParamKey::IntensityCurve, &DEFAULT_INTENSITY);
         let gradient = params.gradient_or(ParamKey::Gradient, &DEFAULT_GRADIENT);
-        let color_mode = params.color_mode_or(ParamKey::ColorMode, ColorMode::GradientThroughEffect);
+        let color_mode = params.color_mode_or(ParamKey::ColorMode, DEFAULT_COLOR_MODE);
 
         let intensity = intensity_curve.evaluate(t);
         let pos = if pixel_count > 0 {
@@ -68,8 +74,10 @@ impl Effect for FadeEffect {
 
         let color = match color_mode {
             ColorMode::GradientAcrossItems => gradient.evaluate(pos),
+            ColorMode::GradientThroughEffect | ColorMode::GradientPerPulse => {
+                gradient.evaluate(t)
+            }
             ColorMode::Static => gradient.evaluate(0.0),
-            _ => gradient.evaluate(t),
         };
 
         color.scale(intensity)
@@ -99,15 +107,15 @@ impl Effect for FadeEffect {
             ParamSchema {
                 key: ParamKey::ColorMode,
                 label: "Color Mode".into(),
-                param_type: ParamType::ColorMode,
-                default: ParamValue::ColorMode(ColorMode::GradientThroughEffect),
+                param_type: ParamType::ColorMode { options: crate::util::serde_variant_names(ColorMode::all()) },
+                default: ParamValue::ColorMode(DEFAULT_COLOR_MODE),
             },
         ]
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

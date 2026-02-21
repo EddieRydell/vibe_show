@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { Color, ColorMode, ColorStop, CurvePoint, EffectDetail, ParamSchema, ParamValue } from "../types";
+import { Link } from "lucide-react";
+import type { Color, ColorGradient, ColorMode, ColorStop, Curve, CurvePoint, EffectDetail, ParamSchema, ParamValue } from "../types";
+import { parseEffectKey } from "../utils/effectKey";
+import { formatTimeDuration } from "../utils/formatTime";
 import {
   FloatSlider,
   IntSlider,
@@ -20,17 +23,6 @@ interface PropertyPanelProps {
 
 const PANEL_WIDTH = 260;
 const DEBOUNCE_MS = 50;
-
-function parseEffectKey(key: string): { trackIndex: number; effectIndex: number } | null {
-  // Keys may be "fixtureId:trackIdx-effectIdx" or legacy "trackIdx-effectIdx"
-  const logical = key.includes(":") ? key.split(":")[1] : key;
-  const parts = logical.split("-");
-  if (parts.length !== 2) return null;
-  const trackIndex = parseInt(parts[0], 10);
-  const effectIndex = parseInt(parts[1], 10);
-  if (isNaN(trackIndex) || isNaN(effectIndex)) return null;
-  return { trackIndex, effectIndex };
-}
 
 function getParamFloat(params: Record<string, ParamValue>, key: string, fallback: number): number {
   const v = params[key];
@@ -141,13 +133,6 @@ function getDefaultText(schema: ParamSchema): string {
   return "";
 }
 
-const COLOR_MODE_OPTIONS = [
-  "static",
-  "gradient_per_pulse",
-  "gradient_through_effect",
-  "gradient_across_items",
-];
-
 function getParamColorMode(params: Record<string, ParamValue>, key: string, fallback: string): string {
   const v = params[key];
   if (v && "ColorMode" in v) return v.ColorMode;
@@ -156,13 +141,13 @@ function getParamColorMode(params: Record<string, ParamValue>, key: string, fall
 
 function getDefaultColorMode(schema: ParamSchema): string {
   if ("ColorMode" in schema.default) return schema.default.ColorMode;
-  return "static";
-}
-
-function formatTime(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = (seconds % 60).toFixed(1);
-  return m > 0 ? `${m}:${s.padStart(4, "0")}` : `${s}s`;
+  // Derive from schema options rather than hardcoding a variant name.
+  const pt = schema.param_type;
+  if (typeof pt === "object" && "ColorMode" in pt) {
+    const opts = pt.ColorMode.options;
+    if (opts.length > 0) return opts[0];
+  }
+  return "";
 }
 
 export function PropertyPanel({
@@ -174,6 +159,18 @@ export function PropertyPanel({
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const currentKeyRef = useRef<string | null>(null);
+  const [gradientNames, setGradientNames] = useState<string[]>([]);
+  const [curveNames, setCurveNames] = useState<string[]>([]);
+
+  // Fetch library names for link dropdowns
+  useEffect(() => {
+    invoke<[string, ColorGradient][]>("list_library_gradients")
+      .then((items) => setGradientNames(items.map(([n]) => n)))
+      .catch(() => {});
+    invoke<[string, Curve][]>("list_library_curves")
+      .then((items) => setCurveNames(items.map(([n]) => n)))
+      .catch(() => {});
+  }, [selectedEffect]);
 
   // Load effect detail when selection changes
   useEffect(() => {
@@ -263,8 +260,8 @@ export function PropertyPanel({
       <div className="border-border border-b px-3 py-2">
         <div className="text-text text-xs font-semibold">{detail.kind}</div>
         <div className="text-text-2 mt-0.5 text-[10px]">
-          {detail.track_name} &middot; {formatTime(detail.time_range.start)} -{" "}
-          {formatTime(detail.time_range.end)}
+          {detail.track_name} &middot; {formatTimeDuration(detail.time_range.start)} -{" "}
+          {formatTimeDuration(detail.time_range.end)}
         </div>
         {detail.blend_mode !== "Override" && (
           <div className="text-text-2 mt-0.5 text-[10px]">Blend: {detail.blend_mode}</div>
@@ -283,6 +280,8 @@ export function PropertyPanel({
               schema={schema}
               params={detail.params}
               onChange={(value) => updateParam(schema.key, value)}
+              gradientNames={gradientNames}
+              curveNames={curveNames}
             />
           ))}
         </div>
@@ -291,14 +290,111 @@ export function PropertyPanel({
   );
 }
 
+// ── LinkButton ────────────────────────────────────────────────────
+
+function LinkButton({ items, onLink }: { items: string[]; onLink: (name: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  if (items.length === 0) return null;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        className="text-text-2 hover:text-primary p-0.5"
+        title="Link to library item"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Link size={10} />
+      </button>
+      {open && (
+        <div className="bg-surface border-border absolute right-0 top-full z-20 mt-1 min-w-[120px] rounded border py-0.5 shadow-lg">
+          {items.map((name) => (
+            <button
+              key={name}
+              className="text-text hover:bg-surface-2 block w-full px-3 py-1 text-left text-[11px]"
+              onClick={() => { onLink(name); setOpen(false); }}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface ParamControlProps {
   schema: ParamSchema;
   params: Record<string, ParamValue>;
   onChange: (value: ParamValue) => void;
+  gradientNames: string[];
+  curveNames: string[];
 }
 
-function ParamControl({ schema, params, onChange }: ParamControlProps) {
+function RefBadge({ label, name, onUnlink }: { label: string; name: string; onUnlink: () => void }) {
+  return (
+    <div>
+      <label className="text-text-2 mb-0.5 block text-[10px] font-medium">{label}</label>
+      <div className="bg-surface-2 border-border flex items-center gap-1.5 rounded border px-2 py-1">
+        <span className="bg-primary/15 text-primary rounded px-1 py-0.5 text-[9px] font-semibold">
+          {name}
+        </span>
+        <button
+          className="text-text-2 hover:text-text ml-auto text-[10px]"
+          onClick={onUnlink}
+          title="Unlink from library"
+        >
+          unlink
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ParamControl({ schema, params, onChange, gradientNames, curveNames }: ParamControlProps) {
   const pt = schema.param_type;
+
+  // Check for library references — display name badge instead of inline editor
+  const rawValue = params[schema.key as string];
+  if (rawValue && typeof rawValue === "object") {
+    if ("GradientRef" in rawValue) {
+      return (
+        <RefBadge
+          label={schema.label}
+          name={rawValue.GradientRef}
+          onUnlink={() => {
+            // Unlink: replace ref with a default inline gradient
+            const fallback = getDefaultGradient(schema);
+            onChange({ ColorGradient: { stops: fallback } });
+          }}
+        />
+      );
+    }
+    if ("CurveRef" in rawValue) {
+      return (
+        <RefBadge
+          label={schema.label}
+          name={rawValue.CurveRef}
+          onUnlink={() => {
+            // Unlink: replace ref with a default inline curve
+            const fallback = getDefaultCurve(schema);
+            onChange({ Curve: { points: fallback } });
+          }}
+        />
+      );
+    }
+  }
 
   if (typeof pt === "object" && "Float" in pt) {
     const value = getParamFloat(params, schema.key, getDefaultFloat(schema));
@@ -357,34 +453,46 @@ function ParamControl({ schema, params, onChange }: ParamControlProps) {
   if (pt === "Curve") {
     const value = getParamCurve(params, schema.key, getDefaultCurve(schema));
     return (
-      <CurveEditor
-        label={schema.label}
-        value={value}
-        onChange={(v) => onChange({ Curve: { points: v } })}
-      />
+      <div>
+        <div className="mb-0.5 flex items-center justify-between">
+          <span className="text-text-2 text-[11px]">{schema.label}</span>
+          <LinkButton items={curveNames} onLink={(name) => onChange({ CurveRef: name })} />
+        </div>
+        <CurveEditor
+          label=""
+          value={value}
+          onChange={(v) => onChange({ Curve: { points: v } })}
+        />
+      </div>
     );
   }
 
   if (typeof pt === "object" && "ColorGradient" in pt) {
     const value = getParamGradient(params, schema.key, getDefaultGradient(schema));
     return (
-      <GradientEditor
-        label={schema.label}
-        value={value}
-        minStops={pt.ColorGradient.min_stops}
-        maxStops={pt.ColorGradient.max_stops}
-        onChange={(v) => onChange({ ColorGradient: { stops: v } })}
-      />
+      <div>
+        <div className="mb-0.5 flex items-center justify-between">
+          <span className="text-text-2 text-[11px]">{schema.label}</span>
+          <LinkButton items={gradientNames} onLink={(name) => onChange({ GradientRef: name })} />
+        </div>
+        <GradientEditor
+          label=""
+          value={value}
+          minStops={pt.ColorGradient.min_stops}
+          maxStops={pt.ColorGradient.max_stops}
+          onChange={(v) => onChange({ ColorGradient: { stops: v } })}
+        />
+      </div>
     );
   }
 
-  if (pt === "ColorMode") {
+  if (typeof pt === "object" && "ColorMode" in pt) {
     const value = getParamColorMode(params, schema.key, getDefaultColorMode(schema));
     return (
       <SelectInput
         label={schema.label}
         value={value}
-        options={COLOR_MODE_OPTIONS}
+        options={pt.ColorMode.options}
         onChange={(v) => onChange({ ColorMode: v as ColorMode })}
       />
     );

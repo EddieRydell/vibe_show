@@ -35,6 +35,8 @@ fn main() {
                     current_time: 0.0,
                     sequence_index: 0,
                     last_tick: None,
+                    region: None,
+                    looping: false,
                 }),
                 dispatcher: Mutex::new(CommandDispatcher::new()),
                 chat: Mutex::new(ChatManager::new()),
@@ -43,6 +45,10 @@ fn main() {
                 settings: Mutex::new(loaded_settings),
                 current_profile: Mutex::new(None),
                 current_sequence: Mutex::new(None),
+                script_cache: Mutex::new(std::collections::HashMap::new()),
+                python_sidecar: Mutex::new(None),
+                python_port: AtomicU16::new(0),
+                analysis_cache: Mutex::new(std::collections::HashMap::new()),
             });
 
             app.manage(state.clone());
@@ -110,12 +116,15 @@ fn main() {
             commands::pause,
             commands::seek,
             commands::get_playback,
+            commands::set_region,
+            commands::set_looping,
             commands::tick,
             commands::render_effect_thumbnail,
             commands::get_effect_detail,
             commands::update_effect_param,
             commands::add_effect,
             commands::add_track,
+            commands::delete_track,
             commands::delete_effects,
             commands::update_effect_time_range,
             commands::move_effect_to_track,
@@ -126,7 +135,61 @@ fn main() {
             commands::scan_vixen_directory,
             commands::check_vixen_preview_file,
             commands::execute_vixen_import,
+            // DSL Scripts
+            commands::compile_script,
+            commands::list_scripts,
+            commands::get_script_source,
+            commands::delete_script,
+            // Profile libraries
+            commands::list_profile_gradients,
+            commands::set_profile_gradient,
+            commands::delete_profile_gradient,
+            commands::rename_profile_gradient,
+            commands::list_profile_curves,
+            commands::set_profile_curve,
+            commands::delete_profile_curve,
+            commands::rename_profile_curve,
+            commands::list_profile_scripts,
+            commands::set_profile_script,
+            commands::delete_profile_script,
+            commands::compile_profile_script,
+            // Sequence resource libraries
+            commands::list_library_gradients,
+            commands::set_library_gradient,
+            commands::delete_library_gradient,
+            commands::rename_library_gradient,
+            commands::list_library_curves,
+            commands::set_library_curve,
+            commands::delete_library_curve,
+            commands::rename_library_curve,
+            // Python / Analysis
+            commands::get_python_status,
+            commands::setup_python_env,
+            commands::start_python_sidecar,
+            commands::stop_python_sidecar,
+            commands::get_analysis,
+            commands::analyze_audio,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running VibeLights");
+        .build(tauri::generate_context!())
+        .expect("error while building VibeLights")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Stop Python sidecar on app exit
+                let state = app.state::<Arc<AppState>>();
+                let port = state.python_port.load(Ordering::Relaxed);
+                if port > 0 {
+                    // Best-effort shutdown — send POST and kill
+                    let shutdown_url = format!("http://127.0.0.1:{port}/shutdown");
+                    let _ = reqwest::blocking::Client::new()
+                        .post(shutdown_url)
+                        .timeout(std::time::Duration::from_secs(2))
+                        .send();
+                    let mut child_opt = state.python_sidecar.lock().take();
+                    if let Some(ref mut child) = child_opt {
+                        let _ = child.start_kill();
+                    }
+                    state.python_port.store(0, Ordering::Relaxed);
+                }
+            }
+        });
 }

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { emit } from "@tauri-apps/api/event";
+import { emitTo } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { MessageSquare, Settings, SlidersHorizontal } from "lucide-react";
+import { Layers, MessageSquare, Settings, SlidersHorizontal } from "lucide-react";
 import { Timeline } from "../components/Timeline";
 import { Toolbar } from "../components/Toolbar";
 import { PropertyPanel } from "../components/PropertyPanel";
@@ -10,11 +10,16 @@ import { EffectPicker } from "../components/EffectPicker";
 import { SequenceSettingsDialog } from "../components/SequenceSettingsDialog";
 import { ChatPanel } from "../components/ChatPanel";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { LibraryPanel } from "../components/LibraryPanel";
+import { PythonSetupWizard } from "../components/PythonSetupWizard";
+import { AnalysisWizard } from "../components/AnalysisWizard";
 import { AppBar } from "../components/AppBar";
 import { useEngine } from "../hooks/useEngine";
 import { useAudio } from "../hooks/useAudio";
+import { useAnalysis } from "../hooks/useAnalysis";
 import { useKeyboard } from "../hooks/useKeyboard";
 import { useProgress } from "../hooks/useProgress";
+import { deduplicateEffectKeys } from "../utils/effectKey";
 import type { EffectKind, InteractionMode } from "../types";
 
 interface Props {
@@ -27,12 +32,25 @@ interface Props {
 export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
   const progressOps = useProgress();
   const audio = useAudio();
+  const {
+    analysis,
+    pythonStatus,
+    checkPython,
+    setupPython,
+    runAnalysis,
+    refreshAnalysis,
+  } = useAnalysis();
+  const [showPythonSetup, setShowPythonSetup] = useState(false);
+  const [showAnalysisWizard, setShowAnalysisWizard] = useState(false);
 
   // Audio-master clock: returns audio time when audio is actively playing, null otherwise.
   // When null, useEngine falls back to its tick(dt) mode.
   const audioGetCurrentTime = useCallback((): number | null => {
     return audio.getCurrentTime();
   }, [audio]);
+
+  const audioSeekCb = useCallback((t: number) => { if (audio.ready) audio.seek(t); }, [audio]);
+  const audioPauseCb = useCallback(() => { if (audio.ready) audio.pause(); }, [audio]);
 
   const {
     show,
@@ -42,13 +60,16 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
     play: enginePlay,
     pause: enginePause,
     seek: engineSeek,
+    setRegion: engineSetRegion,
+    setLooping: engineSetLooping,
     undo: engineUndo,
     redo: engineRedo,
     refreshAll,
-  } = useEngine(audioGetCurrentTime);
+  } = useEngine(audioGetCurrentTime, audioSeekCb, audioPauseCb);
   const [previewOpen, setPreviewOpen] = useState(false);
   const previewWindowRef = useRef<WebviewWindow | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [selectedEffects, setSelectedEffects] = useState<Set<string>>(new Set());
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -63,6 +84,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [interactionMode, setInteractionMode] = useState<InteractionMode>("select");
   const savedTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const playFromMarkRef = useRef<number | null>(null);
 
   // Load the sequence into the engine on mount
   useEffect(() => {
@@ -95,18 +117,8 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
 
   useEffect(() => {
     if (!previewOpen) return;
-    // Deduplicate: multiple visual keys (fixture-specific) may map to the same logical effect
-    const seen = new Set<string>();
-    const effects: [number, number][] = [];
-    for (const key of selectedEffects) {
-      const logical = key.includes(":") ? key.split(":")[1] : key;
-      if (!seen.has(logical)) {
-        seen.add(logical);
-        const [t, e] = logical.split("-").map(Number);
-        effects.push([t, e]);
-      }
-    }
-    emit("selection-changed", { effects });
+    const effects = deduplicateEffectKeys(selectedEffects);
+    emitTo("preview", "selection-changed", { effects }).catch(() => {});
   }, [selectedEffects, previewOpen]);
 
   // ── Composed transport controls ────────────────────────────────────
@@ -123,6 +135,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
 
   const seek = useCallback(
     (time: number) => {
+      playFromMarkRef.current = null;
       engineSeek(time);
       if (audio.ready) audio.seek(time);
     },
@@ -135,8 +148,40 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
   }, [pause, seek]);
 
   const handlePlayPause = useCallback(() => {
-    if (playback?.playing) pause();
-    else play();
+    if (playback?.playing) {
+      // Pause and return to the play-from mark
+      pause();
+      if (playFromMarkRef.current != null) {
+        engineSeek(playFromMarkRef.current);
+        if (audio.ready) audio.seek(playFromMarkRef.current);
+      }
+    } else {
+      // Remember current position as the mark, then play
+      playFromMarkRef.current = playback?.current_time ?? 0;
+      // If region is set and current time is outside, seek to region start
+      if (playback?.region) {
+        const [regionStart, regionEnd] = playback.region;
+        const ct = playback.current_time ?? 0;
+        if (ct < regionStart || ct >= regionEnd) {
+          engineSeek(regionStart);
+          if (audio.ready) audio.seek(regionStart);
+          playFromMarkRef.current = regionStart;
+        }
+      }
+      play();
+    }
+  }, [playback?.playing, playback?.current_time, playback?.region, play, pause, engineSeek, audio]);
+
+  const handlePauseInPlace = useCallback(() => {
+    if (playback?.playing) {
+      // Pause where you are — don't return to mark
+      pause();
+      playFromMarkRef.current = null;
+    } else {
+      // Resume from current position — clear mark so next Space starts fresh
+      playFromMarkRef.current = null;
+      play();
+    }
   }, [playback?.playing, play, pause]);
 
   const handleSelectAll = useCallback(() => {
@@ -166,39 +211,35 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
     setSelectedEffects(allKeys);
   }, [show, playback]);
 
+  /** Mark the show dirty, refresh state from backend, bump thumbnail keys, and notify preview. */
+  const commitChange = useCallback(
+    (opts?: { skipRefreshAll?: boolean; skipDirty?: boolean }) => {
+      if (!opts?.skipDirty) setDirty(true);
+      if (!opts?.skipRefreshAll) refreshAll();
+      setRefreshKey((k) => k + 1);
+      if (previewOpen) emitTo("preview", "show-refreshed");
+    },
+    [refreshAll, previewOpen],
+  );
+
   const handleDeleteSelected = useCallback(async () => {
     if (selectedEffects.size === 0 || !playback) return;
-    // Deduplicate: multiple visual keys may map to the same logical effect
-    const seen = new Set<string>();
-    const targets: [number, number][] = [];
-    for (const key of selectedEffects) {
-      const logical = key.includes(":") ? key.split(":")[1] : key;
-      if (!seen.has(logical)) {
-        seen.add(logical);
-        const [trackIndex, effectIndex] = logical.split("-").map(Number);
-        targets.push([trackIndex, effectIndex]);
-      }
-    }
+    const targets = deduplicateEffectKeys(selectedEffects);
     try {
       await invoke("delete_effects", {
         sequenceIndex: playback.sequence_index,
         targets,
       });
       setSelectedEffects(new Set());
-      setDirty(true);
-      refreshAll();
-      setRefreshKey((k) => k + 1);
-      if (previewOpen) emit("show-refreshed");
+      commitChange();
     } catch (e) {
       console.error("[VibeLights] Delete failed:", e);
     }
-  }, [selectedEffects, playback, refreshAll, previewOpen]);
+  }, [selectedEffects, playback, commitChange]);
 
   const handleParamChange = useCallback(() => {
-    setDirty(true);
-    setRefreshKey((k) => k + 1);
-    if (previewOpen) emit("show-refreshed");
-  }, [previewOpen]);
+    commitChange({ skipRefreshAll: true });
+  }, [commitChange]);
 
   const handleSave = useCallback(async () => {
     if (saveState === "saving") return;
@@ -269,18 +310,13 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
   }, [dirty, onBack]);
 
   const handleRefresh = useCallback(() => {
-    refreshAll();
-    setRefreshKey((k) => k + 1);
-    if (previewOpen) emit("show-refreshed");
-  }, [refreshAll, previewOpen]);
+    commitChange({ skipDirty: true });
+  }, [commitChange]);
 
   const handleSequenceSettingsSaved = useCallback(() => {
     setShowSequenceSettings(false);
-    setDirty(true);
-    refreshAll();
-    setRefreshKey((k) => k + 1);
-    if (previewOpen) emit("show-refreshed");
-  }, [refreshAll, previewOpen]);
+    commitChange();
+  }, [commitChange]);
 
   // ── Add effect flow ──────────────────────────────────────────────
 
@@ -333,16 +369,13 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
           end,
         });
 
-        setDirty(true);
-        refreshAll();
-        setRefreshKey((k) => k + 1);
+        commitChange();
         setSelectedEffects(new Set([`${trackIndex}-${effectIndex}`]));
-        if (previewOpen) emit("show-refreshed");
       } catch (e) {
         console.error("[VibeLights] Add effect failed:", e);
       }
     },
-    [addEffectState, show, playback, refreshAll, previewOpen],
+    [addEffectState, show, playback, commitChange],
   );
 
   // ── Move effect flow ─────────────────────────────────────────────
@@ -380,10 +413,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
           start: newStart,
           end: newEnd,
         });
-        setDirty(true);
-        refreshAll();
-        setRefreshKey((k) => k + 1);
-        if (previewOpen) emit("show-refreshed");
+        commitChange();
       } else {
         // Moving to a different fixture: find or create target track
         let toTrackIndex = sequence.tracks.findIndex((t) => {
@@ -421,33 +451,76 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
           end: newEnd,
         });
 
-        setDirty(true);
-        refreshAll();
-        setRefreshKey((k) => k + 1);
+        commitChange();
         setSelectedEffects(new Set([`${toTrackIndex}-${newEffectIndex}`]));
-        if (previewOpen) emit("show-refreshed");
       }
     },
-    [show, playback, refreshAll, previewOpen],
+    [show, playback, commitChange],
   );
 
   const handleUndo = useCallback(async () => {
     await engineUndo();
-    setDirty(true);
-    setRefreshKey((k) => k + 1);
-    if (previewOpen) emit("show-refreshed");
-  }, [engineUndo, previewOpen]);
+    commitChange({ skipRefreshAll: true });
+  }, [engineUndo, commitChange]);
 
   const handleRedo = useCallback(async () => {
     await engineRedo();
-    setDirty(true);
-    setRefreshKey((k) => k + 1);
-    if (previewOpen) emit("show-refreshed");
-  }, [engineRedo, previewOpen]);
+    commitChange({ skipRefreshAll: true });
+  }, [engineRedo, commitChange]);
+
+  const handleResizeEffect = useCallback(
+    async (trackIndex: number, effectIndex: number, newStart: number, newEnd: number) => {
+      if (!playback) return;
+      await invoke("update_effect_time_range", {
+        sequenceIndex: playback.sequence_index,
+        trackIndex,
+        effectIndex,
+        start: newStart,
+        end: newEnd,
+      });
+      commitChange();
+    },
+    [playback, commitChange],
+  );
+
+  const handleRegionChange = useCallback(
+    (region: [number, number] | null) => {
+      engineSetRegion(region);
+    },
+    [engineSetRegion],
+  );
+
+  const handleToggleLoop = useCallback(() => {
+    engineSetLooping(!(playback?.looping ?? false));
+  }, [engineSetLooping, playback?.looping]);
+
+  const handleAnalyze = useCallback(async () => {
+    // Check if Python is ready; if not, show setup wizard
+    const status = await checkPython();
+    if (!status.deps_installed) {
+      setShowPythonSetup(true);
+      return;
+    }
+    // If analysis already exists, show it; otherwise open analysis wizard
+    if (analysis) {
+      // Could toggle overlays here; for now, re-open wizard
+      setShowAnalysisWizard(true);
+    } else {
+      setShowAnalysisWizard(true);
+    }
+  }, [checkPython, analysis]);
+
+  // Load cached analysis when sequence is opened
+  useEffect(() => {
+    if (!loading && currentSequence?.audio_file) {
+      refreshAnalysis();
+    }
+  }, [loading, currentSequence?.audio_file, refreshAnalysis]);
 
   const keyboardActions = useMemo(
     () => ({
       onPlayPause: handlePlayPause,
+      onPauseInPlace: handlePauseInPlace,
       onStop: handleStop,
       onSeekStart: () => seek(0),
       onSeekEnd: () => seek(playback?.duration ?? 0),
@@ -456,6 +529,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
       onZoomFit: () => {},
       onSelectAll: handleSelectAll,
       onDeleteSelected: handleDeleteSelected,
+      onToggleLoop: handleToggleLoop,
       onSave: handleSave,
       onUndo: handleUndo,
       onRedo: handleRedo,
@@ -463,7 +537,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
       onSetModeEdit: () => setInteractionMode("edit"),
       onSetModeSwipe: () => setInteractionMode("swipe"),
     }),
-    [handlePlayPause, handleStop, seek, playback?.duration, handleSelectAll, handleDeleteSelected, handleSave, handleUndo, handleRedo],
+    [handlePlayPause, handlePauseInPlace, handleStop, seek, playback?.duration, handleSelectAll, handleDeleteSelected, handleToggleLoop, handleSave, handleUndo, handleRedo],
   );
 
   useKeyboard(keyboardActions);
@@ -508,6 +582,17 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
         <span className="text-text-2 text-xs">{show?.name ?? "Untitled"}</span>
         <div className="flex-1" />
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setLibraryOpen((o) => !o)}
+            className={`flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors ${
+              libraryOpen
+                ? "border-primary/30 bg-primary/10 text-primary"
+                : "border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text"
+            }`}
+          >
+            <Layers size={12} />
+            Library
+          </button>
           <button
             onClick={() => setChatOpen((o) => !o)}
             className={`flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors ${
@@ -558,6 +643,8 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
         playback={playback}
         undoState={undoState}
         previewOpen={previewOpen}
+        looping={playback?.looping ?? false}
+        hasAnalysis={analysis != null}
         onPlay={play}
         onPause={pause}
         onStop={handleStop}
@@ -566,6 +653,8 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
         onUndo={handleUndo}
         onRedo={handleRedo}
         onTogglePreview={handleTogglePreview}
+        onToggleLoop={handleToggleLoop}
+        onAnalyze={handleAnalyze}
       />
 
       {/* Error banner */}
@@ -587,10 +676,20 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
           onAddEffect={handleAddEffect}
           onRefresh={handleRefresh}
           onMoveEffect={handleMoveEffect}
+          onResizeEffect={handleResizeEffect}
           waveform={audio.waveform}
           mode={interactionMode}
           onModeChange={setInteractionMode}
+          region={playback?.region ?? null}
+          onRegionChange={handleRegionChange}
+          analysis={analysis}
         />
+        {libraryOpen && (
+          <LibraryPanel
+            onClose={() => setLibraryOpen(false)}
+            onLibraryChange={() => commitChange()}
+          />
+        )}
         <PropertyPanel
           selectedEffect={singleSelected}
           sequenceIndex={playback?.sequence_index ?? 0}
@@ -632,6 +731,24 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
           destructive
           onConfirm={() => { setShowLeaveConfirm(false); onBack(); }}
           onCancel={() => setShowLeaveConfirm(false)}
+        />
+      )}
+
+      {/* Python Setup Wizard */}
+      {showPythonSetup && (
+        <PythonSetupWizard
+          pythonStatus={pythonStatus}
+          onSetup={setupPython}
+          onCheckStatus={checkPython}
+          onClose={() => setShowPythonSetup(false)}
+        />
+      )}
+
+      {/* Analysis Wizard */}
+      {showAnalysisWizard && (
+        <AnalysisWizard
+          onAnalyze={runAnalysis}
+          onClose={() => setShowAnalysisWizard(false)}
         />
       )}
     </div>

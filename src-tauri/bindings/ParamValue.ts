@@ -3,8 +3,9 @@ import type { Color } from "./Color";
 import type { ColorGradient } from "./ColorGradient";
 import type { ColorMode } from "./ColorMode";
 import type { Curve } from "./Curve";
+import type { WipeDirection } from "./WipeDirection";
 
 /**
  * Type-safe parameter values for effects.
  */
-export type ParamValue = { "Float": number } | { "Int": number } | { "Bool": boolean } | { "Color": Color } | { "ColorList": Array<Color> } | { "Text": string } | { "Curve": Curve } | { "ColorGradient": ColorGradient } | { "ColorMode": ColorMode };
+export type ParamValue = { "Float": number } | { "Int": number } | { "Bool": boolean } | { "Color": Color } | { "ColorList": Array<Color> } | { "Text": string } | { "Curve": Curve } | { "ColorGradient": ColorGradient } | { "ColorMode": ColorMode } | { "WipeDirection": WipeDirection } | { "EnumVariant": string } | { "FlagSet": Array<string> } | { "GradientRef": string } | { "CurveRef": string };

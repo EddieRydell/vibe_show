@@ -2,7 +2,10 @@ use crate::model::{BlendMode, Color, EffectParams, ParamKey, ParamSchema, ParamT
 
 use super::Effect;
 
+const DEFAULT_OFFSET: f64 = 0.0;
+
 /// Batch evaluate: extract params once, loop over pixels.
+#[allow(clippy::too_many_arguments, clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn evaluate_pixels_batch(
     t: f64,
     dest: &mut [Color],
@@ -13,7 +16,7 @@ pub fn evaluate_pixels_batch(
     opacity: f64,
 ) {
     let colors = params.color_list_or(ParamKey::Colors, &DEFAULT_COLORS);
-    let offset = params.float_or(ParamKey::Offset, 0.0);
+    let offset = params.float_or(ParamKey::Offset, DEFAULT_OFFSET);
 
     if colors.is_empty() {
         let c = Color::BLACK;
@@ -23,7 +26,7 @@ pub fn evaluate_pixels_batch(
         return;
     }
     if colors.len() == 1 {
-        let c = colors[0];
+        let c = colors.first().copied().unwrap_or(Color::BLACK);
         for pixel in dest.iter_mut() {
             *pixel = pixel.blend(c, blend_mode);
         }
@@ -48,7 +51,11 @@ pub fn evaluate_pixels_batch(
         let scaled = pos * segment_count as f64;
         let segment = (scaled as usize).min(segment_count - 1);
         let frac = scaled - segment as f64;
-        let effect_color = colors[segment].lerp(colors[segment + 1], frac);
+        // segment is clamped to segment_count-1, and segment+1 <= segment_count == colors.len()-1
+        let (Some(&c_a), Some(&c_b)) = (colors.get(segment), colors.get(segment + 1)) else {
+            continue;
+        };
+        let effect_color = c_a.lerp(c_b, frac);
         let effect_color = if opacity < 1.0 { effect_color.scale(opacity) } else { effect_color };
         *pixel = pixel.blend(effect_color, blend_mode);
     }
@@ -60,6 +67,7 @@ pub struct GradientEffect;
 static DEFAULT_COLORS: [Color; 2] = [Color::rgb(255, 0, 0), Color::rgb(0, 0, 255)];
 
 impl Effect for GradientEffect {
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn evaluate(
         &self,
         t: f64,
@@ -68,13 +76,13 @@ impl Effect for GradientEffect {
         params: &EffectParams,
     ) -> Color {
         let colors = params.color_list_or(ParamKey::Colors, &DEFAULT_COLORS);
-        let offset = params.float_or(ParamKey::Offset, 0.0);
+        let offset = params.float_or(ParamKey::Offset, DEFAULT_OFFSET);
 
         if colors.is_empty() {
             return Color::BLACK;
         }
         if colors.len() == 1 {
-            return colors[0];
+            return colors.first().copied().unwrap_or(Color::BLACK);
         }
 
         let pos = if pixel_count > 1 {
@@ -92,7 +100,11 @@ impl Effect for GradientEffect {
         let segment = (scaled as usize).min(segment_count - 1);
         let frac = scaled - segment as f64;
 
-        colors[segment].lerp(colors[segment + 1], frac)
+        // segment is clamped to segment_count-1, and segment+1 <= colors.len()-1
+        match (colors.get(segment), colors.get(segment + 1)) {
+            (Some(&a), Some(&b)) => a.lerp(b, frac),
+            _ => Color::BLACK,
+        }
     }
 
     fn name(&self) -> &'static str {
@@ -111,14 +123,20 @@ impl Effect for GradientEffect {
                 key: ParamKey::Offset,
                 label: "Offset".into(),
                 param_type: ParamType::Float { min: -5.0, max: 5.0, step: 0.1 },
-                default: ParamValue::Float(0.0),
+                default: ParamValue::Float(DEFAULT_OFFSET),
             },
         ]
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::match_same_arms,
+    clippy::cast_lossless,
+)]
 mod tests {
     use super::*;
 

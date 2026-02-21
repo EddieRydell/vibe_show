@@ -202,10 +202,10 @@ pub fn load_project(dir: &Path) -> Result<Show, ProjectError> {
     let mut sequences: Vec<Sequence> = Vec::new();
     if seq_dir.exists() {
         let mut entries: Vec<_> = fs::read_dir(&seq_dir)?
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
             .collect();
-        entries.sort_by_key(|e| e.file_name());
+        entries.sort_by_key(std::fs::DirEntry::file_name);
 
         for entry in entries {
             let seq: Sequence = read_json(&entry.path())?;
@@ -225,7 +225,7 @@ pub fn load_project(dir: &Path) -> Result<Show, ProjectError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use crate::model::fixture::{
@@ -289,10 +289,13 @@ mod tests {
                         opacity: 1.0,
                     }],
                 }],
+                scripts: std::collections::HashMap::new(),
+                gradient_library: std::collections::HashMap::new(),
+                curve_library: std::collections::HashMap::new(),
             }],
             patches: vec![],
             controllers: vec![],
-        }
+            }
     }
 
     #[test]
@@ -333,6 +336,9 @@ mod tests {
                 frame_rate: 30.0,
                 audio_file: None,
                 tracks: vec![],
+                scripts: std::collections::HashMap::new(),
+                gradient_library: std::collections::HashMap::new(),
+                curve_library: std::collections::HashMap::new(),
             },
             Sequence {
                 name: "Alpha".into(),
@@ -340,6 +346,9 @@ mod tests {
                 frame_rate: 30.0,
                 audio_file: None,
                 tracks: vec![],
+                scripts: std::collections::HashMap::new(),
+                gradient_library: std::collections::HashMap::new(),
+                curve_library: std::collections::HashMap::new(),
             },
         ];
 

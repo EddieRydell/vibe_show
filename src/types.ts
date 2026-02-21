@@ -49,6 +49,8 @@ export type { ProgressEvent } from "../src-tauri/bindings/ProgressEvent";
 export type { Position2D } from "../src-tauri/bindings/Position2D";
 export type { Profile } from "../src-tauri/bindings/Profile";
 export type { ProfileSummary } from "../src-tauri/bindings/ProfileSummary";
+export type { ScriptCompileResult } from "../src-tauri/bindings/ScriptCompileResult";
+export type { ScriptError } from "../src-tauri/bindings/ScriptError";
 export type { Sequence } from "../src-tauri/bindings/Sequence";
 export type { SequenceSummary } from "../src-tauri/bindings/SequenceSummary";
 export type { Show } from "../src-tauri/bindings/Show";
@@ -62,6 +64,28 @@ export type { VixenImportConfig } from "../src-tauri/bindings/VixenImportConfig"
 export type { VixenImportResult } from "../src-tauri/bindings/VixenImportResult";
 export type { VixenMediaInfo } from "../src-tauri/bindings/VixenMediaInfo";
 export type { VixenSequenceInfo } from "../src-tauri/bindings/VixenSequenceInfo";
+export type { WipeDirection } from "../src-tauri/bindings/WipeDirection";
+
+// ── Audio analysis types ────────────────────────────────────────────
+
+export type { AnalysisFeatures } from "../src-tauri/bindings/AnalysisFeatures";
+export type { AudioAnalysis } from "../src-tauri/bindings/AudioAnalysis";
+export type { BeatAnalysis } from "../src-tauri/bindings/BeatAnalysis";
+export type { ChordEvent } from "../src-tauri/bindings/ChordEvent";
+export type { DrumAnalysis } from "../src-tauri/bindings/DrumAnalysis";
+export type { HarmonyAnalysis } from "../src-tauri/bindings/HarmonyAnalysis";
+export type { LowLevelFeatures } from "../src-tauri/bindings/LowLevelFeatures";
+export type { LyricWord } from "../src-tauri/bindings/LyricWord";
+export type { LyricsAnalysis } from "../src-tauri/bindings/LyricsAnalysis";
+export type { MoodAnalysis } from "../src-tauri/bindings/MoodAnalysis";
+export type { NoteEvent } from "../src-tauri/bindings/NoteEvent";
+export type { PitchAnalysis } from "../src-tauri/bindings/PitchAnalysis";
+export type { PythonEnvStatus } from "../src-tauri/bindings/PythonEnvStatus";
+export type { SongSection } from "../src-tauri/bindings/SongSection";
+export type { StemAnalysis } from "../src-tauri/bindings/StemAnalysis";
+export type { StructureAnalysis } from "../src-tauri/bindings/StructureAnalysis";
+export type { VocalPresence } from "../src-tauri/bindings/VocalPresence";
+export type { VocalSegment } from "../src-tauri/bindings/VocalSegment";
 
 // ── Frontend-only types ─────────────────────────────────────────────
 

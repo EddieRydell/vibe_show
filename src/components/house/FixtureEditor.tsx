@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { FixtureDef, BulbShape, PixelType, ChannelOrder } from "../../types";
+import type { FixtureDef, BulbShape, PixelType, ChannelOrder, ColorModel } from "../../types";
 
 interface Props {
   fixture: FixtureDef | null; // null = create mode
@@ -8,9 +8,10 @@ interface Props {
   nextId: number;
 }
 
-const BULB_SHAPES: BulbShape[] = ["LED", "C9", "C7", "Mini", "Flood", "Icicle", "Globe", "Snowflake"];
-const COLOR_MODELS: FixtureDef["color_model"][] = ["Rgb", "Rgbw", "Single"];
-const CHANNEL_ORDERS: ChannelOrder[] = ["Rgb", "Grb", "Brg", "Rbg", "Gbr", "Bgr"];
+// Using `satisfies Record<T, true>` ensures a compile error if a new variant is added to the generated type
+const BULB_SHAPES = Object.keys({ LED: true, C9: true, C7: true, Mini: true, Flood: true, Icicle: true, Globe: true, Snowflake: true } satisfies Record<BulbShape, true>) as BulbShape[];
+const COLOR_MODELS = Object.keys({ Rgb: true, Rgbw: true, Single: true } satisfies Record<ColorModel, true>) as ColorModel[];
+const CHANNEL_ORDERS = Object.keys({ Rgb: true, Grb: true, Brg: true, Rbg: true, Gbr: true, Bgr: true } satisfies Record<ChannelOrder, true>) as ChannelOrder[];
 
 export function FixtureEditor({ fixture, onSave, onCancel, nextId }: Props) {
   const [name, setName] = useState(fixture?.name ?? "");

@@ -16,7 +16,7 @@ pub fn emit_progress(app: &AppHandle, op: &str, phase: &str, progress: f64, deta
         operation: op.to_string(),
         phase: phase.to_string(),
         progress,
-        detail: detail.map(|s| s.to_string()),
+        detail: detail.map(ToString::to_string),
     };
     let _ = app.emit("progress", &event);
 }

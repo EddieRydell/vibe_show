@@ -83,8 +83,7 @@ impl<'de> Deserialize<'de> for DmxAddress {
         let addr = u16::deserialize(deserializer)?;
         DmxAddress::new(addr).ok_or_else(|| {
             serde::de::Error::custom(format!(
-                "DMX address {} out of valid range 1..=512",
-                addr
+                "DMX address {addr} out of valid range 1..=512"
             ))
         })
     }
@@ -229,7 +228,7 @@ pub struct FixtureDef {
 impl FixtureDef {
     /// Total DMX channels this fixture consumes.
     pub fn total_channels(&self) -> u32 {
-        self.pixel_count * self.color_model.channels_per_pixel() as u32
+        self.pixel_count * u32::from(self.color_model.channels_per_pixel())
     }
 
     /// Effective display radius multiplier (override or bulb shape default).
@@ -304,7 +303,7 @@ pub enum EffectTarget {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

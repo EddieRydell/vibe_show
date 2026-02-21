@@ -11,27 +11,46 @@ export interface EngineState {
   play: () => void;
   pause: () => void;
   seek: (time: number) => void;
+  setRegion: (region: [number, number] | null) => void;
+  setLooping: (looping: boolean) => void;
   undo: () => Promise<void>;
   redo: () => Promise<void>;
   refreshAll: () => void;
 }
 
-export function useEngine(audioGetCurrentTime?: () => number | null): EngineState {
+export function useEngine(
+  audioGetCurrentTime?: () => number | null,
+  audioSeek?: (time: number) => void,
+  audioPause?: () => void,
+): EngineState {
   const [show, setShow] = useState<Show | null>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
   const [playback, setPlayback] = useState<PlaybackInfo | null>(null);
   const [undoState, setUndoState] = useState<UndoState | null>(null);
-  const [error] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const animFrameRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
+  const playbackRef = useRef<PlaybackInfo | null>(null);
+  const playingRef = useRef(false);
   const audioGetCurrentTimeRef = useRef(audioGetCurrentTime);
   audioGetCurrentTimeRef.current = audioGetCurrentTime;
+  const audioSeekRef = useRef(audioSeek);
+  audioSeekRef.current = audioSeek;
+  const audioPauseRef = useRef(audioPause);
+  audioPauseRef.current = audioPause;
 
   /** Refresh show + playback + frame + undo state from backend after a state change. */
   const refreshAll = useCallback(() => {
     invoke<Show>("get_show").then(setShow).catch(console.error);
-    invoke<PlaybackInfo>("get_playback").then(setPlayback).catch(console.error);
-    invoke<Frame>("get_frame", { time: 0.0 }).then(setFrame).catch(console.error);
+    invoke<PlaybackInfo>("get_playback")
+      .then((pb) => {
+        setPlayback(pb);
+        playbackRef.current = pb;
+        playingRef.current = pb.playing;
+      })
+      .catch(console.error);
+    const time = playbackRef.current?.current_time ?? 0.0;
+    invoke<Frame>("get_frame", { time }).then(setFrame).catch(console.error);
     invoke<UndoState>("get_undo_state").then(setUndoState).catch(console.error);
   }, []);
 
@@ -53,15 +72,47 @@ export function useEngine(audioGetCurrentTime?: () => number | null): EngineStat
 
       if (audioTime != null) {
         // Audio-master mode: read time from audio element, get frame directly
+        // Enforce region boundaries on audio playback
+        const region = playbackRef.current?.region ?? null;
+        if (region) {
+          const [, regionEnd] = region;
+          if (audioTime >= regionEnd) {
+            const looping = playbackRef.current?.looping ?? false;
+            if (looping) {
+              audioSeekRef.current?.(region[0]);
+              scheduleNext();
+              return;
+            } else {
+              audioPauseRef.current?.();
+              audioSeekRef.current?.(regionEnd);
+              invoke("pause").catch(() => {});
+              setPlayback((prev) => {
+                const updated = prev ? { ...prev, current_time: regionEnd, playing: false } : prev;
+                playbackRef.current = updated;
+                playingRef.current = false;
+                return updated;
+              });
+              scheduleNext();
+              return;
+            }
+          }
+        }
         invoke<Frame>("get_frame", { time: audioTime })
           .then((f) => {
             setFrame(f);
-            setPlayback((prev) =>
-              prev ? { ...prev, current_time: audioTime, playing: true } : prev,
-            );
+            setPlayback((prev) => {
+              const updated = prev ? { ...prev, current_time: audioTime, playing: true } : prev;
+              playbackRef.current = updated;
+              playingRef.current = true;
+              return updated;
+            });
           })
           .catch(() => {})
           .finally(scheduleNext);
+      } else if (!playingRef.current) {
+        // Not playing and no audio — skip tick, just schedule next
+        lastTimeRef.current = timestamp;
+        scheduleNext();
       } else {
         // Existing tick mode
         const dt = lastTimeRef.current ? (timestamp - lastTimeRef.current) / 1000.0 : 0;
@@ -71,11 +122,14 @@ export function useEngine(audioGetCurrentTime?: () => number | null): EngineStat
           .then((result) => {
             if (result) {
               setFrame(result.frame);
-              setPlayback((prev) =>
-                prev
+              setPlayback((prev) => {
+                const updated = prev
                   ? { ...prev, current_time: result.current_time, playing: result.playing }
-                  : prev,
-              );
+                  : prev;
+                playbackRef.current = updated;
+                playingRef.current = result.playing;
+                return updated;
+              });
             }
           })
           .catch(() => {})
@@ -91,40 +145,87 @@ export function useEngine(audioGetCurrentTime?: () => number | null): EngineStat
   }, []);
 
   const play = useCallback(() => {
+    setError(null);
     invoke("play")
-      .then(() => invoke<PlaybackInfo>("get_playback").then(setPlayback))
-      .catch((e) => console.error("[VibeLights] Play failed:", e));
+      .then(() =>
+        invoke<PlaybackInfo>("get_playback").then((pb) => {
+          setPlayback(pb);
+          playbackRef.current = pb;
+          playingRef.current = pb.playing;
+        }),
+      )
+      .catch((e) => {
+        const msg = String(e);
+        setError(msg);
+        console.error("[VibeLights] Play failed:", e);
+      });
   }, []);
 
   const pause = useCallback(() => {
+    setError(null);
     invoke("pause")
-      .then(() => invoke<PlaybackInfo>("get_playback").then(setPlayback))
-      .catch((e) => console.error("[VibeLights] Pause failed:", e));
+      .then(() =>
+        invoke<PlaybackInfo>("get_playback").then((pb) => {
+          setPlayback(pb);
+          playbackRef.current = pb;
+          playingRef.current = pb.playing;
+        }),
+      )
+      .catch((e) => {
+        const msg = String(e);
+        setError(msg);
+        console.error("[VibeLights] Pause failed:", e);
+      });
   }, []);
 
   const seek = useCallback((time: number) => {
+    setError(null);
     invoke("seek", { time })
       .then(() => {
         invoke<Frame>("get_frame", { time }).then(setFrame);
-        invoke<PlaybackInfo>("get_playback").then(setPlayback);
+        invoke<PlaybackInfo>("get_playback").then((pb) => {
+          setPlayback(pb);
+          playbackRef.current = pb;
+          playingRef.current = pb.playing;
+        });
       })
-      .catch((e) => console.error("[VibeLights] Seek failed:", e));
+      .catch((e) => {
+        const msg = String(e);
+        setError(msg);
+        console.error("[VibeLights] Seek failed:", e);
+      });
+  }, []);
+
+  const setRegion = useCallback((region: [number, number] | null) => {
+    invoke("set_region", { region }).catch(console.error);
+    setPlayback((prev) => (prev ? { ...prev, region } : prev));
+  }, []);
+
+  const setLooping = useCallback((looping: boolean) => {
+    invoke("set_looping", { looping }).catch(console.error);
+    setPlayback((prev) => (prev ? { ...prev, looping } : prev));
   }, []);
 
   const undo = useCallback(async () => {
+    setError(null);
     try {
       await invoke("undo");
       refreshAll();
     } catch (e) {
+      const msg = String(e);
+      setError(msg);
       console.error("[VibeLights] Undo failed:", e);
     }
   }, [refreshAll]);
 
   const redo = useCallback(async () => {
+    setError(null);
     try {
       await invoke("redo");
       refreshAll();
     } catch (e) {
+      const msg = String(e);
+      setError(msg);
       console.error("[VibeLights] Redo failed:", e);
     }
   }, [refreshAll]);
@@ -138,6 +239,8 @@ export function useEngine(audioGetCurrentTime?: () => number | null): EngineStat
     play,
     pause,
     seek,
+    setRegion,
+    setLooping,
     undo,
     redo,
     refreshAll,

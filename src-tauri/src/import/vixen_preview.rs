@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{Read as _, Seek as _};
 use std::path::Path;
 
 use quick_xml::events::Event;
@@ -36,6 +37,7 @@ pub struct VixenPreviewPixel {
 /// Vixen 3 stores preview/display data in `SystemData/ModuleStore.xml` inside
 /// a `<VixenPreviewData>` section. Falls back to scanning `Module Data Files/`
 /// for standalone preview XML files.
+#[must_use]
 pub fn find_preview_file(vixen_dir: &Path) -> Option<std::path::PathBuf> {
     // Primary location: SystemData/ModuleStore.xml
     let module_store = vixen_dir.join("SystemData").join("ModuleStore.xml");
@@ -101,6 +103,7 @@ fn scan_dir_for_preview(dir: &Path) -> Option<std::path::PathBuf> {
 }
 
 /// Quick check: read a portion of a file looking for preview-related XML tags.
+#[allow(clippy::indexing_slicing)] // All slicing is bounded by std::io::Read return values
 fn file_contains_preview_marker(path: &Path) -> bool {
     // For large files (like ModuleStore.xml at 100MB+), we can't read the whole thing.
     // Read in chunks and check for markers.
@@ -108,7 +111,7 @@ fn file_contains_preview_marker(path: &Path) -> bool {
         return false;
     };
     let metadata = file.metadata().ok();
-    let file_size = metadata.map(|m| m.len()).unwrap_or(0);
+    let file_size = metadata.map_or(0, |m| m.len());
 
     // For small files, read the whole thing
     if file_size < 64 * 1024 {
@@ -122,7 +125,6 @@ fn file_contains_preview_marker(path: &Path) -> bool {
     // For large files, read the first 64KB. ModuleStore.xml typically has the
     // preview section further in, but the Module dataModelType string appears early
     // in the Module element's attributes. Also check a middle chunk.
-    use std::io::Read;
     let mut file = file;
     let mut buf = vec![0u8; 64 * 1024];
 
@@ -137,7 +139,6 @@ fn file_contains_preview_marker(path: &Path) -> bool {
     // For ModuleStore.xml, the VixenPreviewData section can appear anywhere in
     // the file (often near the end of 100MB+ files). Scan the entire file in
     // chunks, with overlap to avoid missing markers split across boundaries.
-    use std::io::Seek;
     let chunk_size = 256 * 1024usize;
     let overlap = 64usize; // enough to catch "VixenPreviewData" split across chunks
     let mut large_buf = vec![0u8; chunk_size];
@@ -145,7 +146,7 @@ fn file_contains_preview_marker(path: &Path) -> bool {
     let mut carry = Vec::<u8>::new();
     loop {
         match file.read(&mut large_buf) {
-            Ok(0) => break,
+            Ok(0) | Err(_) => break,
             Ok(n) => {
                 // Prepend carry from previous chunk boundary
                 let search_buf = if carry.is_empty() {
@@ -166,7 +167,6 @@ fn file_contains_preview_marker(path: &Path) -> bool {
                     carry.extend_from_slice(&large_buf[..n]);
                 }
             }
-            Err(_) => break,
         }
     }
 
@@ -176,7 +176,11 @@ fn file_contains_preview_marker(path: &Path) -> bool {
 // ── Preview parsing ─────────────────────────────────────────────────
 
 /// Parse a Vixen preview data file into structured preview data.
-/// Handles both standalone preview XML and ModuleStore.xml containing VixenPreviewData.
+/// Handles both standalone preview XML and `ModuleStore.xml` containing `VixenPreviewData`.
+///
+/// # Errors
+///
+/// Returns `ImportError` if the file cannot be read or contains invalid XML.
 pub fn parse_preview_file(path: &Path) -> Result<VixenPreviewData, ImportError> {
     let data = fs::read(path)?;
     parse_preview_xml(&data)
@@ -189,15 +193,15 @@ fn strip_ns(name: &str) -> &str {
 
 /// Parse Vixen preview XML from bytes.
 ///
-/// Handles the Vixen 3 DataContract XML format where elements use namespace prefixes
+/// Handles the Vixen 3 `DataContract` XML format where elements use namespace prefixes
 /// (e.g., `a:DisplayItem`, `a:PreviewPixel`). Pixel positions are derived from the
 /// shape's `<_points>` control points and interpolated across the pixel count.
+///
+/// # Errors
+///
+/// Returns `ImportError::Xml` if the XML is malformed.
+#[allow(clippy::too_many_lines)]
 pub fn parse_preview_xml(data: &[u8]) -> Result<VixenPreviewData, ImportError> {
-    let mut reader = Reader::from_reader(data);
-    reader.config_mut().trim_text(true);
-
-    let mut buf = Vec::with_capacity(8192);
-
     // Track each VixenPreviewData section independently so we can pick the best one.
     // Merging sections is wrong: the same fixtures appear in each section with
     // coordinates designed for different canvas sizes, causing duplicates.
@@ -206,6 +210,12 @@ pub fn parse_preview_xml(data: &[u8]) -> Result<VixenPreviewData, ImportError> {
         height: u32,
         display_items: Vec<VixenDisplayItem>,
     }
+
+    let mut reader = Reader::from_reader(data);
+    reader.config_mut().trim_text(true);
+
+    let mut buf = Vec::with_capacity(8192);
+
     let mut sections: Vec<PreviewSection> = Vec::new();
     let mut current_section_width: u32 = 0;
     let mut current_section_height: u32 = 0;
@@ -250,14 +260,9 @@ pub fn parse_preview_xml(data: &[u8]) -> Result<VixenPreviewData, ImportError> {
                 current_element = local.to_string();
 
                 match local {
-                    "VixenPreviewData" | "Preview" => {
-                        if !in_preview_data {
-                            in_preview_data = true;
-                            preview_data_depth = depth;
-                        }
-                    }
-                    "DisplayItems" if !in_preview_data => {
-                        // Standalone format: <DisplayItems> without VixenPreviewData wrapper
+                    "VixenPreviewData" | "Preview" | "DisplayItems"
+                        if !in_preview_data =>
+                    {
                         in_preview_data = true;
                         preview_data_depth = depth;
                     }
@@ -553,7 +558,7 @@ pub fn parse_preview_xml(data: &[u8]) -> Result<VixenPreviewData, ImportError> {
 
 /// Interpolate pixel positions from shape control points.
 ///
-/// In Vixen 3, each DisplayItem has N pixels (with NodeIds) and M control points.
+/// In Vixen 3, each `DisplayItem` has N pixels (with `NodeIds`) and M control points.
 /// Pixels are distributed evenly along the polyline defined by the control points.
 fn interpolate_pixels(
     node_ids: &[String],
@@ -576,13 +581,13 @@ fn interpolate_pixels(
     }
 
     // Single control point: all pixels at that location
-    if points.len() == 1 {
+    if let [(px, py)] = points {
         return node_ids
             .iter()
             .map(|nid| VixenPreviewPixel {
                 node_id: nid.clone(),
-                x: points[0].0,
-                y: points[0].1,
+                x: *px,
+                y: *py,
             })
             .collect();
     }
@@ -590,9 +595,12 @@ fn interpolate_pixels(
     // Calculate segment lengths along the polyline
     let mut segment_lengths = Vec::with_capacity(points.len() - 1);
     let mut total_length = 0.0f64;
-    for i in 0..points.len() - 1 {
-        let dx = points[i + 1].0 - points[i].0;
-        let dy = points[i + 1].1 - points[i].1;
+    for pair in points.windows(2) {
+        let (Some(&(ax, ay)), Some(&(bx, by))) = (pair.first(), pair.get(1)) else {
+            continue;
+        };
+        let dx = bx - ax;
+        let dy = by - ay;
         let len = (dx * dx + dy * dy).sqrt();
         segment_lengths.push(len);
         total_length += len;
@@ -600,12 +608,15 @@ fn interpolate_pixels(
 
     if total_length < 0.001 {
         // Degenerate case: all control points at same location
+        let Some(&(px, py)) = points.first() else {
+            return Vec::new();
+        };
         return node_ids
             .iter()
             .map(|nid| VixenPreviewPixel {
                 node_id: nid.clone(),
-                x: points[0].0,
-                y: points[0].1,
+                x: px,
+                y: py,
             })
             .collect();
     }
@@ -615,6 +626,7 @@ fn interpolate_pixels(
     let mut pixels = Vec::with_capacity(pixel_count);
 
     for (i, nid) in node_ids.iter().enumerate() {
+        #[allow(clippy::cast_precision_loss)]
         let t = if pixel_count > 1 {
             i as f64 / (pixel_count - 1) as f64
         } else {
@@ -624,8 +636,10 @@ fn interpolate_pixels(
 
         // Walk along segments to find position
         let mut accumulated = 0.0f64;
-        let mut x = points[0].0;
-        let mut y = points[0].1;
+        // Safe: points.len() >= 2 is guaranteed (empty and single-point returned above)
+        let &(first_x, first_y) = points.first().unwrap_or(&(0.0, 0.0));
+        let mut x = first_x;
+        let mut y = first_y;
 
         for (seg_idx, &seg_len) in segment_lengths.iter().enumerate() {
             if accumulated + seg_len >= target_dist || seg_idx == segment_lengths.len() - 1 {
@@ -635,8 +649,12 @@ fn interpolate_pixels(
                 } else {
                     0.0
                 };
-                x = points[seg_idx].0 + (points[seg_idx + 1].0 - points[seg_idx].0) * seg_t;
-                y = points[seg_idx].1 + (points[seg_idx + 1].1 - points[seg_idx].1) * seg_t;
+                // seg_idx and seg_idx+1 are always valid: segment_lengths has
+                // points.len()-1 entries, so seg_idx <= points.len()-2.
+                let Some(&(sx, sy)) = points.get(seg_idx) else { break };
+                let Some(&(ex, ey)) = points.get(seg_idx + 1) else { break };
+                x = sx + (ex - sx) * seg_t;
+                y = sy + (ey - sy) * seg_t;
                 break;
             }
             accumulated += seg_len;
@@ -658,10 +676,11 @@ use std::collections::{HashMap, HashSet};
 use crate::model::fixture::FixtureId;
 use crate::model::show::{FixtureLayout, LayoutShape, Position2D};
 
-/// Map parsed preview data to FixtureLayout entries.
+/// Map parsed preview data to `FixtureLayout` entries.
 ///
-/// Groups pixels by fixture using the guid_to_id mapping, normalizes positions
+/// Groups pixels by fixture using the `guid_to_id` mapping, normalizes positions
 /// to 0.0-1.0 using the canvas dimensions, and infers shape types where possible.
+#[allow(clippy::implicit_hasher, clippy::too_many_lines)]
 pub fn build_fixture_layouts(
     preview: &VixenPreviewData,
     guid_to_id: &HashMap<String, u32>,
@@ -750,8 +769,7 @@ pub fn build_fixture_layouts(
 
     if unresolved_count > 0 {
         warnings.push(format!(
-            "{} preview pixels could not be mapped to imported fixtures (orphan node IDs)",
-            unresolved_count
+            "{unresolved_count} preview pixels could not be mapped to imported fixtures (orphan node IDs)",
         ));
     }
 
@@ -766,18 +784,19 @@ pub fn build_fixture_layouts(
 
         // If we have more positions than pixels (e.g. individual RGB channels mapped),
         // take every Nth to match pixel count
+        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let pixel_positions: Vec<Position2D> = if positions.len() > expected_count
             && expected_count > 0
         {
             let step = positions.len() as f64 / expected_count as f64;
             (0..expected_count)
-                .map(|i| {
+                .filter_map(|i| {
                     let idx = (i as f64 * step) as usize;
-                    let (x, y) = positions[idx.min(positions.len() - 1)];
-                    Position2D {
+                    let &(x, y) = positions.get(idx.min(positions.len().saturating_sub(1)))?;
+                    Some(Position2D {
                         x: x as f32,
                         y: y as f32,
-                    }
+                    })
                 })
                 .collect()
         } else {
@@ -809,14 +828,19 @@ pub fn build_fixture_layouts(
     layouts
 }
 
-/// Try to infer a LayoutShape from a set of pixel positions.
+/// Try to infer a `LayoutShape` from a set of pixel positions.
 fn infer_shape(positions: &[Position2D]) -> LayoutShape {
     if positions.len() < 2 {
         return LayoutShape::Custom;
     }
 
-    let first = positions[0];
-    let last = positions[positions.len() - 1];
+    // Safe: positions.len() >= 2 guaranteed by the check above
+    let Some(&first) = positions.first() else {
+        return LayoutShape::Custom;
+    };
+    let Some(&last) = positions.last() else {
+        return LayoutShape::Custom;
+    };
 
     // Check if roughly collinear (line)
     if positions.len() >= 3 {
@@ -852,7 +876,13 @@ fn infer_shape(positions: &[Position2D]) -> LayoutShape {
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::option_map_or_none,
+    clippy::uninlined_format_args,
+)]
 mod tests {
     use super::*;
 

@@ -90,6 +90,9 @@ impl ColorGradient {
 
     /// Evaluate the gradient at a position (clamped to [0, 1]).
     /// Uses binary search for O(log n) lookup with linear RGB interpolation via `Color::lerp`.
+    // Indexing is safe: stops is always non-empty (constructor returns None for
+    // empty), and idx bounds are checked before each access.
+    #[allow(clippy::indexing_slicing)]
     pub fn evaluate(&self, pos: f64) -> Color {
         let pos = pos.clamp(0.0, 1.0);
 
@@ -104,7 +107,6 @@ impl ColorGradient {
             return self.stops[0].color;
         }
         if idx >= self.stops.len() {
-            // stops is always non-empty (constructor returns None for empty)
             return self.stops.last().map_or(Color::BLACK, |s| s.color);
         }
 
@@ -127,7 +129,13 @@ impl Default for ColorGradient {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+)]
 mod tests {
     use super::*;
 

@@ -81,6 +81,9 @@ impl Curve {
 
     /// Evaluate the curve at position x (clamped to [0, 1]).
     /// Uses binary search for O(log n) lookup with linear interpolation.
+    // Indexing is safe: points always has >= 2 entries (constructor returns None
+    // otherwise), and idx bounds are checked before each access.
+    #[allow(clippy::indexing_slicing)]
     pub fn evaluate(&self, x: f64) -> f64 {
         let x = x.clamp(0.0, 1.0);
 
@@ -91,7 +94,6 @@ impl Curve {
             return self.points[0].y;
         }
         if idx >= self.points.len() {
-            // points always has >= 2 entries (constructor returns None otherwise)
             return self.points.last().map_or(0.0, |p| p.y);
         }
 
@@ -114,7 +116,7 @@ impl Default for Curve {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

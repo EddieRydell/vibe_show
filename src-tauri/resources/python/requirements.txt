@@ -1,0 +1,32 @@
+# Core web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+sse-starlette>=2.0.0
+
+# Audio I/O
+soundfile>=0.13.0
+numpy>=1.26.0
+
+# Beat tracking
+madmom>=0.17
+
+# Source separation
+demucs>=4.0.0
+
+# Speech-to-text (lyrics)
+faster-whisper>=1.1.0
+
+# Song structure
+allin1>=1.1.0
+
+# Mood / genre / key classification
+essentia-tensorflow>=2.1b6.dev1034
+
+# Polyphonic pitch detection
+basic-pitch>=0.6.0
+
+# Audio feature extraction
+librosa>=0.10.0
+
+# Data models
+pydantic>=2.0.0

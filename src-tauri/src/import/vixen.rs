@@ -13,13 +13,13 @@ use crate::model::color::Color;
 use crate::model::color_gradient::{ColorGradient, ColorStop};
 use crate::model::curve::{Curve, CurvePoint};
 use crate::model::fixture::{
-    ColorModel, Controller, ControllerId, ControllerProtocol, EffectTarget, FixtureDef,
-    FixtureGroup, FixtureId, GroupId, GroupMember,
+    BulbShape, ChannelOrder, ColorModel, Controller, ControllerId, ControllerProtocol,
+    EffectTarget, FixtureDef, FixtureGroup, FixtureId, GroupId, GroupMember, PixelType,
 };
 use crate::model::show::{FixtureLayout, Layout, Show};
 use crate::model::timeline::{
     BlendMode, ColorMode, EffectInstance, EffectKind, EffectParams, ParamKey, ParamValue, Sequence,
-    TimeRange, Track,
+    TimeRange, Track, WipeDirection,
 };
 
 use super::vixen_preview;
@@ -126,6 +126,7 @@ pub struct VixenImportResult {
 
 /// Parse ISO 8601 duration strings like `PT1M53.606S`, `P0DT0H5M30.500S`, etc.
 /// Returns duration in seconds.
+#[must_use]
 pub fn parse_iso_duration(s: &str) -> Option<f64> {
     let s = s.trim();
     if !s.starts_with('P') {
@@ -175,26 +176,28 @@ pub fn parse_iso_duration(s: &str) -> Option<f64> {
 // ── CIE XYZ → sRGB conversion ──────────────────────────────────────
 
 /// Convert CIE XYZ (D65, 0-100 scale) to sRGB Color.
+#[must_use]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn xyz_to_srgb(x: f64, y: f64, z: f64) -> Color {
+    // Apply sRGB gamma
+    fn gamma(c: f64) -> f64 {
+        let c = c.clamp(0.0, 1.0);
+        if c <= 0.003_130_8 {
+            c * 12.92
+        } else {
+            1.055 * c.powf(1.0 / 2.4) - 0.055
+        }
+    }
+
     // Normalize from 0-100 to 0-1
     let x = x / 100.0;
     let y = y / 100.0;
     let z = z / 100.0;
 
     // XYZ to linear sRGB (D65 reference, sRGB primaries)
-    let r_lin = x * 3.2404542 + y * -1.5371385 + z * -0.4985314;
-    let g_lin = x * -0.9692660 + y * 1.8760108 + z * 0.0415560;
-    let b_lin = x * 0.0556434 + y * -0.2040259 + z * 1.0572252;
-
-    // Apply sRGB gamma
-    fn gamma(c: f64) -> f64 {
-        let c = c.clamp(0.0, 1.0);
-        if c <= 0.0031308 {
-            c * 12.92
-        } else {
-            1.055 * c.powf(1.0 / 2.4) - 0.055
-        }
-    }
+    let r_lin = x * 3.240_454_2 + y * -1.537_138_5 + z * -0.498_531_4;
+    let g_lin = x * -0.969_266_0 + y * 1.876_010_8 + z * 0.041_556_0;
+    let b_lin = x * 0.055_643_4 + y * -0.204_025_9 + z * 1.057_225_2;
 
     Color::rgb(
         (gamma(r_lin) * 255.0).round() as u8,
@@ -205,7 +208,7 @@ pub fn xyz_to_srgb(x: f64, y: f64, z: f64) -> Color {
 
 // ── Effect type mapping ─────────────────────────────────────────────
 
-/// Build a Curve ParamValue from Vixen curve points (0-100 scale → 0-1 normalized).
+/// Build a Curve `ParamValue` from Vixen curve points (0-100 scale → 0-1 normalized).
 fn build_curve_param(points: &[(f64, f64)]) -> Option<ParamValue> {
     if points.len() < 2 {
         return None;
@@ -220,7 +223,7 @@ fn build_curve_param(points: &[(f64, f64)]) -> Option<ParamValue> {
     Curve::new(curve_points).map(ParamValue::Curve)
 }
 
-/// Build a ColorGradient ParamValue from Vixen gradient stops (positions 0-1).
+/// Build a `ColorGradient` `ParamValue` from Vixen gradient stops (positions 0-1).
 fn build_gradient_param(stops: &[(f64, Color)]) -> Option<ParamValue> {
     if stops.is_empty() {
         return None;
@@ -235,7 +238,7 @@ fn build_gradient_param(stops: &[(f64, Color)]) -> Option<ParamValue> {
     ColorGradient::new(color_stops).map(ParamValue::ColorGradient)
 }
 
-/// Map Vixen color handling string to our ColorMode enum.
+/// Map Vixen color handling string to our `ColorMode` enum.
 ///
 /// The `default` parameter controls the fallback for `StaticColor` and `None`,
 /// which varies by effect type:
@@ -245,9 +248,10 @@ fn build_gradient_param(stops: &[(f64, Color)]) -> Option<ParamValue> {
 fn map_color_handling(handling: Option<&str>, default: ColorMode) -> ColorMode {
     match handling {
         Some("GradientThroughWholeEffect") => ColorMode::GradientThroughEffect,
-        Some("GradientAcrossItems") | Some("ColorAcrossItems") => ColorMode::GradientAcrossItems,
-        Some("GradientForEachPulse") | Some("GradientOverEachPulse")
-        | Some("GradientPerPulse") => ColorMode::GradientPerPulse,
+        Some("GradientAcrossItems" | "ColorAcrossItems") => ColorMode::GradientAcrossItems,
+        Some("GradientForEachPulse" | "GradientOverEachPulse" | "GradientPerPulse") => {
+            ColorMode::GradientPerPulse
+        }
         // StaticColor and None: use per-effect-type default
         _ => default,
     }
@@ -275,32 +279,29 @@ fn is_reverse_direction(direction: Option<&str>) -> bool {
     }
 }
 
-/// Map a Vixen wipe direction string to our direction vocabulary + reverse flag.
-fn map_wipe_direction(direction: Option<&str>) -> (&'static str, bool) {
+/// Map a Vixen wipe direction string to a `WipeDirection` + reverse flag.
+fn map_wipe_direction(direction: Option<&str>) -> (WipeDirection, bool) {
     match direction {
-        Some("Horizontal") | Some("Left") => ("horizontal", false),
-        Some("Right") => ("horizontal", true),
-        Some("Vertical") | Some("Up") => ("vertical", false),
-        Some("Down") => ("vertical", true),
-        Some("DiagonalUp") => ("diagonal_up", false),
-        Some("DiagonalDown") => ("diagonal_down", false),
-        Some("Burst") | Some("BurstIn") => ("burst", false),
-        Some("BurstOut") | Some("Out") => ("burst", true),
-        Some("Circle") | Some("CircleIn") => ("circle", false),
-        Some("CircleOut") => ("circle", true),
-        Some("Diamond") | Some("DiamondIn") => ("diamond", false),
-        Some("DiamondOut") => ("diamond", true),
-        Some("Reverse") => ("horizontal", true),
-        // Numeric directions from Vixen data model
-        Some("0") => ("horizontal", false),
-        Some("1") => ("horizontal", true),
-        _ => ("horizontal", false),
+        Some("Right" | "Reverse" | "1") => (WipeDirection::Horizontal, true),
+        Some("Vertical" | "Up") => (WipeDirection::Vertical, false),
+        Some("Down") => (WipeDirection::Vertical, true),
+        Some("DiagonalUp") => (WipeDirection::DiagonalUp, false),
+        Some("DiagonalDown") => (WipeDirection::DiagonalDown, false),
+        Some("Burst" | "BurstIn") => (WipeDirection::Burst, false),
+        Some("BurstOut" | "Out") => (WipeDirection::Burst, true),
+        Some("Circle" | "CircleIn") => (WipeDirection::Circle, false),
+        Some("CircleOut") => (WipeDirection::Circle, true),
+        Some("Diamond" | "DiamondIn") => (WipeDirection::Diamond, false),
+        Some("DiamondOut") => (WipeDirection::Diamond, true),
+        // "Horizontal", "Left", "0", None, and any unknown → default
+        _ => (WipeDirection::Horizontal, false),
     }
 }
 
-/// Map a Vixen effect type name to a VibeLights EffectKind + default params.
+/// Map a Vixen effect type name to a `VibeLights` `EffectKind` + default params.
 ///
 /// Effects that can't be mapped print a LOUD warning for easy debugging.
+#[allow(clippy::too_many_lines)]
 fn map_vixen_effect(effect: &VixenEffect) -> (EffectKind, EffectParams) {
     let type_name = effect.type_name.as_str();
     let intensity_curve = effect.intensity_curve.as_ref();
@@ -393,7 +394,7 @@ fn map_vixen_effect(effect: &VixenEffect) -> (EffectKind, EffectParams) {
             let (direction, reverse) = map_wipe_direction(effect.direction.as_deref());
             let color_mode = map_color_handling(color_handling, ColorMode::GradientPerPulse);
             params = params
-                .set(ParamKey::Direction, ParamValue::Text(direction.into()))
+                .set(ParamKey::Direction, ParamValue::WipeDirection(direction))
                 .set(ParamKey::ColorMode, ParamValue::ColorMode(color_mode))
                 .set(ParamKey::Speed, ParamValue::Float(1.0))
                 .set(ParamKey::PulseWidth, ParamValue::Float(1.0))
@@ -623,8 +624,7 @@ fn map_vixen_effect(effect: &VixenEffect) -> (EffectKind, EffectParams) {
         // These are audio-reactive, timing, or video effects with no light equivalent.
         "LipSync" | "CountDown" | "Launcher" | "Video" | "NutcrackerModule" | "Audio" => {
             eprintln!(
-                "[VibeLights] WARNING: Skipping unsupported effect type '{}' (no light equivalent)",
-                type_name
+                "[VibeLights] WARNING: Skipping unsupported effect type '{type_name}' (no light equivalent)",
             );
             (
                 EffectKind::Solid,
@@ -635,8 +635,7 @@ fn map_vixen_effect(effect: &VixenEffect) -> (EffectKind, EffectParams) {
         // ── MaskAndFill → Solid (masking not supported) ─────────
         "MaskAndFill" | "Mask" | "Fill" => {
             eprintln!(
-                "[VibeLights] WARNING: Effect type '{}' mapped to Solid (masking not supported)",
-                type_name
+                "[VibeLights] WARNING: Effect type '{type_name}' mapped to Solid (masking not supported)",
             );
             (
                 EffectKind::Solid,
@@ -683,11 +682,11 @@ struct VixenEffect {
     duration: f64,
     target_node_guids: Vec<String>,
     color: Option<Color>,
-    /// ChaseMovement / MovementCurve (position over time for Chase/Wipe effects)
+    /// `ChaseMovement` / `MovementCurve` (position over time for Chase/Wipe effects)
     movement_curve: Option<Vec<(f64, f64)>>,
-    /// PulseCurve (intensity envelope per pulse for Chase/Spin effects)
+    /// `PulseCurve` (intensity envelope per pulse for Chase/Spin effects)
     pulse_curve: Option<Vec<(f64, f64)>>,
-    /// LevelCurve / IntensityCurve / DissolveCurve / etc. (brightness envelope)
+    /// `LevelCurve` / `IntensityCurve` / `DissolveCurve` / etc. (brightness envelope)
     intensity_curve: Option<Vec<(f64, f64)>>,
     gradient_colors: Option<Vec<(f64, Color)>>,
     color_handling: Option<String>,
@@ -729,7 +728,17 @@ impl Default for VixenImporter {
     }
 }
 
+/// Which kind of curve a Vixen data model entry contains.
+/// Replaces ad-hoc string routing ("movement"/"pulse"/"intensity").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CurveKind {
+    Movement,
+    Pulse,
+    Intensity,
+}
+
 impl VixenImporter {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             nodes: HashMap::new(),
@@ -747,6 +756,7 @@ impl VixenImporter {
 
     /// Reconstruct importer state from an existing profile + saved GUID mapping.
     /// This allows importing sequences against a previously-imported profile.
+    #[must_use]
     pub fn from_profile(
         fixtures: Vec<FixtureDef>,
         groups: Vec<FixtureGroup>,
@@ -754,7 +764,7 @@ impl VixenImporter {
         patches: Vec<crate::model::fixture::Patch>,
         guid_map: HashMap<String, u32>,
     ) -> Self {
-        let next_id = guid_map.values().copied().max().map(|m| m + 1).unwrap_or(0);
+        let next_id = guid_map.values().copied().max().map_or(0, |m| m + 1);
         Self {
             nodes: HashMap::new(),
             guid_to_id: guid_map,
@@ -770,31 +780,40 @@ impl VixenImporter {
     }
 
     /// Return the GUID → ID mapping (for persisting after profile import).
+    #[must_use]
     pub fn guid_map(&self) -> &HashMap<String, u32> {
         &self.guid_to_id
     }
 
     /// Return warnings accumulated during import.
+    #[must_use]
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
 
     /// Count of parsed fixtures.
+    #[must_use]
     pub fn fixture_count(&self) -> usize {
         self.fixtures.len()
     }
 
     /// Count of parsed groups.
+    #[must_use]
     pub fn group_count(&self) -> usize {
         self.groups.len()
     }
 
     /// Count of parsed controllers.
+    #[must_use]
     pub fn controller_count(&self) -> usize {
         self.controllers.len()
     }
 
-    /// Parse Vixen preview layout data and produce FixtureLayout entries.
+    /// Parse Vixen preview layout data and produce `FixtureLayout` entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ImportError` if the preview file cannot be found or parsed.
     pub fn parse_preview(
         &mut self,
         vixen_dir: &Path,
@@ -834,6 +853,10 @@ impl VixenImporter {
     }
 
     /// Parse SystemConfig.xml to extract fixtures, groups, and controllers.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ImportError` on I/O or XML parsing failures.
     pub fn parse_system_config(&mut self, path: &Path) -> Result<(), ImportError> {
         let file = File::open(path)?;
         let reader = BufReader::with_capacity(64 * 1024, file);
@@ -1036,10 +1059,10 @@ impl VixenImporter {
                             let val = String::from_utf8_lossy(&attr.value).to_string();
                             match key.as_str() {
                                 "ip" | "IP" | "address" | "Address" | "UnicastAddress" => {
-                                    ip = Some(val)
+                                    ip = Some(val);
                                 }
                                 "universe" | "Universe" => {
-                                    universe = val.parse().ok()
+                                    universe = val.parse().ok();
                                 }
                                 _ => {}
                             }
@@ -1078,7 +1101,7 @@ impl VixenImporter {
                             for (ip, _universe) in &current_outputs {
                                 self.controllers.push(Controller {
                                     id: ControllerId(controller_id_counter),
-                                    name: format!("{} ({})", current_name, ip),
+                                    name: format!("{current_name} ({ip})"),
                                     protocol: ControllerProtocol::E131 {
                                         unicast_address: Some(ip.clone()),
                                     },
@@ -1104,7 +1127,7 @@ impl VixenImporter {
         let all_child_guids: std::collections::HashSet<&str> = self
             .nodes
             .values()
-            .flat_map(|n| n.children_guids.iter().map(|s| s.as_str()))
+            .flat_map(|n| n.children_guids.iter().map(String::as_str))
             .collect();
 
         let root_guids: Vec<String> = self
@@ -1121,16 +1144,15 @@ impl VixenImporter {
     }
 
     /// Recursively build a fixture or group from a Vixen node GUID.
-    /// Returns either a FixtureId or GroupId if successfully created.
+    /// Returns either a `FixtureId` or `GroupId` if successfully created.
     fn build_node(&mut self, guid: &str) -> Option<GroupMember> {
         // Already processed?
         if let Some(&id) = self.guid_to_id.get(guid) {
             let node = self.nodes.get(guid)?;
             if node.children_guids.is_empty() {
                 return Some(GroupMember::Fixture(FixtureId(id)));
-            } else {
-                return Some(GroupMember::Group(GroupId(id)));
             }
+            return Some(GroupMember::Group(GroupId(id)));
         }
 
         let node = self.nodes.get(guid)?.clone();
@@ -1144,10 +1166,10 @@ impl VixenImporter {
                 name: node.name.clone(),
                 color_model: ColorModel::Rgb,
                 pixel_count: 1,
-                pixel_type: Default::default(),
-                bulb_shape: Default::default(),
+                pixel_type: PixelType::default(),
+                bulb_shape: BulbShape::default(),
                 display_radius_override: None,
-                channel_order: Default::default(),
+                channel_order: ChannelOrder::default(),
             });
             Some(GroupMember::Fixture(FixtureId(id)))
         } else {
@@ -1165,7 +1187,7 @@ impl VixenImporter {
             // create a group instead to preserve the hierarchy.
             let all_original_leaves = members.iter().all(|m| match m {
                 GroupMember::Fixture(fid) => !self.merged_fixture_ids.contains(&fid.0),
-                _ => false,
+                GroupMember::Group(_) => false,
             });
             let child_count = members.len();
 
@@ -1177,7 +1199,7 @@ impl VixenImporter {
                     .iter()
                     .filter_map(|m| match m {
                         GroupMember::Fixture(fid) => Some(*fid),
-                        _ => None,
+                        GroupMember::Group(_) => None,
                     })
                     .collect();
 
@@ -1185,16 +1207,17 @@ impl VixenImporter {
                 self.fixtures.retain(|f| !fixture_ids.contains(&f.id));
 
                 // Create one multi-pixel fixture for this group of leaves
+                #[allow(clippy::cast_possible_truncation)]
                 let pixel_count = child_count as u32;
                 self.fixtures.push(FixtureDef {
                     id: FixtureId(id),
                     name: node.name.clone(),
                     color_model: ColorModel::Rgb,
                     pixel_count,
-                    pixel_type: Default::default(),
-                    bulb_shape: Default::default(),
+                    pixel_type: PixelType::default(),
+                    bulb_shape: BulbShape::default(),
                     display_radius_override: None,
-                    channel_order: Default::default(),
+                    channel_order: ChannelOrder::default(),
                 });
 
                 // Record this as a merged fixture so parent nodes don't re-merge it
@@ -1222,6 +1245,11 @@ impl VixenImporter {
     }
 
     /// Parse a .tim sequence file.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ImportError` on I/O or XML parsing failures.
+    #[allow(clippy::too_many_lines)]
     pub fn parse_sequence(&mut self, path: &Path) -> Result<(), ImportError> {
         let file = File::open(path)?;
         let reader = BufReader::with_capacity(64 * 1024, file);
@@ -1232,8 +1260,7 @@ impl VixenImporter {
 
         let seq_name = path
             .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Untitled".to_string());
+            .map_or_else(|| "Untitled".to_string(), |s| s.to_string_lossy().to_string());
 
         let mut duration = 30.0f64;
         let mut effects: Vec<VixenEffect> = Vec::new();
@@ -1271,7 +1298,7 @@ impl VixenImporter {
         let mut current_curve_points: Vec<(f64, f64)> = Vec::new();
         let mut current_gradient_stops: Vec<(f64, Color)> = Vec::new();
         let mut in_curve_element = false;
-        let mut current_curve_kind = String::new(); // "movement", "pulse", or "intensity"
+        let mut current_curve_kind = CurveKind::Intensity;
         let mut in_gradient_element = false;
         let mut current_color_handling = String::new();
         // State for parsing PointPair child elements (X, Y are text, not attributes)
@@ -1314,7 +1341,7 @@ impl VixenImporter {
                 Ok(Event::Start(ref e)) => {
                     depth += 1;
                     let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                    current_element = tag.clone();
+                    current_element.clone_from(&tag);
 
                     match tag.as_str() {
                         "_dataModels" | "DataModels" => {
@@ -1414,19 +1441,19 @@ impl VixenImporter {
                         match local_tag {
                             "ChaseMovement" | "MovementCurve" | "WipeMovement" => {
                                 in_curve_element = true;
-                                current_curve_kind = "movement".to_string();
+                                current_curve_kind = CurveKind::Movement;
                                 current_curve_points.clear();
                             }
                             "PulseCurve" => {
                                 in_curve_element = true;
-                                current_curve_kind = "pulse".to_string();
+                                current_curve_kind = CurveKind::Pulse;
                                 current_curve_points.clear();
                             }
                             "LevelCurve" | "IntensityCurve" | "Curve"
                             | "DissolveCurve" | "AccelerationCurve"
                             | "SpeedCurve" | "Height" => {
                                 in_curve_element = true;
-                                current_curve_kind = "intensity".to_string();
+                                current_curve_kind = CurveKind::Intensity;
                                 current_curve_points.clear();
                             }
                             "ColorGradient" => {
@@ -1706,6 +1733,7 @@ impl VixenImporter {
                             if let (Some(r), Some(g), Some(b)) =
                                 (direct_color_r, direct_color_g, direct_color_b)
                             {
+                                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                                 let color = Color::rgb(
                                     (r.clamp(0.0, 1.0) * 255.0) as u8,
                                     (g.clamp(0.0, 1.0) * 255.0) as u8,
@@ -1732,10 +1760,10 @@ impl VixenImporter {
                                 if !current_curve_points.is_empty()
                                     && !current_data_model_id.is_empty()
                                 {
-                                    let target_map = match current_curve_kind.as_str() {
-                                        "movement" => &mut data_model_movement_curves,
-                                        "pulse" => &mut data_model_pulse_curves,
-                                        _ => &mut data_model_intensity_curves,
+                                    let target_map = match current_curve_kind {
+                                        CurveKind::Movement => &mut data_model_movement_curves,
+                                        CurveKind::Pulse => &mut data_model_pulse_curves,
+                                        CurveKind::Intensity => &mut data_model_intensity_curves,
                                     };
                                     target_map.insert(
                                         current_data_model_id.clone(),
@@ -1743,7 +1771,6 @@ impl VixenImporter {
                                     );
                                 }
                                 in_curve_element = false;
-                                current_curve_kind.clear();
                             }
                             "ColorGradient" if in_gradient_element => {
                                 if !current_gradient_stops.is_empty()
@@ -1960,6 +1987,9 @@ impl VixenImporter {
             frame_rate: 30.0,
             audio_file,
             tracks,
+            scripts: std::collections::HashMap::new(),
+            gradient_library: std::collections::HashMap::new(),
+            curve_library: std::collections::HashMap::new(),
         });
 
         Ok(())
@@ -1982,7 +2012,10 @@ impl VixenImporter {
         });
 
         let mut merged = Vec::with_capacity(effects.len());
-        let mut current = effects[0].clone();
+        let Some(first) = effects.first() else {
+            return;
+        };
+        let mut current = first.clone();
 
         for next in effects.iter().skip(1) {
             let current_end = current.start_time + current.duration;
@@ -2005,7 +2038,10 @@ impl VixenImporter {
     }
 
     /// Build tracks from parsed Vixen effects, grouped by target node.
+    #[allow(clippy::too_many_lines)]
     fn build_tracks(&self, effects: Vec<VixenEffect>) -> Vec<Track> {
+        const MAX_TOTAL_EFFECTS: usize = 10_000;
+
         // Group effects by their primary target
         let mut effects_by_target: HashMap<String, Vec<VixenEffect>> = HashMap::new();
 
@@ -2016,7 +2052,9 @@ impl VixenImporter {
                     .or_default()
                     .push(effect);
             } else {
-                let target_guid = &effect.target_node_guids[0];
+                let Some(target_guid) = effect.target_node_guids.first() else {
+                    continue;
+                };
                 // Skip orphan targets — if the GUID doesn't map to any known fixture/group, drop it
                 if target_guid != "_all_" && !self.guid_to_id.contains_key(target_guid) {
                     continue;
@@ -2030,7 +2068,6 @@ impl VixenImporter {
 
         let mut tracks = Vec::new();
         let mut total_effects = 0usize;
-        const MAX_TOTAL_EFFECTS: usize = 10_000;
 
         for (target_guid, mut target_effects) in effects_by_target {
             // Merge adjacent same-type effects to reduce count
@@ -2052,8 +2089,7 @@ impl VixenImporter {
                 for lane in &mut lanes {
                     let lane_end = lane
                         .last()
-                        .map(|e| e.start_time + e.duration)
-                        .unwrap_or(0.0);
+                        .map_or(0.0, |e| e.start_time + e.duration);
                     if effect.start_time >= lane_end {
                         lane.push(effect);
                         assigned = true;
@@ -2087,8 +2123,7 @@ impl VixenImporter {
             } else {
                 self.nodes
                     .get(&target_guid)
-                    .map(|n| n.name.clone())
-                    .unwrap_or_else(|| format!("Track {}", tracks.len() + 1))
+                    .map_or_else(|| format!("Track {}", tracks.len() + 1), |n| n.name.clone())
             };
 
             // Create a track per lane
@@ -2126,7 +2161,7 @@ impl VixenImporter {
                 if !effect_instances.is_empty() {
                     total_effects += effect_instances.len();
                     tracks.push(Track {
-                        name: format!("{}{}", target_name, lane_suffix),
+                        name: format!("{target_name}{lane_suffix}"),
                         target: target.clone(),
                         effects: effect_instances,
                     });
@@ -2137,8 +2172,7 @@ impl VixenImporter {
         // Cap total effects
         if total_effects > MAX_TOTAL_EFFECTS {
             eprintln!(
-                "[VibeLights] Warning: {} effects exceed cap of {}. Truncating tracks.",
-                total_effects, MAX_TOTAL_EFFECTS
+                "[VibeLights] Warning: {total_effects} effects exceed cap of {MAX_TOTAL_EFFECTS}. Truncating tracks.",
             );
             let mut count = 0usize;
             for track in &mut tracks {
@@ -2158,11 +2192,13 @@ impl VixenImporter {
     }
 
     /// Extract just the sequences (for sequence-only imports).
+    #[must_use]
     pub fn into_sequences(self) -> Vec<Sequence> {
         self.sequences
     }
 
     /// Consume the importer and produce a Show.
+    #[must_use]
     pub fn into_show(self) -> Show {
         Show {
             name: "Vixen Import".into(),
@@ -2181,7 +2217,18 @@ impl VixenImporter {
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::uninlined_format_args,
+    clippy::bool_assert_comparison,
+    clippy::match_same_arms,
+    clippy::option_map_or_none,
+)]
 mod tests {
     use super::*;
 
@@ -2564,7 +2611,7 @@ mod tests {
             for entry in std::fs::read_dir(seq_dir).unwrap() {
                 let entry = entry.unwrap();
                 let path = entry.path();
-                if path.extension().map_or(false, |e| e == "tim") {
+                if path.extension().is_some_and(|e| e == "tim") {
                     let content = std::fs::read_to_string(&path).unwrap_or_default();
                     if content.contains("ChaseMovement") {
                         eprintln!("Found Chase in: {}", path.display());
@@ -2686,7 +2733,7 @@ mod tests {
 
         eprintln!("\n=== Frame Color Diagnostic (fresh import) ===");
         for t in [60.0, 62.0, 65.0, 155.0, 160.0] {
-            let frame = engine::evaluate(&show, 0, t, None);
+            let frame = engine::evaluate(&show, 0, t, None, None);
             eprintln!("\nt={:.0}: {} lit fixtures", t, frame.fixtures.len());
 
             // Decode a few fixtures' pixel data
@@ -2957,7 +3004,7 @@ mod tests {
             let active: usize = seq.tracks.iter().map(|track| {
                 track.effects.iter().filter(|e| e.time_range.contains(t)).count()
             }).sum();
-            let frame = crate::engine::evaluate(&show, 0, t, None);
+            let frame = crate::engine::evaluate(&show, 0, t, None, None);
             let lit = frame.fixtures.len();
             if lit > 0 { any_lit = true; }
             eprintln!("  t={:>6.1}: {:>3} active effects, {:>3} lit fixtures", t, active, lit);

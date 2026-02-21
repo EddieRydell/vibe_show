@@ -9,6 +9,8 @@ import type { TimeRange } from "./TimeRange";
  */
 export type EffectInstance = { kind: EffectKind, params: EffectParams, time_range: TimeRange, blend_mode: BlendMode, 
 /**
- * Opacity multiplier (0.0 = transparent, 1.0 = fully opaque).
+ * Opacity of this effect (0.0 = transparent, 1.0 = fully opaque).
+ * Values outside [0.0, 1.0] are safe: `Color::scale()` clamps the factor,
+ * and the evaluator uses opacity only via `scale()`.
  */
 opacity: number, };

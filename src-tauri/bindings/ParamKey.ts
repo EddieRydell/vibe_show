@@ -2,5 +2,6 @@
 
 /**
  * All known effect parameter keys. Compile-time checked.
+ * Built-in keys serialize as snake_case; `Custom` keys serialize as their raw string.
  */
-export type ParamKey = "color" | "colors" | "gradient" | "movement_curve" | "pulse_curve" | "intensity_curve" | "color_mode" | "speed" | "pulse_width" | "background_level" | "reverse" | "spread" | "saturation" | "brightness" | "rate" | "duty_cycle" | "density" | "offset" | "direction" | "center_x" | "center_y" | "pass_count" | "wipe_on";
+export type ParamKey = "Color" | "Colors" | "Gradient" | "MovementCurve" | "PulseCurve" | "IntensityCurve" | "ColorMode" | "Speed" | "PulseWidth" | "BackgroundLevel" | "Reverse" | "Spread" | "Saturation" | "Brightness" | "Rate" | "DutyCycle" | "Density" | "Offset" | "Direction" | "CenterX" | "CenterY" | "PassCount" | "WipeOn" | { "Custom": string };

@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::dispatcher::EditCommand;
 use crate::effects;
+use crate::model::{BlendMode, EffectKind};
 use crate::state::AppState;
 
 // ── ChatEmitter trait ────────────────────────────────────────────
@@ -18,7 +19,7 @@ pub trait ChatEmitter: Send + Sync {
     fn emit_thinking(&self, thinking: bool);
 }
 
-/// Tauri-specific emitter: forwards events to the frontend via AppHandle.
+/// Tauri-specific emitter: forwards events to the frontend via `AppHandle`.
 #[cfg(feature = "tauri-app")]
 pub struct TauriChatEmitter {
     pub app_handle: tauri::AppHandle,
@@ -60,9 +61,18 @@ impl ChatEmitter for NoopChatEmitter {
 
 // ── Types ────────────────────────────────────────────────────────
 
+/// Chat message role. Serializes to lowercase strings matching the Claude API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatRole {
+    User,
+    Assistant,
+    Tool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
-    pub role: String,
+    pub role: ChatRole,
     pub content: ChatContent,
 }
 
@@ -93,7 +103,7 @@ pub enum ContentBlock {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatHistoryEntry {
-    pub role: String,
+    pub role: ChatRole,
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
@@ -101,6 +111,7 @@ pub struct ChatHistoryEntry {
 
 // ── Tool definitions ─────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines)]
 fn tool_definitions() -> Value {
     serde_json::json!([
         {
@@ -110,10 +121,10 @@ fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {
                     "track_index": { "type": "integer" },
-                    "kind": { "type": "string", "enum": ["Solid", "Chase", "Rainbow", "Strobe", "Gradient", "Twinkle", "Fade", "Wipe"] },
+                    "kind": { "type": "string", "enum": EffectKind::all_builtin().iter().map(|k| format!("{k:?}")).collect::<Vec<_>>() },
                     "start": { "type": "number", "description": "Start time in seconds" },
                     "end": { "type": "number", "description": "End time in seconds" },
-                    "blend_mode": { "type": "string", "enum": ["Override", "Add", "Multiply", "Max", "Alpha", "Subtract", "Min", "Average", "Screen", "Mask", "IntensityOverlay"], "default": "Override" },
+                    "blend_mode": { "type": "string", "enum": BlendMode::all().iter().map(|b| format!("{b:?}")).collect::<Vec<_>>(), "default": "Override" },
                     "opacity": { "type": "number", "description": "Opacity 0.0-1.0", "default": 1.0 }
                 },
                 "required": ["track_index", "kind", "start", "end"]
@@ -171,6 +182,17 @@ fn tool_definitions() -> Value {
                     "fixture_id": { "type": "integer", "description": "Target fixture ID" }
                 },
                 "required": ["name", "fixture_id"]
+            }
+        },
+        {
+            "name": "delete_track",
+            "description": "Delete a track and all its effects by track index",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "track_index": { "type": "integer", "description": "Index of the track to delete" }
+                },
+                "required": ["track_index"]
             }
         },
         {
@@ -253,21 +275,12 @@ fn build_system_prompt(state: &Arc<AppState>) -> String {
 
     // Available effect types
     lines.push("\nAvailable effect types:".to_string());
-    let kinds = [
-        crate::model::EffectKind::Solid,
-        crate::model::EffectKind::Chase,
-        crate::model::EffectKind::Rainbow,
-        crate::model::EffectKind::Strobe,
-        crate::model::EffectKind::Gradient,
-        crate::model::EffectKind::Twinkle,
-        crate::model::EffectKind::Fade,
-        crate::model::EffectKind::Wipe,
-    ];
-    for kind in &kinds {
-        let effect = effects::resolve_effect(kind);
-        let schemas = effect.param_schema();
-        let params: Vec<String> = schemas.iter().map(|s| format!("{:?} ({})", s.key, s.label)).collect();
-        lines.push(format!("  {:?}: params [{}]", kind, params.join(", ")));
+    for kind in EffectKind::all_builtin() {
+        if let Some(effect) = effects::resolve_effect(kind) {
+            let schemas = effect.param_schema();
+            let params: Vec<String> = schemas.iter().map(|s| format!("{:?} ({})", s.key, s.label)).collect();
+            lines.push(format!("  {:?}: params [{}]", kind, params.join(", ")));
+        }
     }
 
     lines.push("\nParam values use tagged format: {\"Float\": 1.0}, {\"Color\": {\"r\":255,\"g\":0,\"b\":0,\"a\":255}}, {\"Bool\": true}, {\"ColorList\": [{\"r\":255,\"g\":0,\"b\":0,\"a\":255}]}, {\"Int\": 5}, {\"Text\": \"hello\"}".to_string());
@@ -277,6 +290,7 @@ fn build_system_prompt(state: &Arc<AppState>) -> String {
 
 // ── Tool execution ───────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
 fn execute_tool(state: &Arc<AppState>, name: &str, input: &Value) -> Result<String, String> {
     match name {
         "add_effect" => {
@@ -284,32 +298,32 @@ fn execute_tool(state: &Arc<AppState>, name: &str, input: &Value) -> Result<Stri
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or(crate::model::BlendMode::Override);
             let opacity = input.get("opacity")
-                .and_then(|v| v.as_f64())
+                .and_then(Value::as_f64)
                 .unwrap_or(1.0);
             let cmd = EditCommand::AddEffect {
                 sequence_index: 0,
-                track_index: input["track_index"].as_u64().ok_or("Missing track_index")? as usize,
-                kind: serde_json::from_value(input["kind"].clone()).map_err(|e| e.to_string())?,
-                start: input["start"].as_f64().ok_or("Missing start")?,
-                end: input["end"].as_f64().ok_or("Missing end")?,
+                track_index: input.get("track_index").and_then(Value::as_u64).ok_or("Missing track_index")? as usize,
+                kind: serde_json::from_value(input.get("kind").cloned().unwrap_or(Value::Null)).map_err(|e| e.to_string())?,
+                start: input.get("start").and_then(Value::as_f64).ok_or("Missing start")?,
+                end: input.get("end").and_then(Value::as_f64).ok_or("Missing end")?,
                 blend_mode,
                 opacity,
             };
             let mut dispatcher = state.dispatcher.lock();
             let mut show = state.show.lock();
-            let result = dispatcher.execute(&mut show, cmd)?;
-            Ok(format!("{:?}", result))
+            let result = dispatcher.execute(&mut show, &cmd)?;
+            Ok(format!("{result:?}"))
         }
         "delete_effects" => {
-            let targets: Vec<(usize, usize)> = input["targets"]
-                .as_array()
+            let targets: Vec<(usize, usize)> = input.get("targets")
+                .and_then(Value::as_array)
                 .ok_or("Missing targets")?
                 .iter()
                 .map(|pair| {
                     let arr = pair.as_array().ok_or("Invalid target pair")?;
                     Ok((
-                        arr.first().and_then(|v| v.as_u64()).ok_or("Invalid track index")? as usize,
-                        arr.get(1).and_then(|v| v.as_u64()).ok_or("Invalid effect index")? as usize,
+                        arr.first().and_then(Value::as_u64).ok_or("Invalid track index")? as usize,
+                        arr.get(1).and_then(Value::as_u64).ok_or("Invalid effect index")? as usize,
                     ))
                 })
                 .collect::<Result<_, String>>()?;
@@ -319,77 +333,98 @@ fn execute_tool(state: &Arc<AppState>, name: &str, input: &Value) -> Result<Stri
             };
             let mut dispatcher = state.dispatcher.lock();
             let mut show = state.show.lock();
-            dispatcher.execute(&mut show, cmd)?;
+            dispatcher.execute(&mut show, &cmd)?;
             Ok("Deleted".to_string())
         }
         "update_effect_param" => {
             let cmd = EditCommand::UpdateEffectParam {
                 sequence_index: 0,
-                track_index: input["track_index"].as_u64().ok_or("Missing track_index")? as usize,
-                effect_index: input["effect_index"].as_u64().ok_or("Missing effect_index")? as usize,
-                key: serde_json::from_value(input["key"].clone()).map_err(|e| format!("Invalid param key: {}", e))?,
-                value: serde_json::from_value(input["value"].clone()).map_err(|e| e.to_string())?,
+                track_index: input.get("track_index").and_then(Value::as_u64).ok_or("Missing track_index")? as usize,
+                effect_index: input.get("effect_index").and_then(Value::as_u64).ok_or("Missing effect_index")? as usize,
+                key: serde_json::from_value(input.get("key").cloned().unwrap_or(Value::Null)).map_err(|e| format!("Invalid param key: {e}"))?,
+                value: serde_json::from_value(input.get("value").cloned().unwrap_or(Value::Null)).map_err(|e| e.to_string())?,
             };
             let mut dispatcher = state.dispatcher.lock();
             let mut show = state.show.lock();
-            dispatcher.execute(&mut show, cmd)?;
+            dispatcher.execute(&mut show, &cmd)?;
             Ok("Updated".to_string())
         }
         "update_effect_time_range" => {
             let cmd = EditCommand::UpdateEffectTimeRange {
                 sequence_index: 0,
-                track_index: input["track_index"].as_u64().ok_or("Missing track_index")? as usize,
-                effect_index: input["effect_index"].as_u64().ok_or("Missing effect_index")? as usize,
-                start: input["start"].as_f64().ok_or("Missing start")?,
-                end: input["end"].as_f64().ok_or("Missing end")?,
+                track_index: input.get("track_index").and_then(Value::as_u64).ok_or("Missing track_index")? as usize,
+                effect_index: input.get("effect_index").and_then(Value::as_u64).ok_or("Missing effect_index")? as usize,
+                start: input.get("start").and_then(Value::as_f64).ok_or("Missing start")?,
+                end: input.get("end").and_then(Value::as_f64).ok_or("Missing end")?,
             };
             let mut dispatcher = state.dispatcher.lock();
             let mut show = state.show.lock();
-            dispatcher.execute(&mut show, cmd)?;
+            dispatcher.execute(&mut show, &cmd)?;
             Ok("Updated".to_string())
         }
         "add_track" => {
-            let fixture_id = input["fixture_id"].as_u64().ok_or("Missing fixture_id")? as u32;
+            let fixture_id = input.get("fixture_id").and_then(Value::as_u64).ok_or("Missing fixture_id")? as u32;
             let cmd = EditCommand::AddTrack {
                 sequence_index: 0,
-                name: input["name"].as_str().ok_or("Missing name")?.to_string(),
+                name: input.get("name").and_then(Value::as_str).ok_or("Missing name")?.to_string(),
                 target: crate::model::EffectTarget::Fixtures(vec![crate::model::FixtureId(fixture_id)]),
             };
             let mut dispatcher = state.dispatcher.lock();
             let mut show = state.show.lock();
-            let result = dispatcher.execute(&mut show, cmd)?;
-            Ok(format!("{:?}", result))
+            let result = dispatcher.execute(&mut show, &cmd)?;
+            Ok(format!("{result:?}"))
+        }
+        "delete_track" => {
+            let track_index = input.get("track_index").and_then(Value::as_u64).ok_or("Missing track_index")? as usize;
+            let cmd = EditCommand::DeleteTrack {
+                sequence_index: 0,
+                track_index,
+            };
+            let mut dispatcher = state.dispatcher.lock();
+            let mut show = state.show.lock();
+            dispatcher.execute(&mut show, &cmd)?;
+            Ok(format!("Deleted track {track_index}"))
         }
         "play" => {
-            state.playback.lock().playing = true;
+            let mut playback = state.playback.lock();
+            playback.playing = true;
+            playback.last_tick = Some(std::time::Instant::now());
             Ok("Playing".to_string())
         }
         "pause" => {
-            state.playback.lock().playing = false;
+            let mut playback = state.playback.lock();
+            playback.playing = false;
+            playback.last_tick = None;
             Ok("Paused".to_string())
         }
         "seek" => {
-            let time = input["time"].as_f64().ok_or("Missing time")?;
-            state.playback.lock().current_time = time.max(0.0);
-            Ok(format!("Seeked to {:.1}s", time))
+            let time = input.get("time").and_then(Value::as_f64).ok_or("Missing time")?;
+            let mut playback = state.playback.lock();
+            playback.current_time = time.max(0.0);
+            if playback.playing {
+                playback.last_tick = Some(std::time::Instant::now());
+            } else {
+                playback.last_tick = None;
+            }
+            Ok(format!("Seeked to {time:.1}s"))
         }
         "undo" => {
             let mut dispatcher = state.dispatcher.lock();
             let mut show = state.show.lock();
             let desc = dispatcher.undo(&mut show)?;
-            Ok(format!("Undone: {}", desc))
+            Ok(format!("Undone: {desc}"))
         }
         "redo" => {
             let mut dispatcher = state.dispatcher.lock();
             let mut show = state.show.lock();
             let desc = dispatcher.redo(&mut show)?;
-            Ok(format!("Redone: {}", desc))
+            Ok(format!("Redone: {desc}"))
         }
         "get_show" => {
             let show = state.show.lock();
             Ok(serde_json::to_string_pretty(&*show).unwrap_or_default())
         }
-        _ => Err(format!("Unknown tool: {}", name)),
+        _ => Err(format!("Unknown tool: {name}")),
     }
 }
 
@@ -402,6 +437,7 @@ pub struct ChatManager {
 }
 
 impl ChatManager {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             history: Vec::new(),
@@ -409,6 +445,7 @@ impl ChatManager {
         }
     }
 
+    #[must_use]
     pub fn history_for_display(&self) -> Vec<ChatHistoryEntry> {
         let mut entries = Vec::new();
         for msg in &self.history {
@@ -432,14 +469,14 @@ impl ChatManager {
                             }
                             ContentBlock::ToolUse { name, .. } => {
                                 entries.push(ChatHistoryEntry {
-                                    role: "assistant".to_string(),
-                                    text: format!("Calling {}...", name),
+                                    role: ChatRole::Assistant,
+                                    text: format!("Calling {name}..."),
                                     tool_name: Some(name.clone()),
                                 });
                             }
                             ContentBlock::ToolResult { content, .. } => {
                                 entries.push(ChatHistoryEntry {
-                                    role: "tool".to_string(),
+                                    role: ChatRole::Tool,
                                     text: content.clone(),
                                     tool_name: None,
                                 });
@@ -460,7 +497,13 @@ impl ChatManager {
         self.cancelled = true;
     }
 
-    /// Send a message and run the agentic loop. Uses ChatEmitter for event output.
+    /// Send a message and run the agentic loop. Uses `ChatEmitter` for event output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API key is missing, the API request fails, or
+    /// the response cannot be parsed.
+    #[allow(clippy::too_many_lines)]
     pub async fn send_message(
         state: Arc<AppState>,
         emitter: &dyn ChatEmitter,
@@ -479,7 +522,7 @@ impl ChatManager {
             let mut chat = state.chat.lock();
             chat.cancelled = false;
             chat.history.push(ChatMessage {
-                role: "user".to_string(),
+                role: ChatRole::User,
                 content: ChatContent::Text(message),
             });
         }
@@ -520,22 +563,22 @@ impl ChatManager {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| format!("API request failed: {}", e))?;
+                .map_err(|e| format!("API request failed: {e}"))?;
 
             if !response.status().is_success() {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
-                return Err(format!("API error {}: {}", status, text));
+                return Err(format!("API error {status}: {text}"));
             }
 
             let response_json: Value = response
                 .json()
                 .await
-                .map_err(|e| format!("Failed to parse response: {}", e))?;
+                .map_err(|e| format!("Failed to parse response: {e}"))?;
 
-            let stop_reason = response_json["stop_reason"].as_str().unwrap_or("");
-            let content_blocks = response_json["content"]
-                .as_array()
+            let stop_reason = response_json.get("stop_reason").and_then(Value::as_str).unwrap_or("");
+            let content_blocks = response_json.get("content")
+                .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
 
@@ -545,18 +588,18 @@ impl ChatManager {
             let mut tool_results = Vec::new();
 
             for block in &content_blocks {
-                let block_type = block["type"].as_str().unwrap_or("");
+                let block_type = block.get("type").and_then(Value::as_str).unwrap_or("");
                 match block_type {
                     "text" => {
-                        let text = block["text"].as_str().unwrap_or("").to_string();
+                        let text = block.get("text").and_then(Value::as_str).unwrap_or("").to_string();
                         emitter.emit_token(&text);
                         assistant_blocks.push(ContentBlock::Text { text });
                     }
                     "tool_use" => {
                         has_tool_use = true;
-                        let id = block["id"].as_str().unwrap_or("").to_string();
-                        let name = block["name"].as_str().unwrap_or("").to_string();
-                        let input = block["input"].clone();
+                        let id = block.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                        let name = block.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                        let input = block.get("input").cloned().unwrap_or(Value::Null);
 
                         emitter.emit_tool_call(&name);
 
@@ -568,7 +611,7 @@ impl ChatManager {
 
                         // Execute the tool
                         let result = execute_tool(&state, &name, &input)
-                            .unwrap_or_else(|e| format!("Error: {}", e));
+                            .unwrap_or_else(|e| format!("Error: {e}"));
 
                         emitter.emit_tool_result(&name, &result);
 
@@ -585,14 +628,14 @@ impl ChatManager {
             {
                 let mut chat = state.chat.lock();
                 chat.history.push(ChatMessage {
-                    role: "assistant".to_string(),
+                    role: ChatRole::Assistant,
                     content: ChatContent::Blocks(assistant_blocks),
                 });
 
                 // If there were tool uses, add tool results
                 if !tool_results.is_empty() {
                     chat.history.push(ChatMessage {
-                        role: "user".to_string(),
+                        role: ChatRole::User,
                         content: ChatContent::Blocks(tool_results),
                     });
                 }
@@ -609,9 +652,10 @@ impl ChatManager {
     }
 
     /// Get the last assistant text response (useful for API/CLI returning results).
+    #[must_use]
     pub fn last_assistant_text(&self) -> Option<String> {
         for msg in self.history.iter().rev() {
-            if msg.role == "assistant" {
+            if msg.role == ChatRole::Assistant {
                 match &msg.content {
                     ChatContent::Text(text) => return Some(text.clone()),
                     ChatContent::Blocks(blocks) => {

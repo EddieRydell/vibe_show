@@ -1,6 +1,7 @@
 use crate::effects::resolve_effect;
 use crate::engine::Frame;
 use crate::model::{EffectInstance, Sequence, Show};
+use crate::util::base64_decode;
 
 /// Human-readable summary of the entire show: fixtures, groups, controllers, patches, layout.
 pub fn describe_show(show: &Show) -> String {
@@ -58,7 +59,7 @@ pub fn describe_show(show: &Show) -> String {
     // Layout
     let layout_count = show.layout.fixtures.len();
     if layout_count > 0 {
-        lines.push(format!("\nLayout: {} fixtures positioned", layout_count));
+        lines.push(format!("\nLayout: {layout_count} fixtures positioned"));
     }
 
     // Sequences
@@ -82,7 +83,40 @@ pub fn describe_sequence(seq: &Sequence) -> String {
         seq.name, seq.duration, seq.frame_rate
     ));
     if let Some(ref audio) = seq.audio_file {
-        lines.push(format!("Audio: {}", audio));
+        lines.push(format!("Audio: {audio}"));
+    }
+
+    // Resource libraries
+    if !seq.scripts.is_empty() {
+        lines.push(format!(
+            "\nScripts ({}): {}",
+            seq.scripts.len(),
+            seq.scripts.keys().cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    if !seq.gradient_library.is_empty() {
+        let items: Vec<String> = seq
+            .gradient_library
+            .iter()
+            .map(|(name, g)| format!("{name} ({} stops)", g.stops().len()))
+            .collect();
+        lines.push(format!(
+            "\nGradient Library ({}): {}",
+            seq.gradient_library.len(),
+            items.join(", ")
+        ));
+    }
+    if !seq.curve_library.is_empty() {
+        let items: Vec<String> = seq
+            .curve_library
+            .iter()
+            .map(|(name, c)| format!("{name} ({} pts)", c.points().len()))
+            .collect();
+        lines.push(format!(
+            "\nCurve Library ({}): {}",
+            seq.curve_library.len(),
+            items.join(", ")
+        ));
     }
 
     lines.push(format!("\nTracks ({})", seq.tracks.len()));
@@ -106,40 +140,6 @@ pub fn describe_sequence(seq: &Sequence) -> String {
     lines.join("\n")
 }
 
-/// Decode base64-encoded RGBA pixel data into raw bytes.
-fn base64_decode(s: &str) -> Vec<u8> {
-    fn val(c: u8) -> u8 {
-        match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            _ => 0,
-        }
-    }
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
-    for chunk in bytes.chunks(4) {
-        if chunk.len() < 2 {
-            break;
-        }
-        let a = val(chunk[0]) as u32;
-        let b = val(chunk[1]) as u32;
-        let c = if chunk.len() > 2 && chunk[2] != b'=' { val(chunk[2]) as u32 } else { 0 };
-        let d = if chunk.len() > 3 && chunk[3] != b'=' { val(chunk[3]) as u32 } else { 0 };
-        let triple = (a << 18) | (b << 12) | (c << 6) | d;
-        out.push((triple >> 16) as u8);
-        if chunk.len() > 2 && chunk[2] != b'=' {
-            out.push((triple >> 8 & 0xFF) as u8);
-        }
-        if chunk.len() > 3 && chunk[3] != b'=' {
-            out.push((triple & 0xFF) as u8);
-        }
-    }
-    out
-}
-
 /// Human-readable summary of a frame: per-fixture color averages.
 pub fn describe_frame(show: &Show, frame: &Frame) -> String {
     let mut lines = Vec::new();
@@ -155,9 +155,11 @@ pub fn describe_frame(show: &Show, frame: &Frame) -> String {
                 continue;
             }
 
+            // chunks_exact(4) guarantees each `px` has exactly 4 elements
+            #[allow(clippy::indexing_slicing)]
             let (r_sum, g_sum, b_sum) =
                 bytes.chunks_exact(4).fold((0u64, 0u64, 0u64), |acc, px| {
-                    (acc.0 + px[0] as u64, acc.1 + px[1] as u64, acc.2 + px[2] as u64)
+                    (acc.0 + u64::from(px[0]), acc.1 + u64::from(px[1]), acc.2 + u64::from(px[2]))
                 });
             let n = pixel_count as u64;
             lines.push(format!(
@@ -179,13 +181,13 @@ pub fn describe_frame(show: &Show, frame: &Frame) -> String {
 
 /// Human-readable summary of a single effect instance.
 pub fn describe_effect(effect: &EffectInstance) -> String {
-    let resolved = resolve_effect(&effect.kind);
-    let schema = resolved.param_schema();
+    let schema = resolve_effect(&effect.kind)
+        .map_or_else(Vec::new, |e| e.param_schema());
 
     let mut param_strs = Vec::new();
     for s in &schema {
-        if let Some(val) = effect.params.get(s.key) {
-            param_strs.push(format!("{:?}={:?}", s.key, val));
+        if let Some(val) = effect.params.get(s.key.clone()) {
+            param_strs.push(format!("{}={}", s.key, val));
         }
     }
 
@@ -196,7 +198,7 @@ pub fn describe_effect(effect: &EffectInstance) -> String {
     };
 
     format!(
-        "{:?} [{:.1}s - {:.1}s] ({})",
+        "{} [{:.1}s - {:.1}s] ({})",
         effect.kind,
         effect.time_range.start(),
         effect.time_range.end(),

@@ -1,5 +1,5 @@
 // CLI binary — panicking on unrecoverable errors is standard for CLI tools.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::unreachable, clippy::indexing_slicing)]
 
 use std::path::PathBuf;
 use std::process;
@@ -30,7 +30,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the VibeLights API server (long-running)
+    /// Start the `VibeLights` API server (long-running)
     Serve {
         /// Data directory (overrides settings.json)
         #[arg(long)]
@@ -204,6 +204,7 @@ enum SequenceAction {
 
 // ── Server mode ──────────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines)]
 async fn run_serve(
     data_dir: Option<String>,
     profile: Option<String>,
@@ -251,6 +252,8 @@ async fn run_serve(
             current_time: 0.0,
             sequence_index: 0,
             last_tick: None,
+            region: None,
+            looping: false,
         }),
         dispatcher: Mutex::new(CommandDispatcher::new()),
         chat: Mutex::new(ChatManager::new()),
@@ -259,6 +262,10 @@ async fn run_serve(
         settings: Mutex::new(loaded_settings.clone()),
         current_profile: Mutex::new(None),
         current_sequence: Mutex::new(None),
+        script_cache: Mutex::new(std::collections::HashMap::new()),
+        python_sidecar: Mutex::new(None),
+        python_port: AtomicU16::new(0),
+        analysis_cache: Mutex::new(std::collections::HashMap::new()),
     });
 
     // Open profile and sequence if specified
@@ -268,8 +275,8 @@ async fn run_serve(
                 Ok(profile_data) => {
                     *state.current_profile.lock() = Some(profile_slug.clone());
                     eprintln!(
-                        "[VibeLights] Profile: {} ({})",
-                        profile_data.name, profile_slug
+                        "[VibeLights] Profile: {} ({profile_slug})",
+                        profile_data.name
                     );
 
                     if let Some(ref seq_slug) = sequence {
@@ -285,20 +292,19 @@ async fn run_serve(
                                 *state.current_sequence.lock() =
                                     Some(seq_slug.clone());
                                 eprintln!(
-                                    "[VibeLights] Sequence: {} ({})",
-                                    seq_data.name, seq_slug
+                                    "[VibeLights] Sequence: {} ({seq_slug})",
+                                    seq_data.name
                                 );
                             }
                             Err(e) => {
-                                eprintln!("[VibeLights] Failed to load sequence '{}': {}", seq_slug, e);
+                                eprintln!("[VibeLights] Failed to load sequence '{seq_slug}': {e}");
                             }
                         }
                     }
                 }
                 Err(e) => {
                     eprintln!(
-                        "[VibeLights] Failed to load profile '{}': {}",
-                        profile_slug, e
+                        "[VibeLights] Failed to load profile '{profile_slug}': {e}"
                     );
                 }
             }
@@ -320,7 +326,7 @@ async fn run_serve(
     let port_file = app_config_dir.join(".vibelights-port");
     let _ = std::fs::write(&port_file, bind_port.to_string());
 
-    eprintln!("[VibeLights] API server: http://127.0.0.1:{}", bind_port);
+    eprintln!("[VibeLights] API server: http://127.0.0.1:{bind_port}");
     eprintln!("[VibeLights] Ready. Press Ctrl+C to stop.");
 
     if port != 0 {
@@ -340,22 +346,24 @@ async fn run_serve(
 
 // ── Bench mode ──────────────────────────────────────────────────
 
+#[allow(clippy::cast_precision_loss)]
 fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64, iterations: usize) {
     use std::time::Instant;
     use vibe_lights::engine;
+    use vibe_lights::model::fixture::EffectTarget;
     use vibe_lights::profile;
 
     let data_path = PathBuf::from(data_dir);
 
     // Load profile
     let prof = profile::load_profile(&data_path, profile_slug).unwrap_or_else(|e| {
-        eprintln!("Failed to load profile '{}': {}", profile_slug, e);
+        eprintln!("Failed to load profile '{profile_slug}': {e}");
         process::exit(1);
     });
 
     // Load sequence
     let seq = profile::load_sequence(&data_path, profile_slug, sequence_slug).unwrap_or_else(|e| {
-        eprintln!("Failed to load sequence '{}': {}", sequence_slug, e);
+        eprintln!("Failed to load sequence '{sequence_slug}': {e}");
         process::exit(1);
     });
 
@@ -364,20 +372,19 @@ fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64,
 
     eprintln!("Show: {} fixtures, {} groups", show.fixtures.len(), show.groups.len());
     let total_pixels: u32 = show.fixtures.iter().map(|f| f.pixel_count).sum();
-    eprintln!("Total pixels: {}", total_pixels);
+    eprintln!("Total pixels: {total_pixels}");
     if let Some(s) = show.sequences.first() {
         eprintln!("Sequence: {} tracks, duration {:.1}s", s.tracks.len(), s.duration);
         let total_effects: usize = s.tracks.iter().map(|t| t.effects.len()).sum();
-        eprintln!("Total effects: {}", total_effects);
+        eprintln!("Total effects: {total_effects}");
 
         // Count active effects at benchmark time
         let active_effects: usize = s.tracks.iter().map(|t| {
             t.effects.iter().filter(|e| e.time_range.contains(time)).count()
         }).sum();
-        eprintln!("Active effects at t={}: {}", time, active_effects);
+        eprintln!("Active effects at t={time}: {active_effects}");
 
         // Count target stats
-        use vibe_lights::model::fixture::EffectTarget;
         let mut all_count = 0usize;
         let mut group_count = 0usize;
         let mut fixture_count = 0usize;
@@ -388,12 +395,12 @@ fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64,
                 EffectTarget::Fixtures(_) => fixture_count += 1,
             }
         }
-        eprintln!("Track targets: {} All, {} Group, {} Fixtures", all_count, group_count, fixture_count);
+        eprintln!("Track targets: {all_count} All, {group_count} Group, {fixture_count} Fixtures");
     }
 
     // Measure serialization overhead
     {
-        let frame = engine::evaluate(&show, 0, time, None);
+        let frame = engine::evaluate(&show, 0, time, None, None);
         let json = serde_json::to_string(&frame).unwrap();
         eprintln!("Frame JSON size: {} bytes ({:.1} KB)", json.len(), json.len() as f64 / 1024.0);
         eprintln!("Frame fixture count: {}", frame.fixtures.len());
@@ -402,34 +409,34 @@ fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64,
 
         let start = std::time::Instant::now();
         for _ in 0..20 {
-            let f = engine::evaluate(&show, 0, time, None);
+            let f = engine::evaluate(&show, 0, time, None, None);
             let j = serde_json::to_string(&f).unwrap();
             std::hint::black_box(&j);
         }
         let ser_time = start.elapsed() / 20;
-        eprintln!("Eval + serialize: {:?}", ser_time);
+        eprintln!("Eval + serialize: {ser_time:?}");
 
         // Measure serialize alone
-        let frame2 = engine::evaluate(&show, 0, time, None);
+        let frame2 = engine::evaluate(&show, 0, time, None, None);
         let start2 = std::time::Instant::now();
         for _ in 0..20 {
             let j = serde_json::to_string(&frame2).unwrap();
             std::hint::black_box(&j);
         }
         let ser_only = start2.elapsed() / 20;
-        eprintln!("Serialize only: {:?}", ser_only);
+        eprintln!("Serialize only: {ser_only:?}");
     }
 
     // Warmup
     eprintln!("\nWarmup...");
-    let _ = engine::evaluate(&show, 0, time, None);
+    let _ = engine::evaluate(&show, 0, time, None, None);
 
     // Benchmark (evaluate only)
-    eprintln!("Benchmarking {} iterations at t={}...\n", iterations, time);
+    eprintln!("Benchmarking {iterations} iterations at t={time}...\n");
     let mut times = Vec::with_capacity(iterations);
     for _ in 0..iterations {
         let start = Instant::now();
-        let frame = engine::evaluate(&show, 0, time, None);
+        let frame = engine::evaluate(&show, 0, time, None, None);
         let elapsed = start.elapsed();
         times.push(elapsed);
         std::hint::black_box(&frame);
@@ -437,18 +444,20 @@ fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64,
 
     times.sort();
     let total: std::time::Duration = times.iter().sum();
+    #[allow(clippy::cast_possible_truncation)]
     let avg = total / iterations as u32;
     let median = times[iterations / 2];
     let min = times[0];
     let max = times[iterations - 1];
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let p95 = times[(iterations as f64 * 0.95) as usize];
 
-    eprintln!("Results ({} iterations):", iterations);
-    eprintln!("  avg:    {:>8.2?}", avg);
-    eprintln!("  median: {:>8.2?}", median);
-    eprintln!("  min:    {:>8.2?}", min);
-    eprintln!("  max:    {:>8.2?}", max);
-    eprintln!("  p95:    {:>8.2?}", p95);
+    eprintln!("Results ({iterations} iterations):");
+    eprintln!("  avg:    {avg:>8.2?}");
+    eprintln!("  median: {median:>8.2?}");
+    eprintln!("  min:    {min:>8.2?}");
+    eprintln!("  max:    {max:>8.2?}");
+    eprintln!("  p95:    {p95:>8.2?}");
     eprintln!("  fps:    {:.1}", 1.0 / avg.as_secs_f64());
 }
 
@@ -474,21 +483,19 @@ fn discover_port(cli_port: Option<u16>) -> u16 {
 }
 
 fn base_url(port: u16) -> String {
-    format!("http://127.0.0.1:{}", port)
+    format!("http://127.0.0.1:{port}")
 }
 
 fn dirs_config_dir() -> PathBuf {
     // Match Tauri's app config dir pattern: <config_dir>/com.vibelights.app
     let base = if cfg!(target_os = "windows") {
         std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("C:\\Users\\Default\\AppData\\Roaming"))
+            .map_or_else(|_| PathBuf::from("C:\\Users\\Default\\AppData\\Roaming"), PathBuf::from)
     } else if cfg!(target_os = "macos") {
         dirs_home().join("Library/Application Support")
     } else {
         std::env::var("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| dirs_home().join(".config"))
+            .map_or_else(|_| dirs_home().join(".config"), PathBuf::from)
     };
     base.join("com.vibelights.app")
 }
@@ -496,8 +503,7 @@ fn dirs_config_dir() -> PathBuf {
 fn dirs_home() -> PathBuf {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
+        .map_or_else(|_| PathBuf::from("."), PathBuf::from)
 }
 
 // ── HTTP client helpers ──────────────────────────────────────────
@@ -505,10 +511,10 @@ fn dirs_home() -> PathBuf {
 async fn http_get(url: &str) -> Result<Value, String> {
     let resp = reqwest::get(url)
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| format!("Request failed: {e}"))?;
     resp.json()
         .await
-        .map_err(|e| format!("Parse failed: {}", e))
+        .map_err(|e| format!("Parse failed: {e}"))
 }
 
 async fn http_post(url: &str, body: Value) -> Result<Value, String> {
@@ -518,10 +524,10 @@ async fn http_post(url: &str, body: Value) -> Result<Value, String> {
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| format!("Request failed: {e}"))?;
     resp.json()
         .await
-        .map_err(|e| format!("Parse failed: {}", e))
+        .map_err(|e| format!("Parse failed: {e}"))
 }
 
 async fn http_delete(url: &str) -> Result<Value, String> {
@@ -530,10 +536,10 @@ async fn http_delete(url: &str) -> Result<Value, String> {
         .delete(url)
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| format!("Request failed: {e}"))?;
     resp.json()
         .await
-        .map_err(|e| format!("Parse failed: {}", e))
+        .map_err(|e| format!("Parse failed: {e}"))
 }
 
 // http_put available for future use (e.g., fixtures/setup endpoints)
@@ -545,10 +551,10 @@ async fn http_put(url: &str, body: Value) -> Result<Value, String> {
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| format!("Request failed: {e}"))?;
     resp.json()
         .await
-        .map_err(|e| format!("Parse failed: {}", e))
+        .map_err(|e| format!("Parse failed: {e}"))
 }
 
 fn check_response(json: &Value) -> Result<(), String> {
@@ -566,12 +572,12 @@ fn print_result(json: &Value, raw_json: bool) {
     }
 
     if let Err(e) = check_response(json) {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         process::exit(1);
     }
 
     if let Some(desc) = json["description"].as_str() {
-        println!("{}", desc);
+        println!("{desc}");
     }
 
     let data = &json["data"];
@@ -584,13 +590,14 @@ fn print_result(json: &Value, raw_json: bool) {
     } else if data.is_array() || data.is_object() {
         println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
     } else {
-        println!("{}", data);
+        println!("{data}");
     }
 }
 
 // ── Main ─────────────────────────────────────────────────────────
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() {
     let cli = Cli::parse();
 
@@ -622,31 +629,30 @@ async fn main() {
                 Commands::Serve { .. } | Commands::Bench { .. } => unreachable!(),
 
                 Commands::Profiles { action } => match action {
-                    ProfileAction::List => http_get(&format!("{}/api/profiles", base)).await,
+                    ProfileAction::List => http_get(&format!("{base}/api/profiles")).await,
                     ProfileAction::Create { name } => {
-                        http_post(&format!("{}/api/profiles", base), serde_json::json!({ "name": name })).await
+                        http_post(&format!("{base}/api/profiles"), serde_json::json!({ "name": name })).await
                     }
                     ProfileAction::Open { slug } => {
-                        http_get(&format!("{}/api/profiles/{}", base, slug)).await
+                        http_get(&format!("{base}/api/profiles/{slug}")).await
                     }
                     ProfileAction::Delete { slug } => {
-                        http_delete(&format!("{}/api/profiles/{}", base, slug)).await
+                        http_delete(&format!("{base}/api/profiles/{slug}")).await
                     }
                     ProfileAction::Save => {
-                        http_post(&format!("{}/api/save", base), serde_json::json!({})).await
+                        http_post(&format!("{base}/api/save"), serde_json::json!({})).await
                     }
                 },
 
                 Commands::Sequences { action } => {
                     // We need the current profile slug for sequence operations.
                     // First try to get it from the server's settings.
-                    let settings_json = http_get(&format!("{}/api/settings", base)).await;
+                    let settings_json = http_get(&format!("{base}/api/settings")).await;
                     let current_profile = settings_json
                         .as_ref()
                         .ok()
                         .and_then(|j| j["data"]["last_profile"].as_str())
-                        .map(|s| s.to_string())
-                        .unwrap_or_default();
+                        .map_or_else(String::new, str::to_string);
 
                     if current_profile.is_empty() {
                         eprintln!("Error: No profile is currently open. Open a profile first.");
@@ -655,35 +661,33 @@ async fn main() {
 
                     match action {
                         SequenceAction::List => {
-                            http_get(&format!("{}/api/profiles/{}/sequences", base, current_profile)).await
+                            http_get(&format!("{base}/api/profiles/{current_profile}/sequences")).await
                         }
                         SequenceAction::Create { name } => {
                             http_post(
-                                &format!("{}/api/profiles/{}/sequences", base, current_profile),
+                                &format!("{base}/api/profiles/{current_profile}/sequences"),
                                 serde_json::json!({ "name": name }),
                             ).await
                         }
                         SequenceAction::Open { slug } => {
                             http_get(&format!(
-                                "{}/api/profiles/{}/sequences/{}",
-                                base, current_profile, slug
+                                "{base}/api/profiles/{current_profile}/sequences/{slug}"
                             )).await
                         }
                         SequenceAction::Delete { slug } => {
                             http_delete(&format!(
-                                "{}/api/profiles/{}/sequences/{}",
-                                base, current_profile, slug
+                                "{base}/api/profiles/{current_profile}/sequences/{slug}"
                             )).await
                         }
                         SequenceAction::Save => {
-                            http_post(&format!("{}/api/save", base), serde_json::json!({})).await
+                            http_post(&format!("{base}/api/save"), serde_json::json!({})).await
                         }
                     }
                 }
 
                 Commands::AddEffect { track, kind, start, end } => {
                     http_post(
-                        &format!("{}/api/command", base),
+                        &format!("{base}/api/command"),
                         serde_json::json!({
                             "AddEffect": {
                                 "sequence_index": 0,
@@ -698,7 +702,7 @@ async fn main() {
 
                 Commands::AddTrack { name, fixture } => {
                     http_post(
-                        &format!("{}/api/command", base),
+                        &format!("{base}/api/command"),
                         serde_json::json!({
                             "AddTrack": {
                                 "sequence_index": 0,
@@ -722,7 +726,7 @@ async fn main() {
                         })
                         .collect();
                     http_post(
-                        &format!("{}/api/command", base),
+                        &format!("{base}/api/command"),
                         serde_json::json!({
                             "DeleteEffects": {
                                 "sequence_index": 0,
@@ -736,7 +740,7 @@ async fn main() {
                     let parsed_value: Value = serde_json::from_str(&value)
                         .unwrap_or(Value::String(value));
                     http_post(
-                        &format!("{}/api/command", base),
+                        &format!("{base}/api/command"),
                         serde_json::json!({
                             "UpdateEffectParam": {
                                 "sequence_index": 0,
@@ -751,7 +755,7 @@ async fn main() {
 
                 Commands::UpdateTime { track, effect, start, end } => {
                     http_post(
-                        &format!("{}/api/command", base),
+                        &format!("{base}/api/command"),
                         serde_json::json!({
                             "UpdateEffectTimeRange": {
                                 "sequence_index": 0,
@@ -766,7 +770,7 @@ async fn main() {
 
                 Commands::MoveEffect { from_track, effect, to_track } => {
                     http_post(
-                        &format!("{}/api/command", base),
+                        &format!("{base}/api/command"),
                         serde_json::json!({
                             "MoveEffectToTrack": {
                                 "sequence_index": 0,
@@ -778,61 +782,61 @@ async fn main() {
                     ).await
                 }
 
-                Commands::Play => http_post(&format!("{}/api/play", base), serde_json::json!({})).await,
-                Commands::Pause => http_post(&format!("{}/api/pause", base), serde_json::json!({})).await,
+                Commands::Play => http_post(&format!("{base}/api/play"), serde_json::json!({})).await,
+                Commands::Pause => http_post(&format!("{base}/api/pause"), serde_json::json!({})).await,
                 Commands::Seek { time } => {
-                    http_post(&format!("{}/api/seek", base), serde_json::json!({ "time": time })).await
+                    http_post(&format!("{base}/api/seek"), serde_json::json!({ "time": time })).await
                 }
 
-                Commands::Show => http_get(&format!("{}/api/show", base)).await,
+                Commands::Show => http_get(&format!("{base}/api/show")).await,
                 Commands::Describe { frame_time } => {
                     let url = if let Some(t) = frame_time {
-                        format!("{}/api/describe?frame_time={}", base, t)
+                        format!("{base}/api/describe?frame_time={t}")
                     } else {
-                        format!("{}/api/describe", base)
+                        format!("{base}/api/describe")
                     };
                     http_get(&url).await
                 }
                 Commands::Frame { time } => {
-                    http_get(&format!("{}/api/frame?time={}", base, time)).await
+                    http_get(&format!("{base}/api/frame?time={time}")).await
                 }
-                Commands::Effects => http_get(&format!("{}/api/effects", base)).await,
+                Commands::Effects => http_get(&format!("{base}/api/effects")).await,
                 Commands::EffectDetail { seq, track, idx } => {
-                    http_get(&format!("{}/api/effect/{}/{}/{}", base, seq, track, idx)).await
+                    http_get(&format!("{base}/api/effect/{seq}/{track}/{idx}")).await
                 }
 
-                Commands::Undo => http_post(&format!("{}/api/undo", base), serde_json::json!({})).await,
-                Commands::Redo => http_post(&format!("{}/api/redo", base), serde_json::json!({})).await,
-                Commands::UndoState => http_get(&format!("{}/api/undo-state", base)).await,
-                Commands::Save => http_post(&format!("{}/api/save", base), serde_json::json!({})).await,
+                Commands::Undo => http_post(&format!("{base}/api/undo"), serde_json::json!({})).await,
+                Commands::Redo => http_post(&format!("{base}/api/redo"), serde_json::json!({})).await,
+                Commands::UndoState => http_get(&format!("{base}/api/undo-state")).await,
+                Commands::Save => http_post(&format!("{base}/api/save"), serde_json::json!({})).await,
 
                 Commands::Chat { message } => {
-                    http_post(&format!("{}/api/chat", base), serde_json::json!({ "message": message })).await
+                    http_post(&format!("{base}/api/chat"), serde_json::json!({ "message": message })).await
                 }
-                Commands::ChatHistory => http_get(&format!("{}/api/chat/history", base)).await,
+                Commands::ChatHistory => http_get(&format!("{base}/api/chat/history")).await,
                 Commands::ChatClear => {
-                    http_post(&format!("{}/api/chat/clear", base), serde_json::json!({})).await
+                    http_post(&format!("{base}/api/chat/clear"), serde_json::json!({})).await
                 }
 
                 Commands::VixenScan { vixen_dir } => {
                     http_post(
-                        &format!("{}/api/vixen/scan", base),
+                        &format!("{base}/api/vixen/scan"),
                         serde_json::json!({ "vixen_dir": vixen_dir }),
                     ).await
                 }
                 Commands::VixenImport { config_json } => {
                     let config: Value = serde_json::from_str(&config_json).unwrap_or_else(|e| {
-                        eprintln!("Error: Invalid JSON config: {}", e);
+                        eprintln!("Error: Invalid JSON config: {e}");
                         process::exit(1);
                     });
-                    http_post(&format!("{}/api/vixen/execute", base), config).await
+                    http_post(&format!("{base}/api/vixen/execute"), config).await
                 }
             };
 
             match result {
                 Ok(json) => print_result(&json, raw),
                 Err(e) => {
-                    eprintln!("Error: {}", e);
+                    eprintln!("Error: {e}");
                     process::exit(1);
                 }
             }

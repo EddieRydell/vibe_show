@@ -1,9 +1,12 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use crate::dsl::compiler::CompiledScript;
 use crate::effects;
 use crate::model::fixture::EffectTarget;
 use crate::model::show::Position2D;
-use crate::model::{Color, FixtureId, GroupId, Show};
+use crate::model::{Color, EffectKind, FixtureId, GroupId, Show};
+use crate::util::base64_encode;
 
 /// A single frame of output: colors for every pixel of every fixture.
 ///
@@ -30,36 +33,8 @@ fn resolve_target_cached<'a>(
         EffectTarget::Fixtures(ids) => ids,
         EffectTarget::Group(group_id) => group_cache
             .get(group_id)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]),
+            .map_or(&[], |v| v.as_slice()),
     }
-}
-
-/// Encode raw bytes as base64.
-fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        result.push(CHARS[(triple >> 18 & 0x3F) as usize] as char);
-        result.push(CHARS[(triple >> 12 & 0x3F) as usize] as char);
-        if chunk.len() > 1 {
-            result.push(CHARS[(triple >> 6 & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-        if chunk.len() > 2 {
-            result.push(CHARS[(triple & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-    }
-    result
 }
 
 /// Convert a Color slice to base64-encoded RGBA bytes.
@@ -73,7 +48,7 @@ fn colors_to_base64(colors: &[Color]) -> String {
 
     // SAFETY: Color is #[repr(C)] {r: u8, g: u8, b: u8, a: u8} = 4 bytes.
     let bytes: &[u8] =
-        unsafe { std::slice::from_raw_parts(colors.as_ptr() as *const u8, colors.len() * 4) };
+        unsafe { std::slice::from_raw_parts(colors.as_ptr().cast::<u8>(), colors.len() * 4) };
     base64_encode(bytes)
 }
 
@@ -94,20 +69,23 @@ fn is_all_black(colors: &[Color]) -> bool {
 ///
 /// If `effect_filter` is provided, only the specified (track_index, effect_index)
 /// pairs are evaluated. All other effects are skipped.
+#[allow(clippy::cast_precision_loss, clippy::implicit_hasher)]
 pub fn evaluate(
     show: &Show,
     sequence_index: usize,
     t: f64,
     effect_filter: Option<&[(usize, usize)]>,
+    script_cache: Option<&HashMap<String, Arc<CompiledScript>>>,
 ) -> Frame {
-    let sequence = match show.sequences.get(sequence_index) {
-        Some(s) => s,
-        None => {
-            return Frame {
-                fixtures: HashMap::new(),
-            }
-        }
+    let Some(sequence) = show.sequences.get(sequence_index) else {
+        return Frame {
+            fixtures: HashMap::new(),
+        };
     };
+
+    // Library references for ref resolution
+    let gradient_lib = &sequence.gradient_library;
+    let curve_lib = &sequence.curve_library;
 
     // Phase 1A: Build fixture pixel count lookup (eliminates O(N) scans).
     let pixel_counts: HashMap<FixtureId, usize> = show
@@ -144,7 +122,7 @@ pub fn evaluate(
 
         // Collect active effects first — skip target resolution entirely if none active.
         // This avoids HashMap lookups and Vec clones for inactive tracks.
-        let active: Vec<_> = track.effects[..end_idx]
+        let active: Vec<_> = track.effects.get(..end_idx).unwrap_or(&track.effects)
             .iter()
             .enumerate()
             .filter(|&(ei, e)| {
@@ -169,6 +147,13 @@ pub fn evaluate(
         for effect_instance in &active {
             let t_normalized = effect_instance.time_range.normalize(t);
             let spatial = effects::needs_positions(&effect_instance.kind);
+
+            // Resolve library references once per effect (outside per-fixture loop).
+            let resolved_params = if effect_instance.params.has_refs() {
+                effect_instance.params.resolve_refs(gradient_lib, curve_lib)
+            } else {
+                effect_instance.params.clone()
+            };
 
             // Build flat position vector for spatial effects (e.g. Wipe).
             // Non-spatial effects skip this entirely (zero overhead).
@@ -222,20 +207,41 @@ pub fn evaluate(
                 // Slice positions for this fixture (spatial effects only).
                 let fixture_positions = positions
                     .as_ref()
-                    .map(|p| &p[global_pixel_offset..global_pixel_offset + pixel_count]);
+                    .and_then(|p| p.get(global_pixel_offset..global_pixel_offset + pixel_count));
 
                 // Phase 2: Batch pixel evaluation (params extracted once, not per-pixel).
-                effects::evaluate_pixels(
+                let handled = effects::evaluate_pixels(
                     &effect_instance.kind,
                     t_normalized,
                     pixels,
                     global_pixel_offset,
                     total_pixels,
-                    &effect_instance.params,
+                    &resolved_params,
                     effect_instance.blend_mode,
                     effect_instance.opacity,
                     fixture_positions,
                 );
+
+                // Fall through to DSL VM for Script effects.
+                if !handled {
+                    if let EffectKind::Script(ref script_name) = effect_instance.kind {
+                        if let Some(compiled) = script_cache
+                            .and_then(|cache| cache.get(script_name))
+                        {
+                            effects::script::evaluate_pixels_batch(
+                                compiled,
+                                t_normalized,
+                                pixels,
+                                global_pixel_offset,
+                                total_pixels,
+                                &resolved_params,
+                                effect_instance.blend_mode,
+                                effect_instance.opacity,
+                                fixture_positions,
+                            );
+                        }
+                    }
+                }
 
                 global_pixel_offset += pixel_count;
             }
@@ -253,7 +259,13 @@ pub fn evaluate(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+)]
 mod tests {
     use super::*;
     use crate::model::fixture::{
@@ -310,6 +322,9 @@ mod tests {
                 frame_rate: 30.0,
                 audio_file: None,
                 tracks,
+                scripts: std::collections::HashMap::new(),
+                gradient_library: std::collections::HashMap::new(),
+                curve_library: std::collections::HashMap::new(),
             }],
             patches: vec![],
             controllers: vec![],
@@ -367,7 +382,7 @@ mod tests {
                 effects: vec![solid_effect(0.0, 5.0, red)],
             }],
         );
-        let frame = evaluate(&show, 0, 2.5, None);
+        let frame = evaluate(&show, 0, 2.5, None, None);
         let colors = decode_fixture_colors(&frame, 1).expect("fixture should be in frame");
         assert_eq!(colors.len(), 5);
         for c in &colors {
@@ -388,15 +403,15 @@ mod tests {
             }],
         );
         // Before range
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         assert!(frame.fixtures.is_empty());
 
         // Inside range
-        let frame = evaluate(&show, 0, 3.0, None);
+        let frame = evaluate(&show, 0, 3.0, None, None);
         assert!(frame.fixtures.contains_key(&1));
 
         // At end (exclusive)
-        let frame = evaluate(&show, 0, 4.0, None);
+        let frame = evaluate(&show, 0, 4.0, None, None);
         assert!(frame.fixtures.is_empty());
     }
 
@@ -417,7 +432,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0], Color::rgb(0, 255, 0));
     }
@@ -439,7 +454,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0].r, 255); // saturated
         assert_eq!(colors[0].g, 255); // 100+200 saturated
@@ -463,7 +478,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         // Multiply with white is identity
         assert_eq!(colors[0].r, 255);
@@ -492,7 +507,7 @@ mod tests {
                 }],
             }],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         let f2 = decode_fixture_colors(&frame, 2).unwrap();
         // Fixture 2 starts at global pixel 5. With 10 total pixels, pixel 5 has pos=5/9≈0.56.
         // Fixture 2 pixel 3 has global pos 8/9≈0.89 → should be bright.
@@ -510,7 +525,7 @@ mod tests {
     #[test]
     fn empty_show_produces_empty_frame() {
         let show = Show::empty();
-        let frame = evaluate(&show, 0, 0.0, None);
+        let frame = evaluate(&show, 0, 0.0, None, None);
         assert!(frame.fixtures.is_empty());
     }
 
@@ -524,7 +539,7 @@ mod tests {
                 effects: vec![solid_effect(0.0, 5.0, Color::WHITE)],
             }],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         assert!(!frame.fixtures.contains_key(&1));
         assert!(frame.fixtures.contains_key(&2));
     }
@@ -539,7 +554,7 @@ mod tests {
                 effects: vec![solid_effect(0.0, 5.0, Color::BLACK)],
             }],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         assert!(frame.fixtures.is_empty());
     }
 
@@ -561,7 +576,7 @@ mod tests {
                 GroupMember::Fixture(FixtureId(3)),
             ],
         });
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         assert!(frame.fixtures.contains_key(&1));
         assert!(!frame.fixtures.contains_key(&2)); // not in group
         assert!(frame.fixtures.contains_key(&3));
@@ -586,7 +601,7 @@ mod tests {
         );
         // Only evaluate track 0, effect 0
         let filter = [(0usize, 0usize)];
-        let frame = evaluate(&show, 0, 1.0, Some(&filter));
+        let frame = evaluate(&show, 0, 1.0, Some(&filter), None);
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0], Color::rgb(255, 0, 0)); // track 1 was skipped
     }
@@ -608,7 +623,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0].r, 150); // 200 - 50
         assert_eq!(colors[0].g, 0);   // 150 - 200 saturates to 0
@@ -632,7 +647,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0].r, 100);
         assert_eq!(colors[0].g, 50);
@@ -656,7 +671,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0].r, 150); // (200+100)/2
         assert_eq!(colors[0].g, 75);  // (100+50)/2
@@ -680,7 +695,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         // screen(128,128) = 255 - (127*127)/255 = 255 - 63 = 192
         assert_eq!(colors[0].r, 192);
@@ -708,7 +723,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         // All pixels should be black (masked out), so frame is empty
         assert!(frame.fixtures.is_empty());
     }
@@ -731,7 +746,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0].r, 200);
         assert_eq!(colors[0].g, 100);
@@ -748,7 +763,7 @@ mod tests {
                 effects: vec![solid_effect_blended(0.0, 5.0, Color::rgb(200, 100, 50), BlendMode::Override, 0.5)],
             }],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0].r, 100);
         assert_eq!(colors[0].g, 50);
@@ -765,7 +780,7 @@ mod tests {
                 effects: vec![solid_effect_blended(0.0, 5.0, Color::WHITE, BlendMode::Override, 0.0)],
             }],
         );
-        let frame = evaluate(&show, 0, 1.0, None);
+        let frame = evaluate(&show, 0, 1.0, None, None);
         // opacity=0 means all black, so frame should be empty
         assert!(frame.fixtures.is_empty());
     }

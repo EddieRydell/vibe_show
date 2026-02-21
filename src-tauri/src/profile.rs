@@ -4,6 +4,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use std::collections::HashMap;
+
+use crate::model::color_gradient::ColorGradient;
+use crate::model::curve::Curve;
 use crate::model::fixture::{Controller, FixtureDef, FixtureGroup, Patch};
 use crate::model::show::{Layout, Show};
 use crate::model::timeline::Sequence;
@@ -82,6 +86,16 @@ struct SetupFile {
     patches: Vec<Patch>,
 }
 
+#[derive(Serialize, Deserialize, Default)]
+pub struct LibrariesFile {
+    #[serde(default)]
+    pub gradients: HashMap<String, ColorGradient>,
+    #[serde(default)]
+    pub curves: HashMap<String, Curve>,
+    #[serde(default)]
+    pub scripts: HashMap<String, String>,
+}
+
 // ── Profile operations ─────────────────────────────────────────────
 
 fn profiles_dir(data_dir: &Path) -> std::path::PathBuf {
@@ -90,6 +104,25 @@ fn profiles_dir(data_dir: &Path) -> std::path::PathBuf {
 
 fn profile_dir(data_dir: &Path, slug: &str) -> std::path::PathBuf {
     profiles_dir(data_dir).join(slug)
+}
+
+/// Load profile-level libraries (gradients, curves, scripts).
+pub fn load_libraries(data_dir: &Path, slug: &str) -> Result<LibrariesFile, ProjectError> {
+    let path = profile_dir(data_dir, slug).join("libraries.json");
+    if !path.exists() {
+        return Ok(LibrariesFile::default());
+    }
+    read_json(&path)
+}
+
+/// Save profile-level libraries (gradients, curves, scripts).
+pub fn save_libraries(
+    data_dir: &Path,
+    slug: &str,
+    libs: &LibrariesFile,
+) -> Result<(), ProjectError> {
+    let dir = profile_dir(data_dir, slug);
+    write_json(&dir.join("libraries.json"), libs)
 }
 
 /// List all profiles in the data directory.
@@ -101,10 +134,10 @@ pub fn list_profiles(data_dir: &Path) -> Result<Vec<ProfileSummary>, ProjectErro
 
     let mut profiles = Vec::new();
     let mut entries: Vec<_> = fs::read_dir(&dir)?
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .filter(|e| e.path().is_dir())
         .collect();
-    entries.sort_by_key(|e| e.file_name());
+    entries.sort_by_key(std::fs::DirEntry::file_name);
 
     for entry in entries {
         let meta_path = entry.path().join("profile.json");
@@ -123,19 +156,17 @@ pub fn list_profiles(data_dir: &Path) -> Result<Vec<ProfileSummary>, ProjectErro
 
         // Count fixtures
         let fixture_count = read_json::<FixturesFile>(&entry.path().join("fixtures.json"))
-            .map(|f| f.fixtures.len())
-            .unwrap_or(0);
+            .map_or(0, |f| f.fixtures.len());
 
         // Count sequences
         let seq_dir = entry.path().join("sequences");
         let sequence_count = if seq_dir.exists() {
             fs::read_dir(&seq_dir)
-                .map(|rd| {
-                    rd.filter_map(|e| e.ok())
+                .map_or(0, |rd| {
+                    rd.filter_map(Result::ok)
                         .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
                         .count()
                 })
-                .unwrap_or(0)
         } else {
             0
         };
@@ -159,8 +190,7 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
 
     if dir.exists() {
         return Err(ProjectError::InvalidProject(format!(
-            "Profile '{}' already exists",
-            slug
+            "Profile '{slug}' already exists"
         )));
     }
 
@@ -203,6 +233,8 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
         },
     )?;
 
+    write_json(&dir.join("libraries.json"), &LibrariesFile::default())?;
+
     Ok(ProfileSummary {
         name: name.to_string(),
         slug,
@@ -217,8 +249,7 @@ pub fn load_profile(data_dir: &Path, slug: &str) -> Result<Profile, ProjectError
     let dir = profile_dir(data_dir, slug);
     if !dir.exists() {
         return Err(ProjectError::InvalidProject(format!(
-            "Profile '{}' not found",
-            slug
+            "Profile '{slug}' not found"
         )));
     }
 
@@ -296,10 +327,10 @@ pub fn list_sequences(
 
     let mut seqs = Vec::new();
     let mut entries: Vec<_> = fs::read_dir(&dir)?
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
         .collect();
-    entries.sort_by_key(|e| e.file_name());
+    entries.sort_by_key(std::fs::DirEntry::file_name);
 
     for entry in entries {
         let seq: Sequence = match read_json(&entry.path()) {
@@ -331,11 +362,10 @@ pub fn create_sequence(
     let dir = sequences_dir(data_dir, profile_slug);
     fs::create_dir_all(&dir)?;
 
-    let path = dir.join(format!("{}.json", slug));
+    let path = dir.join(format!("{slug}.json"));
     if path.exists() {
         return Err(ProjectError::InvalidProject(format!(
-            "Sequence '{}' already exists",
-            slug
+            "Sequence '{slug}' already exists"
         )));
     }
 
@@ -345,6 +375,9 @@ pub fn create_sequence(
         frame_rate: 30.0,
         audio_file: None,
         tracks: Vec::new(),
+        scripts: std::collections::HashMap::new(),
+        gradient_library: std::collections::HashMap::new(),
+        curve_library: std::collections::HashMap::new(),
     };
     write_json(&path, &seq)?;
 
@@ -360,11 +393,10 @@ pub fn load_sequence(
     profile_slug: &str,
     seq_slug: &str,
 ) -> Result<Sequence, ProjectError> {
-    let path = sequences_dir(data_dir, profile_slug).join(format!("{}.json", seq_slug));
+    let path = sequences_dir(data_dir, profile_slug).join(format!("{seq_slug}.json"));
     if !path.exists() {
         return Err(ProjectError::InvalidProject(format!(
-            "Sequence '{}' not found",
-            seq_slug
+            "Sequence '{seq_slug}' not found"
         )));
     }
     read_json(&path)
@@ -379,7 +411,7 @@ pub fn save_sequence(
 ) -> Result<(), ProjectError> {
     let dir = sequences_dir(data_dir, profile_slug);
     fs::create_dir_all(&dir)?;
-    write_json(&dir.join(format!("{}.json", seq_slug)), sequence)
+    write_json(&dir.join(format!("{seq_slug}.json")), sequence)
 }
 
 /// Delete a sequence from a profile.
@@ -388,7 +420,7 @@ pub fn delete_sequence(
     profile_slug: &str,
     seq_slug: &str,
 ) -> Result<(), ProjectError> {
-    let path = sequences_dir(data_dir, profile_slug).join(format!("{}.json", seq_slug));
+    let path = sequences_dir(data_dir, profile_slug).join(format!("{seq_slug}.json"));
     if path.exists() {
         fs::remove_file(&path)?;
     }
@@ -397,7 +429,21 @@ pub fn delete_sequence(
 
 // ── Media operations ───────────────────────────────────────────────
 
-const MEDIA_EXTENSIONS: &[&str] = &["mp3", "wav", "ogg", "flac", "m4a", "aac"];
+pub const MEDIA_EXTENSIONS: &[&str] = &["mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"];
+
+fn validate_filename(name: &str) -> Result<(), ProjectError> {
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || name.contains('\0')
+    {
+        return Err(ProjectError::InvalidProject(format!(
+            "Invalid filename: {name}"
+        )));
+    }
+    Ok(())
+}
 
 pub fn media_dir(data_dir: &Path, profile_slug: &str) -> std::path::PathBuf {
     profile_dir(data_dir, profile_slug).join("media")
@@ -415,9 +461,9 @@ pub fn list_media(
 
     let mut files = Vec::new();
     let mut entries: Vec<_> = fs::read_dir(&dir)?
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .collect();
-    entries.sort_by_key(|e| e.file_name());
+    entries.sort_by_key(std::fs::DirEntry::file_name);
 
     for entry in entries {
         let path = entry.path();
@@ -455,6 +501,8 @@ pub fn import_media(
         .file_name()
         .ok_or_else(|| ProjectError::InvalidProject("Invalid source path".into()))?;
 
+    validate_filename(&filename.to_string_lossy())?;
+
     let dest = dir.join(filename);
     fs::copy(source_path, &dest)?;
 
@@ -472,6 +520,7 @@ pub fn delete_media(
     profile_slug: &str,
     filename: &str,
 ) -> Result<(), ProjectError> {
+    validate_filename(filename)?;
     let path = media_dir(data_dir, profile_slug).join(filename);
     if path.exists() {
         fs::remove_file(&path)?;
@@ -498,6 +547,7 @@ pub fn assemble_show(profile: &Profile, sequence: &Sequence) -> Show {
 // ── Vixen GUID map persistence ─────────────────────────────────────
 
 /// Save a Vixen GUID → ID map into a profile's fixtures file.
+#[allow(clippy::implicit_hasher)]
 pub fn save_vixen_guid_map(
     data_dir: &Path,
     profile_slug: &str,
@@ -506,7 +556,7 @@ pub fn save_vixen_guid_map(
     let dir = profile_dir(data_dir, profile_slug);
     let path = dir.join("fixtures.json");
     let mut file: FixturesFile = read_json(&path)?;
-    file.vixen_guid_map = guid_map.clone();
+    file.vixen_guid_map.clone_from(guid_map);
     write_json(&path, &file)
 }
 
@@ -541,8 +591,7 @@ fn chrono_now() -> String {
     let (year, month, day) = days_to_ymd(days);
 
     format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        year, month, day, hours, minutes, seconds
+        "{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z"
     )
 }
 
@@ -577,7 +626,13 @@ fn is_leap(year: u64) -> bool {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::default_trait_access,
+    clippy::float_cmp,
+)]
 mod tests {
     use super::*;
 
@@ -713,6 +768,9 @@ mod tests {
             frame_rate: 30.0,
             audio_file: None,
             tracks: Vec::new(),
+            scripts: std::collections::HashMap::new(),
+            gradient_library: std::collections::HashMap::new(),
+            curve_library: std::collections::HashMap::new(),
         };
         let show = assemble_show(&profile, &sequence);
         assert_eq!(show.name, "Xmas");

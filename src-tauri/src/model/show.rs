@@ -42,6 +42,7 @@ pub enum LayoutShape {
 impl LayoutShape {
     /// Generate evenly-distributed positions for `pixel_count` pixels along this shape.
     /// Returns `None` for `Custom` (positions are user-placed individually).
+    #[allow(clippy::cast_precision_loss)]
     pub fn generate_positions(&self, pixel_count: usize) -> Option<Vec<Position2D>> {
         if pixel_count == 0 {
             return Some(Vec::new());
@@ -178,6 +179,15 @@ pub struct FixtureLayout {
     pub pixel_positions: Vec<Position2D>,
     #[serde(default)]
     pub shape: LayoutShape,
+}
+
+impl FixtureLayout {
+    /// Check if `pixel_positions` length matches the expected pixel count for this fixture.
+    /// The evaluator handles mismatches gracefully (falls back to evenly-spaced positions),
+    /// but callers can use this to detect and warn about inconsistencies.
+    pub fn validate_pixel_count(&self, expected: usize) -> bool {
+        self.pixel_positions.len() == expected
+    }
 }
 
 /// The spatial layout of all fixtures for preview rendering.

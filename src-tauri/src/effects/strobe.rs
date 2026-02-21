@@ -2,6 +2,9 @@ use crate::model::{BlendMode, Color, EffectParams, ParamKey, ParamSchema, ParamT
 
 use super::Effect;
 
+const DEFAULT_RATE: f64 = 10.0;
+const DEFAULT_DUTY_CYCLE: f64 = 0.5;
+
 /// Batch evaluate: extract params once, compute single color, blend all pixels.
 pub fn evaluate_pixels_batch(
     t: f64,
@@ -13,8 +16,8 @@ pub fn evaluate_pixels_batch(
     opacity: f64,
 ) {
     let color = params.color_or(ParamKey::Color, Color::WHITE);
-    let rate = params.float_or(ParamKey::Rate, 10.0);
-    let duty_cycle = params.float_or(ParamKey::DutyCycle, 0.5).clamp(0.0, 1.0);
+    let rate = params.float_or(ParamKey::Rate, DEFAULT_RATE);
+    let duty_cycle = params.float_or(ParamKey::DutyCycle, DEFAULT_DUTY_CYCLE).clamp(0.0, 1.0);
 
     let phase = (t * rate).fract();
     let effect_color = if phase < duty_cycle { color } else { Color::BLACK };
@@ -37,8 +40,8 @@ impl Effect for StrobeEffect {
         params: &EffectParams,
     ) -> Color {
         let color = params.color_or(ParamKey::Color, Color::WHITE);
-        let rate = params.float_or(ParamKey::Rate, 10.0);
-        let duty_cycle = params.float_or(ParamKey::DutyCycle, 0.5).clamp(0.0, 1.0);
+        let rate = params.float_or(ParamKey::Rate, DEFAULT_RATE);
+        let duty_cycle = params.float_or(ParamKey::DutyCycle, DEFAULT_DUTY_CYCLE).clamp(0.0, 1.0);
 
         let phase = (t * rate).fract();
         if phase < duty_cycle {
@@ -64,20 +67,20 @@ impl Effect for StrobeEffect {
                 key: ParamKey::Rate,
                 label: "Rate".into(),
                 param_type: ParamType::Float { min: 1.0, max: 50.0, step: 0.5 },
-                default: ParamValue::Float(10.0),
+                default: ParamValue::Float(DEFAULT_RATE),
             },
             ParamSchema {
                 key: ParamKey::DutyCycle,
                 label: "Duty Cycle".into(),
                 param_type: ParamType::Float { min: 0.0, max: 1.0, step: 0.01 },
-                default: ParamValue::Float(0.5),
+                default: ParamValue::Float(DEFAULT_DUTY_CYCLE),
             },
         ]
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

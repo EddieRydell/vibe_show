@@ -1,0 +1,5 @@
+# GPU-accelerated dependencies (NVIDIA CUDA only).
+# Install with: uv pip install -r requirements-gpu.txt --extra-index-url https://download.pytorch.org/whl/cu121
+
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch>=2.1.0

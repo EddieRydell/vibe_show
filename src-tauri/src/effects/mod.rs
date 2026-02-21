@@ -2,6 +2,7 @@ pub mod chase;
 pub mod fade;
 pub mod gradient;
 pub mod rainbow;
+pub mod script;
 pub mod solid;
 pub mod strobe;
 pub mod twinkle;
@@ -41,16 +42,18 @@ pub trait Effect: Send + Sync {
 }
 
 /// Resolve an EffectKind to its trait object implementation.
-pub fn resolve_effect(kind: &EffectKind) -> Box<dyn Effect> {
+/// Returns `None` for `Script` kinds (handled separately via the DSL VM).
+pub fn resolve_effect(kind: &EffectKind) -> Option<Box<dyn Effect>> {
     match kind {
-        EffectKind::Solid => Box::new(solid::SolidEffect),
-        EffectKind::Chase => Box::new(chase::ChaseEffect),
-        EffectKind::Rainbow => Box::new(rainbow::RainbowEffect),
-        EffectKind::Strobe => Box::new(strobe::StrobeEffect),
-        EffectKind::Gradient => Box::new(gradient::GradientEffect),
-        EffectKind::Twinkle => Box::new(twinkle::TwinkleEffect),
-        EffectKind::Fade => Box::new(fade::FadeEffect),
-        EffectKind::Wipe => Box::new(wipe::WipeEffect),
+        EffectKind::Solid => Some(Box::new(solid::SolidEffect)),
+        EffectKind::Chase => Some(Box::new(chase::ChaseEffect)),
+        EffectKind::Rainbow => Some(Box::new(rainbow::RainbowEffect)),
+        EffectKind::Strobe => Some(Box::new(strobe::StrobeEffect)),
+        EffectKind::Gradient => Some(Box::new(gradient::GradientEffect)),
+        EffectKind::Twinkle => Some(Box::new(twinkle::TwinkleEffect)),
+        EffectKind::Fade => Some(Box::new(fade::FadeEffect)),
+        EffectKind::Wipe => Some(Box::new(wipe::WipeEffect)),
+        EffectKind::Script(_) => None,
     }
 }
 
@@ -65,6 +68,8 @@ pub fn needs_positions(kind: &EffectKind) -> bool {
 ///
 /// `positions` is only populated for spatial effects (e.g. Wipe). Non-spatial effects
 /// ignore it entirely (zero overhead).
+///
+/// Returns `false` for `Script` kinds (caller must handle via DSL VM).
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn evaluate_pixels(
@@ -77,15 +82,16 @@ pub fn evaluate_pixels(
     blend_mode: BlendMode,
     opacity: f64,
     positions: Option<&[Position2D]>,
-) {
+) -> bool {
     match kind {
-        EffectKind::Solid => solid::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
-        EffectKind::Chase => chase::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
-        EffectKind::Rainbow => rainbow::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
-        EffectKind::Strobe => strobe::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
-        EffectKind::Gradient => gradient::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
-        EffectKind::Twinkle => twinkle::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
-        EffectKind::Fade => fade::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity),
-        EffectKind::Wipe => wipe::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity, positions),
+        EffectKind::Solid => { solid::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity); true }
+        EffectKind::Chase => { chase::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity); true }
+        EffectKind::Rainbow => { rainbow::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity); true }
+        EffectKind::Strobe => { strobe::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity); true }
+        EffectKind::Gradient => { gradient::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity); true }
+        EffectKind::Twinkle => { twinkle::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity); true }
+        EffectKind::Fade => { fade::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity); true }
+        EffectKind::Wipe => { wipe::evaluate_pixels_batch(t, dest, global_offset, total_pixels, params, blend_mode, opacity, positions); true }
+        EffectKind::Script(_) => false,
     }
 }

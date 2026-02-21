@@ -218,7 +218,6 @@ export function DetachedPreview() {
         onUpdate={updateSettings}
         isPreviewingSelection={isPreviewingSelection}
         onResetView={handleResetAll}
-        onClose={handleClose}
       />
 
       <div

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 
 interface KeyboardActions {
   onPlayPause: () => void;
+  onPauseInPlace?: () => void;
   onStop: () => void;
   onSeekStart: () => void;
   onSeekEnd: () => void;
@@ -10,6 +11,7 @@ interface KeyboardActions {
   onZoomFit: () => void;
   onSelectAll: () => void;
   onDeleteSelected: () => void;
+  onToggleLoop?: () => void;
   onSave?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
@@ -29,7 +31,11 @@ export function useKeyboard(actions: KeyboardActions) {
       switch (e.code) {
         case "Space":
           e.preventDefault();
-          actions.onPlayPause();
+          if (e.shiftKey) {
+            actions.onPauseInPlace?.();
+          } else {
+            actions.onPlayPause();
+          }
           break;
         case "Home":
           e.preventDefault();
@@ -95,6 +101,11 @@ export function useKeyboard(actions: KeyboardActions) {
         case "KeyM":
           if (!e.ctrlKey && !e.metaKey && !e.altKey) {
             actions.onSetModeEdit?.();
+          }
+          break;
+        case "KeyL":
+          if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+            actions.onToggleLoop?.();
           }
           break;
       }

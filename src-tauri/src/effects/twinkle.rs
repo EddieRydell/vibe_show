@@ -2,7 +2,11 @@ use crate::model::{BlendMode, Color, EffectParams, ParamKey, ParamSchema, ParamT
 
 use super::Effect;
 
+const DEFAULT_DENSITY: f64 = 0.3;
+const DEFAULT_SPEED: f64 = 5.0;
+
 /// Batch evaluate: extract params once, loop over pixels.
+#[allow(clippy::too_many_arguments, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn evaluate_pixels_batch(
     t: f64,
     dest: &mut [Color],
@@ -13,8 +17,8 @@ pub fn evaluate_pixels_batch(
     opacity: f64,
 ) {
     let color = params.color_or(ParamKey::Color, Color::WHITE);
-    let density = params.float_or(ParamKey::Density, 0.3).clamp(0.0, 1.0);
-    let speed = params.float_or(ParamKey::Speed, 5.0);
+    let density = params.float_or(ParamKey::Density, DEFAULT_DENSITY).clamp(0.0, 1.0);
+    let speed = params.float_or(ParamKey::Speed, DEFAULT_SPEED);
 
     let slot = (t * speed) as u64;
     let next_slot = slot + 1;
@@ -44,14 +48,16 @@ pub fn evaluate_pixels_batch(
 pub struct TwinkleEffect;
 
 /// Simple deterministic hash for reproducible "randomness" without state.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn hash_pixel(pixel: usize, time_slot: u64) -> f64 {
-    let mut x = (pixel as u64).wrapping_mul(2654435761) ^ time_slot.wrapping_mul(2246822519);
+    let mut x = (pixel as u64).wrapping_mul(2_654_435_761) ^ time_slot.wrapping_mul(2_246_822_519);
     x = x.wrapping_mul(x).wrapping_add(x);
     x ^= x >> 16;
     (x & 0xFFFF) as f64 / 65535.0
 }
 
 impl Effect for TwinkleEffect {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn evaluate(
         &self,
         t: f64,
@@ -60,8 +66,8 @@ impl Effect for TwinkleEffect {
         params: &EffectParams,
     ) -> Color {
         let color = params.color_or(ParamKey::Color, Color::WHITE);
-        let density = params.float_or(ParamKey::Density, 0.3).clamp(0.0, 1.0);
-        let speed = params.float_or(ParamKey::Speed, 5.0);
+        let density = params.float_or(ParamKey::Density, DEFAULT_DENSITY).clamp(0.0, 1.0);
+        let speed = params.float_or(ParamKey::Speed, DEFAULT_SPEED);
 
         // Discrete time slots for twinkling.
         let slot = (t * speed) as u64;
@@ -100,20 +106,20 @@ impl Effect for TwinkleEffect {
                 key: ParamKey::Density,
                 label: "Density".into(),
                 param_type: ParamType::Float { min: 0.0, max: 1.0, step: 0.01 },
-                default: ParamValue::Float(0.3),
+                default: ParamValue::Float(DEFAULT_DENSITY),
             },
             ParamSchema {
                 key: ParamKey::Speed,
                 label: "Speed".into(),
                 param_type: ParamType::Float { min: 0.5, max: 30.0, step: 0.5 },
-                default: ParamValue::Float(5.0),
+                default: ParamValue::Float(DEFAULT_SPEED),
             },
         ]
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
