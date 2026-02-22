@@ -56,6 +56,10 @@ pub fn open_profile(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutpu
     // Clear script cache when switching profiles
     state.script_cache.lock().clear();
 
+    // Load persisted chat history for this profile
+    crate::chat::load_chat_history(state);
+    crate::chat::load_agent_chats(state);
+
     // Update last_profile in settings
     let mut settings_guard = state.settings.lock();
     if let Some(ref mut s) = *settings_guard {

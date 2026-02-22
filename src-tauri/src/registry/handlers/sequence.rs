@@ -83,10 +83,6 @@ pub fn open_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutp
 
     *state.current_sequence.lock() = Some(p.slug.clone());
 
-    // Load persisted chat history for this sequence
-    crate::chat::load_chat_history(state);
-    crate::chat::load_agent_chats(state);
-
     commands::recompile_all_scripts(state);
 
     let show = state.show.lock();

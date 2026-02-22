@@ -1,0 +1,14 @@
+{
+  "threshold": 5,
+  "reporters": ["console"],
+  "ignore": [
+    "node_modules",
+    "dist",
+    "src-tauri/target",
+    "src-tauri/gen",
+    "src-tauri/bindings",
+    "__pycache__"
+  ],
+  "absolute": true,
+  "gitignore": true
+}

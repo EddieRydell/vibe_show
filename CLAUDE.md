@@ -27,6 +27,9 @@ pnpm lint
 # Knip (unused exports/deps)
 pnpm knip
 
+# Copy/paste detection (TypeScript + Rust)
+pnpm cpd
+
 # Rust check (faster than full build)
 cd src-tauri && cargo check
 

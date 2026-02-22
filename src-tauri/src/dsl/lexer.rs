@@ -247,6 +247,18 @@ impl<'a> Lexer<'a> {
     }
 
     fn push(&mut self, token: Token, start: usize, end: usize) {
+        // If the new token is an infix operator and the previous token was a
+        // Newline, remove the Newline — the expression continues from the
+        // previous line.  This allows:
+        //   let x = a
+        //       + b
+        if Self::continues_from_previous(&token) {
+            if let Some(last) = self.tokens.last() {
+                if matches!(last.token, Token::Newline) {
+                    self.tokens.pop();
+                }
+            }
+        }
         self.tokens.push(SpannedToken {
             token,
             span: Span::new(start, end),
@@ -277,6 +289,30 @@ impl<'a> Lexer<'a> {
                 | Token::LParen
                 | Token::LBrace
                 | Token::Newline
+        )
+    }
+
+    /// Returns true if this token at the START of a new line means the
+    /// previous expression continues (leading operator continuation).
+    /// More conservative than `continues_expression` — excludes `-` and `!`
+    /// which are also valid unary operators at the start of a new statement.
+    fn continues_from_previous(token: &Token) -> bool {
+        matches!(
+            token,
+            Token::Plus
+                | Token::Star
+                | Token::Slash
+                | Token::Percent
+                | Token::Lt
+                | Token::Gt
+                | Token::Le
+                | Token::Ge
+                | Token::EqEq
+                | Token::Ne
+                | Token::And
+                | Token::Or
+                | Token::Pipe
+                | Token::Dot
         )
     }
 
@@ -574,6 +610,26 @@ mod tests {
         let tokens = tok("x >=\ny");
         assert_eq!(tokens, vec![
             Token::Ident("x".into()), Token::Ge, Token::Ident("y".into()), Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn leading_operator_continuation() {
+        // Operator at start of next line should absorb the newline
+        let tokens = tok("a\n+ b");
+        assert_eq!(tokens, vec![
+            Token::Ident("a".into()), Token::Plus, Token::Ident("b".into()), Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn leading_dot_continuation() {
+        // Method call on next line
+        let tokens = tok("mycolor\n.scale(0.5)");
+        assert_eq!(tokens, vec![
+            Token::Ident("mycolor".into()), Token::Dot,
+            Token::Ident("scale".into()), Token::LParen,
+            Token::Float(0.5), Token::RParen, Token::Eof,
         ]);
     }
 }

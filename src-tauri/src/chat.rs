@@ -515,13 +515,12 @@ impl ChatManager {
 
 // ── Chat persistence helpers ─────────────────────────────────────
 
-/// Compute the chat file path: {data_dir}/profiles/{profile}/sequences/{seq}.chat.json
+/// Compute the chat file path: {data_dir}/profiles/{profile}/chat.json
 fn chat_file_path(state: &AppState) -> Option<std::path::PathBuf> {
     let settings = state.settings.lock();
     let data_dir = settings.as_ref().map(|s| &s.data_dir)?;
     let profile = state.current_profile.lock().clone()?;
-    let sequence = state.current_sequence.lock().clone()?;
-    Some(data_dir.join("profiles").join(profile).join("sequences").join(format!("{sequence}.chat.json")))
+    Some(data_dir.join("profiles").join(profile).join("chat.json"))
 }
 
 /// Save the current chat history to disk (best-effort, non-blocking).
@@ -571,42 +570,18 @@ pub struct ConversationSummary {
     pub is_active: bool,
 }
 
-/// Legacy data format from `{seq}.agent-chat.json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LegacyAgentChatData {
-    session_id: Option<String>,
-    messages: Vec<ChatHistoryEntry>,
-}
-
 const MAX_CONVERSATIONS: usize = 20;
 
-/// Compute the new multi-conversation file path.
+/// Compute the agent chats file path: {data_dir}/profiles/{profile}/agent-chats.json
 fn agent_chats_file_path(state: &AppState) -> Option<std::path::PathBuf> {
     let settings = state.settings.lock();
     let data_dir = settings.as_ref().map(|s| &s.data_dir)?;
     let profile = state.current_profile.lock().clone()?;
-    let sequence = state.current_sequence.lock().clone()?;
     Some(
         data_dir
             .join("profiles")
             .join(profile)
-            .join("sequences")
-            .join(format!("{sequence}.agent-chats.json")),
-    )
-}
-
-/// Compute the legacy single-conversation file path (for migration).
-fn legacy_agent_chat_file_path(state: &AppState) -> Option<std::path::PathBuf> {
-    let settings = state.settings.lock();
-    let data_dir = settings.as_ref().map(|s| &s.data_dir)?;
-    let profile = state.current_profile.lock().clone()?;
-    let sequence = state.current_sequence.lock().clone()?;
-    Some(
-        data_dir
-            .join("profiles")
-            .join(profile)
-            .join("sequences")
-            .join(format!("{sequence}.agent-chat.json")),
+            .join("agent-chats.json"),
     )
 }
 
@@ -626,16 +601,6 @@ fn generate_id() -> String {
         .unwrap_or_default()
         .as_nanos();
     format!("{ts:x}")
-}
-
-fn title_from_message(msg: &str) -> String {
-    let trimmed = msg.trim();
-    if trimmed.len() <= 60 {
-        trimmed.to_string()
-    } else {
-        let truncated: String = trimmed.chars().take(57).collect();
-        format!("{truncated}...")
-    }
 }
 
 /// Sync current in-memory state into the active conversation within `AgentChatsData`.
@@ -665,7 +630,7 @@ fn load_active_from_chats(state: &AppState, chats: &AgentChatsData) {
     state.agent_display_messages.lock().clear();
 }
 
-/// Load agent chats from disk, with migration from legacy format.
+/// Load agent chats from disk.
 pub fn load_agent_chats(state: &Arc<AppState>) {
     let Some(path) = agent_chats_file_path(state) else {
         *state.agent_session_id.lock() = None;
@@ -674,55 +639,12 @@ pub fn load_agent_chats(state: &Arc<AppState>) {
         return;
     };
 
-    // Try loading new format
     if path.exists() {
         if let Ok(data) = std::fs::read_to_string(&path) {
             if let Ok(chats_data) = serde_json::from_str::<AgentChatsData>(&data) {
                 load_active_from_chats(state, &chats_data);
                 *state.agent_chats.lock() = chats_data;
                 return;
-            }
-        }
-    }
-
-    // Migration: try legacy format
-    if let Some(legacy_path) = legacy_agent_chat_file_path(state) {
-        if legacy_path.exists() {
-            if let Ok(data) = std::fs::read_to_string(&legacy_path) {
-                if let Ok(legacy) = serde_json::from_str::<LegacyAgentChatData>(&data) {
-                    let id = generate_id();
-                    let title = legacy
-                        .messages
-                        .iter()
-                        .find(|m| m.role == ChatRole::User)
-                        .map_or_else(
-                            || "Imported conversation".to_string(),
-                            |m| title_from_message(&m.text),
-                        );
-
-                    let conv = AgentConversation {
-                        id: id.clone(),
-                        created_at: iso_now(),
-                        title,
-                        session_id: legacy.session_id,
-                        messages: legacy.messages,
-                    };
-
-                    let chats_data = AgentChatsData {
-                        active_id: Some(id),
-                        conversations: vec![conv],
-                    };
-
-                    load_active_from_chats(state, &chats_data);
-                    *state.agent_chats.lock() = chats_data;
-
-                    // Save in new format and remove old file
-                    if let Ok(json) = serde_json::to_string_pretty(&*state.agent_chats.lock()) {
-                        let _ = std::fs::write(&path, json);
-                    }
-                    let _ = std::fs::remove_file(&legacy_path);
-                    return;
-                }
             }
         }
     }
@@ -897,9 +819,5 @@ pub fn clear_agent_chat(state: &Arc<AppState>) {
     *state.agent_chats.lock() = AgentChatsData::default();
     if let Some(path) = agent_chats_file_path(state) {
         let _ = std::fs::remove_file(&path);
-    }
-    // Also clean up legacy file if it exists
-    if let Some(legacy_path) = legacy_agent_chat_file_path(state) {
-        let _ = std::fs::remove_file(&legacy_path);
     }
 }

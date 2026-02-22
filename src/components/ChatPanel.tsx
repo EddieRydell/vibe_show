@@ -50,7 +50,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
     }).catch(() => {});
   }, [open]);
 
-  // Load persisted chat history when sequence changes
+  // Load persisted chat history when the active show changes
   useEffect(() => {
     if (!sequenceKey) {
       setMessages([]);

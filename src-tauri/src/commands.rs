@@ -91,10 +91,6 @@ pub async fn open_sequence(
         // Recompile all DSL scripts from the loaded show
         recompile_all_scripts(&state_arc);
 
-        // Load persisted chat history for this sequence
-        crate::chat::load_chat_history(&state_arc);
-        crate::chat::load_agent_chats(&state_arc);
-
         emit_progress(&app, "open_sequence", "Ready", 1.0, None);
 
         Ok::<Show, AppError>(assembled)
