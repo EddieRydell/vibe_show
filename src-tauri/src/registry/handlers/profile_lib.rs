@@ -10,19 +10,11 @@ use crate::registry::params::{
 use crate::registry::CommandOutput;
 use crate::state::{get_data_dir, AppState};
 
-fn require_profile(state: &Arc<AppState>) -> Result<String, AppError> {
-    state
-        .current_profile
-        .lock()
-        .clone()
-        .ok_or(AppError::NoProfile)
-}
-
 // ── Gradients ────────────────────────────────────────────────────
 
 pub fn list_profile_gradients(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
         message: e.to_string(),
     })?;
@@ -38,7 +30,7 @@ pub fn set_profile_gradient(
     p: SetProfileGradientParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let mut libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
         message: e.to_string(),
     })?;
@@ -57,7 +49,7 @@ pub fn delete_profile_gradient(
     p: NameParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let mut libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
         message: e.to_string(),
     })?;
@@ -76,7 +68,7 @@ pub fn rename_profile_gradient(
     p: RenameParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let mut libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
         message: e.to_string(),
     })?;
@@ -96,7 +88,7 @@ pub fn rename_profile_gradient(
 
 pub fn list_profile_curves(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
         message: e.to_string(),
     })?;
@@ -112,7 +104,7 @@ pub fn set_profile_curve(
     p: SetProfileCurveParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let mut libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
         message: e.to_string(),
     })?;
@@ -131,7 +123,7 @@ pub fn delete_profile_curve(
     p: NameParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let mut libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
         message: e.to_string(),
     })?;
@@ -150,7 +142,7 @@ pub fn rename_profile_curve(
     p: RenameParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let mut libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
         message: e.to_string(),
     })?;
@@ -173,7 +165,7 @@ pub fn set_profile_script(
     p: WriteScriptParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let mut libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
         message: e.to_string(),
     })?;
@@ -199,7 +191,7 @@ pub fn compile_profile_script(
                 .lock()
                 .insert(p.name.clone(), Arc::new(compiled));
             let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-            let slug = require_profile(state)?;
+            let slug = state.require_profile()?;
             let mut libs =
                 profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
                     message: e.to_string(),

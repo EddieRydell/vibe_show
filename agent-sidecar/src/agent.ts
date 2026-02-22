@@ -133,6 +133,8 @@ export async function runAgentQuery(
     });
 
     let streamed = false;
+    // Track tool_use id -> name so we can label tool_result events correctly
+    const toolUseNames = new Map<string, string>();
 
     for await (const msg of stream) {
       if (abort.signal.aborted) break;
@@ -147,12 +149,13 @@ export async function runAgentQuery(
         }
 
         case "assistant": {
-          // Full assistant message — only extract tool_use blocks.
+          // Full assistant message — extract tool_use blocks and track their IDs.
           // Text is already streamed via stream_event tokens.
           const apiMsg = msg.message;
           if (apiMsg.content && Array.isArray(apiMsg.content)) {
             for (const block of apiMsg.content) {
               if (block.type === "tool_use") {
+                toolUseNames.set(block.id as string, block.name as string);
                 sendEvent("tool_call", block.name);
                 sendEvent("thinking", true);
               }
@@ -173,6 +176,9 @@ export async function runAgentQuery(
           } else if (event.type === "content_block_start") {
             const block = (event as Record<string, unknown>).content_block as Record<string, unknown> | undefined;
             if (block?.type === "tool_use") {
+              if (block.id && block.name) {
+                toolUseNames.set(block.id as string, block.name as string);
+              }
               sendEvent("tool_call", block.name ?? "");
               sendEvent("thinking", true);
             }
@@ -186,6 +192,7 @@ export async function runAgentQuery(
           if (apiMsg.content && Array.isArray(apiMsg.content)) {
             for (const block of apiMsg.content) {
               if (block.type === "tool_result") {
+                const toolName = toolUseNames.get(block.tool_use_id as string) ?? "tool";
                 const resultText =
                   typeof block.content === "string"
                     ? block.content
@@ -196,7 +203,7 @@ export async function runAgentQuery(
                           .join("")
                       : JSON.stringify(block.content);
                 sendEvent("tool_result", {
-                  tool: "agent_tool",
+                  tool: toolName,
                   result: resultText.slice(0, 2000),
                 });
               }

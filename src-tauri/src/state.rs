@@ -12,6 +12,7 @@ use crate::chat::ChatManager;
 use crate::dispatcher::CommandDispatcher;
 use crate::dsl::compiler::CompiledScript;
 use crate::effects;
+use crate::error::AppError;
 use crate::model::analysis::AudioAnalysis;
 use crate::model::show::Show;
 use crate::model::{BlendMode, EffectKind, EffectParams, ParamSchema, TimeRange};
@@ -44,7 +45,7 @@ pub struct AppState {
     pub agent_port: AtomicU16,
     /// Session ID for agent conversation continuity.
     pub agent_session_id: Mutex<Option<String>>,
-    /// Display messages for agent mode chat (persisted per-sequence).
+    /// Display messages for agent mode chat (persisted globally).
     pub agent_display_messages: Mutex<Vec<crate::chat::ChatHistoryEntry>>,
     /// Multi-conversation agent chat data.
     pub agent_chats: Mutex<crate::chat::AgentChatsData>,
@@ -103,6 +104,16 @@ impl AppState {
     {
         let mut guard = self.dispatcher.lock();
         f(&mut guard)
+    }
+
+    /// Get the current profile slug, or error if none is loaded.
+    pub fn require_profile(&self) -> Result<String, AppError> {
+        self.current_profile.lock().clone().ok_or(AppError::NoProfile)
+    }
+
+    /// Get the current sequence slug, or error if none is loaded.
+    pub fn require_sequence(&self) -> Result<String, AppError> {
+        self.current_sequence.lock().clone().ok_or(AppError::NoSequence)
     }
 }
 

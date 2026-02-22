@@ -9,25 +9,9 @@ use crate::registry::CommandOutput;
 use crate::state::{get_data_dir, AppState};
 use crate::commands;
 
-fn require_profile(state: &Arc<AppState>) -> Result<String, AppError> {
-    state
-        .current_profile
-        .lock()
-        .clone()
-        .ok_or(AppError::NoProfile)
-}
-
-fn require_sequence(state: &Arc<AppState>) -> Result<String, AppError> {
-    state
-        .current_sequence
-        .lock()
-        .clone()
-        .ok_or(AppError::NoSequence)
-}
-
 pub fn list_sequences(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let profile_slug = require_profile(state)?;
+    let profile_slug = state.require_profile()?;
     let sequences =
         profile::list_sequences(&data_dir, &profile_slug).map_err(AppError::from)?;
     let current = state.current_sequence.lock().clone();
@@ -51,7 +35,7 @@ pub fn create_sequence(
     p: CreateSequenceParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let profile_slug = require_profile(state)?;
+    let profile_slug = state.require_profile()?;
     let summary =
         profile::create_sequence(&data_dir, &profile_slug, &p.name).map_err(AppError::from)?;
     Ok(CommandOutput::json(
@@ -62,7 +46,7 @@ pub fn create_sequence(
 
 pub fn open_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let profile_slug = require_profile(state)?;
+    let profile_slug = state.require_profile()?;
 
     let profile_data =
         profile::load_profile(&data_dir, &profile_slug).map_err(AppError::from)?;
@@ -100,7 +84,7 @@ pub fn open_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutp
 
 pub fn delete_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let profile_slug = require_profile(state)?;
+    let profile_slug = state.require_profile()?;
     profile::delete_sequence(&data_dir, &profile_slug, &p.slug).map_err(AppError::from)?;
 
     let mut current = state.current_sequence.lock();
@@ -116,8 +100,8 @@ pub fn delete_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOu
 
 pub fn save_current_sequence(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let profile_slug = require_profile(state)?;
-    let seq_slug = require_sequence(state)?;
+    let profile_slug = state.require_profile()?;
+    let seq_slug = state.require_sequence()?;
 
     let show = state.show.lock();
     let sequence = show.sequences.first().ok_or(AppError::NotFound {

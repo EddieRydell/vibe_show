@@ -19,7 +19,7 @@ import { useAudio } from "../hooks/useAudio";
 import { useAnalysis } from "../hooks/useAnalysis";
 import { useKeyboard } from "../hooks/useKeyboard";
 import { useProgress } from "../hooks/useProgress";
-import { deduplicateEffectKeys } from "../utils/effectKey";
+import { deduplicateEffectKeys, makeEffectKey } from "../utils/effectKey";
 import type { EffectKind, InteractionMode } from "../types";
 
 interface Props {
@@ -189,23 +189,9 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
     const sequence = show.sequences[playback.sequence_index];
     if (!sequence) return;
     const allKeys = new Set<string>();
-    // Build fixture-specific visual keys (matching Timeline's key format)
-    const allFixtureIds = show.fixtures.map((f) => f.id);
     for (let tIdx = 0; tIdx < sequence.tracks.length; tIdx++) {
-      const target = sequence.tracks[tIdx].target;
-      let fixtureIds: number[];
-      if (target === "All") {
-        fixtureIds = allFixtureIds;
-      } else if (typeof target === "object" && "Fixtures" in target) {
-        fixtureIds = target.Fixtures;
-      } else {
-        // For groups, just use the first fixture as representative — select-all is approximate
-        fixtureIds = allFixtureIds;
-      }
-      for (const fid of fixtureIds) {
-        for (let eIdx = 0; eIdx < sequence.tracks[tIdx].effects.length; eIdx++) {
-          allKeys.add(`${fid}:${tIdx}-${eIdx}`);
-        }
+      for (let eIdx = 0; eIdx < sequence.tracks[tIdx].effects.length; eIdx++) {
+        allKeys.add(makeEffectKey(tIdx, eIdx));
       }
     }
     setSelectedEffects(allKeys);
@@ -363,7 +349,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
         const effectIndex = await cmd.addEffect(trackIndex, kind, start, end);
 
         commitChange();
-        setSelectedEffects(new Set([`${trackIndex}-${effectIndex}`]));
+        setSelectedEffects(new Set([makeEffectKey(trackIndex, effectIndex)]));
       } catch (e) {
         console.error("[VibeLights] Add effect failed:", e);
       }

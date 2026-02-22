@@ -62,6 +62,10 @@ fn main() {
                 agent_chats: Mutex::new(vibe_lights::chat::AgentChatsData::default()),
             });
 
+            // Load global chat history
+            vibe_lights::chat::load_chat_history(&state);
+            vibe_lights::chat::load_agent_chats(&state);
+
             app.manage(state.clone());
 
             // Start the HTTP API server on a background task

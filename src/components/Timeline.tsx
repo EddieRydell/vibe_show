@@ -3,6 +3,7 @@ import { EffectBlock } from "./EffectBlock";
 import type { AudioAnalysis, BlendMode, InteractionMode, PlaybackInfo, Show, Track } from "../types";
 import { effectKindLabel } from "../types";
 import type { WaveformData } from "../hooks/useAudio";
+import { makeEffectKey } from "../utils/effectKey";
 
 interface TimelineProps {
   show: Show | null;
@@ -169,7 +170,7 @@ function computeStackedLayoutFast(
     for (let effectIdx = 0; effectIdx < track.effects.length; effectIdx++) {
       const effect = track.effects[effectIdx];
       effects.push({
-        key: `${fixtureId}:${trackIdx}-${effectIdx}`,
+        key: makeEffectKey(trackIdx, effectIdx),
         trackIndex: trackIdx,
         effectIndex: effectIdx,
         startSec: effect.time_range.start,

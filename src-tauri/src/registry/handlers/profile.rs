@@ -12,14 +12,6 @@ use crate::registry::CommandOutput;
 use crate::settings;
 use crate::state::{get_data_dir, AppState};
 
-fn require_profile(state: &Arc<AppState>) -> Result<String, AppError> {
-    state
-        .current_profile
-        .lock()
-        .clone()
-        .ok_or(AppError::NoProfile)
-}
-
 pub fn list_profiles(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
     let profiles = profile::list_profiles(&data_dir).map_err(AppError::from)?;
@@ -56,10 +48,6 @@ pub fn open_profile(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutpu
     // Clear script cache when switching profiles
     state.script_cache.lock().clear();
 
-    // Load persisted chat history for this profile
-    crate::chat::load_chat_history(state);
-    crate::chat::load_agent_chats(state);
-
     // Update last_profile in settings
     let mut settings_guard = state.settings.lock();
     if let Some(ref mut s) = *settings_guard {
@@ -93,7 +81,7 @@ pub fn delete_profile(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOut
 
 pub fn save_profile(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let loaded = profile::load_profile(&data_dir, &slug).map_err(AppError::from)?;
     profile::save_profile(&data_dir, &slug, &loaded).map_err(AppError::from)?;
     Ok(CommandOutput::unit("Profile saved."))
@@ -104,7 +92,7 @@ pub fn update_profile_fixtures(
     p: UpdateProfileFixturesParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let mut loaded = profile::load_profile(&data_dir, &slug).map_err(AppError::from)?;
     loaded.fixtures = p.fixtures;
     loaded.groups = p.groups;
@@ -117,7 +105,7 @@ pub fn update_profile_setup(
     p: UpdateProfileSetupParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let mut loaded = profile::load_profile(&data_dir, &slug).map_err(AppError::from)?;
     loaded.controllers = p.controllers;
     loaded.patches = p.patches;
@@ -130,7 +118,7 @@ pub fn update_profile_layout(
     p: UpdateProfileLayoutParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let slug = require_profile(state)?;
+    let slug = state.require_profile()?;
     let mut loaded = profile::load_profile(&data_dir, &slug).map_err(AppError::from)?;
     loaded.layout = p.layout;
     profile::save_profile(&data_dir, &slug, &loaded).map_err(AppError::from)?;

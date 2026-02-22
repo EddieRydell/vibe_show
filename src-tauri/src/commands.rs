@@ -31,9 +31,6 @@ fn get_data_dir(state: &State<Arc<AppState>>) -> Result<std::path::PathBuf, AppE
     state::get_data_dir(state).map_err(|_| AppError::NoSettings)
 }
 
-fn require_profile(state: &State<Arc<AppState>>) -> Result<String, AppError> {
-    state.current_profile.lock().clone().ok_or(AppError::NoProfile)
-}
 
 // ── Async commands ───────────────────────────────────────────────
 
@@ -59,7 +56,7 @@ pub async fn open_sequence(
     slug: String,
 ) -> Result<Show, AppError> {
     let data_dir = get_data_dir(&state)?;
-    let profile_slug = require_profile(&state)?;
+    let profile_slug = state.require_profile()?;
     let state_arc = (*state).clone();
     let app = app_handle.clone();
 
@@ -308,7 +305,7 @@ pub async fn analyze_audio(
         })?;
 
     let data_dir = state::get_data_dir(&state).map_err(|_| AppError::NoSettings)?;
-    let profile_slug = require_profile(&state)?;
+    let profile_slug = state.require_profile()?;
     let media_dir = profile::media_dir(&data_dir, &profile_slug);
     let audio_path = media_dir.join(&audio_file);
 

@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { cmd } from "../commands";
 import type { EffectKind, PlaybackInfo, Show } from "../types";
+import { makeEffectKey } from "../utils/effectKey";
 
 export interface EffectEditingState {
   addEffectState: { fixtureId: number; time: number; screenPos: { x: number; y: number } } | null;
@@ -71,7 +72,7 @@ export function useEffectEditing(
         const effectIndex = await cmd.addEffect(trackIndex, kind, start, end);
 
         commitChange();
-        setSelectedEffects(new Set([`${trackIndex}-${effectIndex}`]));
+        setSelectedEffects(new Set([makeEffectKey(trackIndex, effectIndex)]));
       } catch (e) {
         console.error("[VibeLights] Add effect failed:", e);
       }

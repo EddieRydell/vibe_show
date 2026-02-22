@@ -1,26 +1,30 @@
 /**
- * Parse a visual effect key into its logical track/effect indices.
+ * Create a canonical effect selection key from track and effect indices.
  *
- * Keys have the format "fixtureId:trackIdx-effectIdx" or legacy "trackIdx-effectIdx".
+ * This is the single source of truth for effect key format: "trackIdx-effectIdx".
+ */
+export function makeEffectKey(trackIndex: number, effectIndex: number): string {
+  return `${trackIndex}-${effectIndex}`;
+}
+
+/**
+ * Parse an effect key into its track/effect indices.
+ *
+ * Keys must be in canonical "trackIdx-effectIdx" format.
  * Returns null if the key is malformed.
  */
 export function parseEffectKey(
   key: string,
 ): { trackIndex: number; effectIndex: number } | null {
-  const logical = key.includes(":") ? key.split(":")[1] : key;
-  const parts = logical.split("-");
-  if (parts.length !== 2) return null;
+  if (!/^\d+-\d+$/.test(key)) return null;
+  const parts = key.split("-");
   const trackIndex = parseInt(parts[0], 10);
   const effectIndex = parseInt(parts[1], 10);
-  if (isNaN(trackIndex) || isNaN(effectIndex)) return null;
   return { trackIndex, effectIndex };
 }
 
 /**
- * Deduplicate a set of visual effect keys into unique [trackIndex, effectIndex] tuples.
- *
- * Multiple visual keys (fixture-specific) may map to the same logical effect.
- * This extracts the unique logical pairs.
+ * Deduplicate a set of effect keys into unique [trackIndex, effectIndex] tuples.
  */
 export function deduplicateEffectKeys(
   keys: Iterable<string>,
@@ -30,9 +34,9 @@ export function deduplicateEffectKeys(
   for (const key of keys) {
     const parsed = parseEffectKey(key);
     if (!parsed) continue;
-    const logical = `${parsed.trackIndex}-${parsed.effectIndex}`;
-    if (!seen.has(logical)) {
-      seen.add(logical);
+    const canonical = makeEffectKey(parsed.trackIndex, parsed.effectIndex);
+    if (!seen.has(canonical)) {
+      seen.add(canonical);
       result.push([parsed.trackIndex, parsed.effectIndex]);
     }
   }

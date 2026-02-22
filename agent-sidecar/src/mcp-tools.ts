@@ -78,47 +78,16 @@ export function createVibeLightsMcpServer(client: VibeLightsClient) {
             },
           ],
         };
-      } catch {
-        // Fallback: fetch tool schemas directly
-        try {
-          const schemas = await client.getToolSchemas();
-          if (args.topic) {
-            const filtered = schemas.filter(
-              (s) =>
-                s.category === args.topic ||
-                s.name.toLowerCase() === args.topic?.toLowerCase(),
-            );
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: JSON.stringify(filtered, null, 2),
-                },
-              ],
-            };
-          }
-          const categories = [
-            ...new Set(schemas.map((s) => s.category)),
-          ];
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Available categories: ${categories.join(", ")}\n\nUse vibelights_help({topic: "category_name"}) to see commands in a category.`,
-              },
-            ],
-          };
-        } catch (err2) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Error: ${err2 instanceof Error ? err2.message : String(err2)}`,
-              },
-            ],
-            isError: true,
-          };
-        }
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+          isError: true,
+        };
       }
     },
   );

@@ -290,10 +290,6 @@ async fn get_profile(
     *state.current_profile.lock() = Some(slug.clone());
     *state.current_sequence.lock() = None;
 
-    // Load persisted chat history for this profile
-    crate::chat::load_chat_history(&state);
-    crate::chat::load_agent_chats(&state);
-
     // Update last_profile
     let mut settings_guard = state.settings.lock();
     if let Some(ref mut s) = *settings_guard {
@@ -420,10 +416,6 @@ async fn get_sequence(
     }
     *state.current_profile.lock() = Some(profile_slug);
     *state.current_sequence.lock() = Some(seq_slug);
-
-    // Load persisted chat history for this profile
-    crate::chat::load_chat_history(&state);
-    crate::chat::load_agent_chats(&state);
 
     Ok(ApiResponse::success(assembled))
 }

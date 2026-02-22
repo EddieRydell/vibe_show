@@ -6,6 +6,7 @@ import { MessageSquare, Send, X, Trash2, Loader2, Key, Check, History, Plus } fr
 import { useAppShell } from "./ScreenShell";
 import Markdown from "react-markdown";
 import type { ChatMode } from "../types";
+import { parseChatEntries } from "../utils/validators";
 
 interface ChatEntry {
   role: string;
@@ -60,12 +61,12 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
     cmd.getLlmConfig().then((config) => {
       if (config.chat_mode === "Agent") {
         cmd.getAgentChatHistory().then((entries) => {
-          setMessages(entries && entries.length > 0 ? (entries as ChatEntry[]) : []);
+          setMessages(parseChatEntries(entries));
         }).catch(() => {});
         refreshConversations();
       } else {
         cmd.getChatHistory().then((entries) => {
-          setMessages(entries && entries.length > 0 ? (entries as ChatEntry[]) : []);
+          setMessages(parseChatEntries(entries));
         }).catch(() => {});
       }
     }).catch(() => {});
@@ -122,15 +123,13 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
       setChatMode((currentMode) => {
         if (currentMode === "Agent") {
           cmd.getAgentChatHistory().then((entries) => {
-            if (entries && entries.length > 0) {
-              setMessages(entries as ChatEntry[]);
-            }
+            const parsed = parseChatEntries(entries);
+            if (parsed.length > 0) setMessages(parsed);
           }).catch(() => {});
         } else {
           cmd.getChatHistory().then((entries) => {
-            if (entries && entries.length > 0) {
-              setMessages(entries as ChatEntry[]);
-            }
+            const parsed = parseChatEntries(entries);
+            if (parsed.length > 0) setMessages(parsed);
           }).catch(() => {});
         }
         return currentMode;
@@ -205,7 +204,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
   const handleSwitchConversation = useCallback(async (id: string) => {
     await cmd.switchAgentConversation(id).catch(() => {});
     const entries = await cmd.getAgentChatHistory().catch(() => []);
-    setMessages(entries && (entries as ChatEntry[]).length > 0 ? (entries as ChatEntry[]) : []);
+    setMessages(parseChatEntries(entries));
     setStreaming("");
     setToolActivity([]);
     setShowHistory(false);

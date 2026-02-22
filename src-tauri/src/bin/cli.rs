@@ -274,6 +274,10 @@ async fn run_serve(
         agent_chats: Mutex::new(vibe_lights::chat::AgentChatsData::default()),
     });
 
+    // Load global chat history
+    vibe_lights::chat::load_chat_history(&state);
+    vibe_lights::chat::load_agent_chats(&state);
+
     // Open profile and sequence if specified
     if let Some(ref profile_slug) = profile {
         if let Some(ref settings) = loaded_settings {
