@@ -18,6 +18,12 @@ use vibe_lights::state::{AppState, PlaybackState};
 
 #[allow(clippy::expect_used)] // app cannot start without config dir / Tauri runtime
 fn main() {
+    let mut ctx = tauri::generate_context!();
+    ctx.set_default_window_icon(Some(
+        tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
+            .expect("failed to load app icon"),
+    ));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -52,6 +58,8 @@ fn main() {
                 agent_sidecar: Mutex::new(None),
                 agent_port: AtomicU16::new(0),
                 agent_session_id: Mutex::new(None),
+                agent_display_messages: Mutex::new(Vec::new()),
+                agent_chats: Mutex::new(vibe_lights::chat::AgentChatsData::default()),
             });
 
             app.manage(state.clone());
@@ -95,7 +103,7 @@ fn main() {
             commands::exec,
             commands::get_command_registry,
         ])
-        .build(tauri::generate_context!())
+        .build(ctx)
         .expect("error while building VibeLights")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {

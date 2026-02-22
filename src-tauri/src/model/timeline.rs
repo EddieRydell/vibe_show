@@ -113,8 +113,9 @@ impl BlendMode {
 }
 
 /// All known effect parameter keys. Compile-time checked.
-/// Built-in keys serialize as snake_case; `Custom` keys serialize as their raw string.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
+/// Built-in keys serialize as their variant name; `Custom` keys serialize as their raw string.
+/// Unknown strings deserialize as `Custom(s)` so script params round-trip through JSON.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, TS, JsonSchema)]
 #[ts(export)]
 pub enum ParamKey {
     Color,
@@ -142,6 +143,51 @@ pub enum ParamKey {
     WipeOn,
     /// Custom parameter key for DSL-defined effects.
     Custom(String),
+}
+
+impl ParamKey {
+    /// Parse a string into a `ParamKey`, falling back to `Custom` for unknown keys.
+    fn from_string(s: &str) -> Self {
+        match s {
+            "Color" => Self::Color,
+            "Colors" => Self::Colors,
+            "Gradient" => Self::Gradient,
+            "MovementCurve" => Self::MovementCurve,
+            "PulseCurve" => Self::PulseCurve,
+            "IntensityCurve" => Self::IntensityCurve,
+            "ColorMode" => Self::ColorMode,
+            "Speed" => Self::Speed,
+            "PulseWidth" => Self::PulseWidth,
+            "BackgroundLevel" => Self::BackgroundLevel,
+            "Reverse" => Self::Reverse,
+            "Spread" => Self::Spread,
+            "Saturation" => Self::Saturation,
+            "Brightness" => Self::Brightness,
+            "Rate" => Self::Rate,
+            "DutyCycle" => Self::DutyCycle,
+            "Density" => Self::Density,
+            "Offset" => Self::Offset,
+            "Direction" => Self::Direction,
+            "CenterX" => Self::CenterX,
+            "CenterY" => Self::CenterY,
+            "PassCount" => Self::PassCount,
+            "WipeOn" => Self::WipeOn,
+            other => Self::Custom(other.to_string()),
+        }
+    }
+}
+
+impl Serialize for ParamKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for ParamKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from_string(&s))
+    }
 }
 
 /// Which direction a wipe effect sweeps across fixtures.

@@ -270,6 +270,8 @@ async fn run_serve(
         agent_sidecar: Mutex::new(None),
         agent_port: AtomicU16::new(0),
         agent_session_id: Mutex::new(None),
+        agent_display_messages: Mutex::new(Vec::new()),
+        agent_chats: Mutex::new(vibe_lights::chat::AgentChatsData::default()),
     });
 
     // Open profile and sequence if specified

@@ -123,8 +123,13 @@ pub fn execute(state: &Arc<AppState>, cmd: Command) -> Result<CommandOutput, App
 
         // ── Chat ────────────────────────────────────────────
         Command::GetChatHistory => chat::get_chat_history(state),
+        Command::GetAgentChatHistory => chat::get_agent_chat_history(state),
         Command::ClearChat => chat::clear_chat(state),
         Command::StopChat => chat::stop_chat(state),
+        Command::ListAgentConversations => chat::list_agent_conversations(state),
+        Command::NewAgentConversation => chat::new_agent_conversation(state),
+        Command::SwitchAgentConversation(p) => chat::switch_agent_conversation(state, p),
+        Command::DeleteAgentConversation(p) => chat::delete_agent_conversation(state, p),
 
         // ── Vixen Import (sync) ─────────────────────────────
         Command::ImportVixen(p) => import::import_vixen(state, p),

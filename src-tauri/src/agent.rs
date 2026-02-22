@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::chat::ChatEmitter;
+use crate::chat::{ChatEmitter, ChatHistoryEntry, ChatRole};
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -59,26 +59,36 @@ fn resolve_sidecar(
         ));
     }
 
-    // 2. Dev fallback: look for agent-sidecar source relative to project root
+    // 2. Dev fallback: look for agent-sidecar relative to project root
     let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(std::path::Path::to_path_buf)
         .unwrap_or_default();
 
     let sidecar_dir = project_root.join("agent-sidecar");
+
+    // Prefer compiled binary (no runtime needed)
+    let dev_binary = sidecar_dir.join("dist").join(binary_name);
+    if dev_binary.exists() {
+        return Ok((
+            dev_binary.to_string_lossy().to_string(),
+            vec![],
+            Some(sidecar_dir.join("dist")),
+        ));
+    }
+
+    // Fall back to TS source (requires bun) or esbuild bundle (requires bun/node)
     let src_entry = sidecar_dir.join("src").join("index.ts");
     let dist_entry = sidecar_dir.join("dist").join("index.mjs");
 
-    // Prefer running TS source directly (bun handles it natively)
     if src_entry.exists() {
         return Ok((
-            "runtime".to_string(), // placeholder — will be replaced by find_runtime()
+            "runtime".to_string(),
             vec![src_entry.to_string_lossy().to_string()],
             Some(sidecar_dir),
         ));
     }
 
-    // Fall back to esbuild bundle
     if dist_entry.exists() {
         return Ok((
             "runtime".to_string(),
@@ -330,6 +340,40 @@ pub async fn send_message(
         serde_json::json!({ "message": message })
     };
 
+    // Ensure there's an active conversation
+    {
+        let chats = state.agent_chats.lock();
+        if chats.active_id.is_none() {
+            drop(chats);
+            crate::chat::new_agent_conversation(state);
+        }
+    }
+
+    // Push user message to display history
+    state.agent_display_messages.lock().push(ChatHistoryEntry {
+        role: ChatRole::User,
+        text: message.clone(),
+    });
+
+    // Update conversation title from first user message
+    {
+        let mut chats = state.agent_chats.lock();
+        let active_id = chats.active_id.clone();
+        if let Some(active_id) = active_id {
+            if let Some(conv) = chats.conversations.iter_mut().find(|c| c.id == active_id) {
+                if conv.title == "New conversation" {
+                    let trimmed = message.trim();
+                    conv.title = if trimmed.len() <= 60 {
+                        trimmed.to_string()
+                    } else {
+                        let truncated: String = trimmed.chars().take(57).collect();
+                        format!("{truncated}...")
+                    };
+                }
+            }
+        }
+    }
+
     emitter.emit_thinking(true);
 
     let response = client
@@ -361,6 +405,7 @@ pub async fn send_message(
     let mut event_name = String::new();
     let mut data_buf = String::new();
     let mut leftover = String::new();
+    let mut assistant_text = String::new();
 
     tokio::pin!(stream);
 
@@ -379,7 +424,7 @@ pub async fn send_message(
             if line.is_empty() {
                 // Empty line = end of SSE event
                 if !event_name.is_empty() && !data_buf.is_empty() {
-                    process_sse_event(state, emitter, &event_name, &data_buf);
+                    process_sse_event(state, emitter, &event_name, &data_buf, &mut assistant_text);
                 }
                 event_name.clear();
                 data_buf.clear();
@@ -399,8 +444,17 @@ pub async fn send_message(
 
     // Process any remaining event
     if !event_name.is_empty() && !data_buf.is_empty() {
-        process_sse_event(state, emitter, &event_name, &data_buf);
+        process_sse_event(state, emitter, &event_name, &data_buf, &mut assistant_text);
     }
+
+    // Push assistant message to display history and persist
+    if !assistant_text.trim().is_empty() {
+        state.agent_display_messages.lock().push(ChatHistoryEntry {
+            role: ChatRole::Assistant,
+            text: assistant_text,
+        });
+    }
+    crate::chat::save_agent_chats(state);
 
     Ok(())
 }
@@ -410,12 +464,14 @@ fn process_sse_event(
     emitter: &dyn ChatEmitter,
     event: &str,
     data: &str,
+    assistant_text: &mut String,
 ) {
     match event {
         "token" => {
             // Data is a JSON string
             if let Ok(text) = serde_json::from_str::<String>(data) {
                 emitter.emit_token(&text);
+                assistant_text.push_str(&text);
             }
         }
         "tool_call" => {
@@ -441,19 +497,24 @@ fn process_sse_event(
                 emitter.emit_thinking(val);
             }
         }
+        "session_id" => {
+            if let Ok(sid) = serde_json::from_str::<String>(data) {
+                *state.agent_session_id.lock() = Some(sid);
+            }
+        }
         "complete" => {
             emitter.emit_complete();
         }
         "error" => {
             if let Ok(msg) = serde_json::from_str::<String>(data) {
-                emitter.emit_token(&format!("\n\nError: {msg}"));
+                let err_text = format!("\n\nError: {msg}");
+                emitter.emit_token(&err_text);
+                assistant_text.push_str(&err_text);
             }
             emitter.emit_complete();
         }
         _ => {}
     }
-    // Capture session ID if present in tool results
-    let _ = state; // session ID is managed by the sidecar itself
 }
 
 /// Cancel the in-flight agent query.
@@ -471,9 +532,9 @@ pub async fn cancel_message(state: &Arc<AppState>) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Clear the agent session (reset conversation context).
+/// Clear the agent session — archives the current conversation and starts a fresh one.
 pub async fn clear_session(state: &Arc<AppState>) -> Result<(), AppError> {
-    *state.agent_session_id.lock() = None;
+    crate::chat::new_agent_conversation(state);
     let port = state.agent_port.load(Ordering::Relaxed);
     if port > 0 {
         let client = reqwest::Client::new();

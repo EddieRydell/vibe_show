@@ -75,7 +75,7 @@ const server = createServer(async (req, res) => {
       }
 
       // Run the agent query — streams SSE events
-      await runAgentQuery(config, message, res);
+      await runAgentQuery(config, message, res, parsed.sessionId);
       return;
     }
 

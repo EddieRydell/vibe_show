@@ -23,12 +23,16 @@ pub static BUILTINS: &[BuiltinFn] = &[
     BuiltinFn { name: "round", params: &[TypeName::Float], ret: TypeName::Float, op: Op::Round },
     BuiltinFn { name: "fract", params: &[TypeName::Float], ret: TypeName::Float, op: Op::Fract },
     BuiltinFn { name: "sqrt",  params: &[TypeName::Float], ret: TypeName::Float, op: Op::Sqrt },
+    BuiltinFn { name: "sign",  params: &[TypeName::Float], ret: TypeName::Float, op: Op::Sign },
+    BuiltinFn { name: "exp",   params: &[TypeName::Float], ret: TypeName::Float, op: Op::Exp },
+    BuiltinFn { name: "log",   params: &[TypeName::Float], ret: TypeName::Float, op: Op::Log },
     // Math (2-arg)
     BuiltinFn { name: "pow",   params: &[TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Pow },
     BuiltinFn { name: "min",   params: &[TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Min },
     BuiltinFn { name: "max",   params: &[TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Max },
     BuiltinFn { name: "step",  params: &[TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Step },
     BuiltinFn { name: "atan2", params: &[TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Atan2 },
+    BuiltinFn { name: "mod",   params: &[TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Modf },
     // Math (3-arg)
     BuiltinFn { name: "clamp",      params: &[TypeName::Float, TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Clamp },
     BuiltinFn { name: "mix",        params: &[TypeName::Float, TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Mix },
@@ -37,10 +41,12 @@ pub static BUILTINS: &[BuiltinFn] = &[
     BuiltinFn { name: "rgb",  params: &[TypeName::Float, TypeName::Float, TypeName::Float], ret: TypeName::Color, op: Op::Rgb },
     BuiltinFn { name: "hsv",  params: &[TypeName::Float, TypeName::Float, TypeName::Float], ret: TypeName::Color, op: Op::Hsv },
     BuiltinFn { name: "rgba", params: &[TypeName::Float, TypeName::Float, TypeName::Float, TypeName::Float], ret: TypeName::Color, op: Op::Rgba },
-    // Vec2 constructor
-    BuiltinFn { name: "vec2",     params: &[TypeName::Float, TypeName::Float], ret: TypeName::Vec2, op: Op::MakeVec2 },
-    BuiltinFn { name: "distance", params: &[TypeName::Vec2, TypeName::Vec2], ret: TypeName::Float, op: Op::Distance },
-    BuiltinFn { name: "length",   params: &[TypeName::Vec2], ret: TypeName::Float, op: Op::Length },
+    // Vec2 constructor & operations
+    BuiltinFn { name: "vec2",      params: &[TypeName::Float, TypeName::Float], ret: TypeName::Vec2, op: Op::MakeVec2 },
+    BuiltinFn { name: "distance",  params: &[TypeName::Vec2, TypeName::Vec2], ret: TypeName::Float, op: Op::Distance },
+    BuiltinFn { name: "length",    params: &[TypeName::Vec2], ret: TypeName::Float, op: Op::Length },
+    BuiltinFn { name: "dot",       params: &[TypeName::Vec2, TypeName::Vec2], ret: TypeName::Float, op: Op::Dot },
+    BuiltinFn { name: "normalize", params: &[TypeName::Vec2], ret: TypeName::Vec2, op: Op::Normalize },
     // Random
     BuiltinFn { name: "hash", params: &[TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Hash },
 ];

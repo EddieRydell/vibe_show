@@ -25,7 +25,6 @@ export function useScriptPreview({
 
   const rafRef = useRef<number>(0);
   const startRef = useRef<number>(0);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Fetch full heatmap when script compiles successfully
   useEffect(() => {
@@ -43,29 +42,21 @@ export function useScriptPreview({
       .catch(console.error);
   }, [scriptName, compiled, params, pixelCount, timeSamples]);
 
-  // Fetch single frame for strip (debounced)
-  const fetchStrip = useCallback(
-    (t: number) => {
-      if (!scriptName || !compiled) return;
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        invoke<Array<[number, number, number, number]> | null>("preview_script_frame", {
-          name: scriptName,
-          params,
-          pixelCount,
-          t,
-        })
-          .then(setStrip)
-          .catch(console.error);
-      }, 16);
-    },
-    [scriptName, compiled, params, pixelCount],
-  );
-
-  // Fetch strip when time changes
+  // Derive strip from heatmap data (no IPC needed — instant)
   useEffect(() => {
-    fetchStrip(currentTime);
-  }, [currentTime, fetchStrip]);
+    if (!heatmap) {
+      setStrip(null);
+      return;
+    }
+    const { width, height, pixels } = heatmap;
+    const col = Math.round(currentTime * (width - 1));
+    const frame: Array<[number, number, number, number]> = [];
+    for (let row = 0; row < height; row++) {
+      const idx = (row * width + col) * 4;
+      frame.push([pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]]);
+    }
+    setStrip(frame);
+  }, [heatmap, currentTime]);
 
   // Auto-play animation loop
   useEffect(() => {

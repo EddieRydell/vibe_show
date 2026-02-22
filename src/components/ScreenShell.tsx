@@ -1,7 +1,6 @@
 import { createContext, useContext } from "react";
 import { AppBar } from "./AppBar";
 import { NavBar } from "./NavBar";
-import { ChatPanel } from "./ChatPanel";
 
 export interface AppShellContextType {
   chatOpen: boolean;
@@ -37,8 +36,6 @@ export function ScreenShell({
   hideSettings,
   children,
 }: ScreenShellProps) {
-  const { chatOpen, toggleChat, refreshRef } = useAppShell();
-
   return (
     <div className="bg-bg text-text flex h-full flex-col">
       <AppBar />
@@ -54,11 +51,6 @@ export function ScreenShell({
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {children}
         </div>
-        <ChatPanel
-          open={chatOpen}
-          onClose={toggleChat}
-          onRefresh={() => refreshRef.current?.()}
-        />
       </div>
     </div>
   );

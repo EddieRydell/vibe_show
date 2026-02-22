@@ -1,4 +1,4 @@
-use super::ast::{BinOp, ParamType, Span, UnaryOp};
+use super::ast::{BinOp, Expr, ParamType, Span, UnaryOp};
 use super::builtins::{self, BuiltinVar};
 use super::error::CompileError;
 use super::typeck::{TypedExpr, TypedExprKind, TypedScript, TypedStmt, TypedStmtKind};
@@ -39,6 +39,8 @@ pub struct FlagsDef {
 pub struct CompiledParam {
     pub name: String,
     pub ty: ParamType,
+    /// The default-value expression from the DSL source, preserved for UI display.
+    pub default: Expr,
 }
 
 /// Bytecode operations for the stack-based VM.
@@ -86,6 +88,9 @@ pub enum Op {
     Round,
     Fract,
     Sqrt,
+    Sign,
+    Exp,
+    Log,
 
     // Math (2-arg)
     Pow,
@@ -93,6 +98,7 @@ pub enum Op {
     Max,
     Step,
     Atan2,
+    Modf,
 
     // Math (3-arg)
     Clamp,
@@ -128,6 +134,10 @@ pub enum Op {
     Distance,
     /// Pop Vec2 → push float length
     Length,
+    /// Pop Vec2, Vec2 → push float dot product
+    Dot,
+    /// Pop Vec2 → push normalized Vec2
+    Normalize,
 
     // Gradient/Curve/Color param evaluation
     /// Pop float t → push Color from gradient param
@@ -176,6 +186,7 @@ pub fn compile(typed: &TypedScript) -> Result<CompiledScript, CompileError> {
         compiler.params.push(CompiledParam {
             name: p.name.clone(),
             ty: p.ty.clone(),
+            default: p.default.clone(),
         });
     }
 

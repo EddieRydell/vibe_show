@@ -285,7 +285,13 @@ impl<'a> Lexer<'a> {
             match self.bytes[self.pos] {
                 b' ' | b'\t' => self.pos += 1,
                 b'/' if self.bytes.get(self.pos + 1) == Some(&b'/') => {
-                    // Line comment: skip to end of line
+                    // Line comment (// style): skip to end of line
+                    while self.pos < self.bytes.len() && self.bytes[self.pos] != b'\n' {
+                        self.pos += 1;
+                    }
+                }
+                b'-' if self.bytes.get(self.pos + 1) == Some(&b'-') => {
+                    // Line comment (-- style): skip to end of line
                     while self.pos < self.bytes.len() && self.bytes[self.pos] != b'\n' {
                         self.pos += 1;
                     }
@@ -490,6 +496,16 @@ mod tests {
     #[test]
     fn comments_stripped() {
         let tokens = tok("x + y // this is a comment\nz");
+        assert_eq!(tokens, vec![
+            Token::Ident("x".into()), Token::Plus, Token::Ident("y".into()),
+            Token::Newline,
+            Token::Ident("z".into()), Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn dash_dash_comments_stripped() {
+        let tokens = tok("x + y -- this is a comment\nz");
         assert_eq!(tokens, vec![
             Token::Ident("x".into()), Token::Plus, Token::Ident("y".into()),
             Token::Newline,

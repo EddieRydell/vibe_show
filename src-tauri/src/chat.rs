@@ -101,7 +101,7 @@ pub enum ContentBlock {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatHistoryEntry {
     pub role: ChatRole,
     pub text: String,
@@ -539,5 +539,367 @@ pub fn load_chat_history(state: &Arc<AppState>) {
         chat.load_from_file(&path);
     } else {
         state.chat.lock().clear();
+    }
+}
+
+// ── Agent chat persistence (multi-conversation) ────────────────
+
+/// A single conversation in the agent chat history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentConversation {
+    pub id: String,
+    pub created_at: String,
+    pub title: String,
+    pub session_id: Option<String>,
+    pub messages: Vec<ChatHistoryEntry>,
+}
+
+/// Root structure stored in `{seq}.agent-chats.json`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AgentChatsData {
+    pub conversations: Vec<AgentConversation>,
+    pub active_id: Option<String>,
+}
+
+/// Summary returned to the frontend for listing conversations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationSummary {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+    pub message_count: usize,
+    pub is_active: bool,
+}
+
+/// Legacy data format from `{seq}.agent-chat.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyAgentChatData {
+    session_id: Option<String>,
+    messages: Vec<ChatHistoryEntry>,
+}
+
+const MAX_CONVERSATIONS: usize = 20;
+
+/// Compute the new multi-conversation file path.
+fn agent_chats_file_path(state: &AppState) -> Option<std::path::PathBuf> {
+    let settings = state.settings.lock();
+    let data_dir = settings.as_ref().map(|s| &s.data_dir)?;
+    let profile = state.current_profile.lock().clone()?;
+    let sequence = state.current_sequence.lock().clone()?;
+    Some(
+        data_dir
+            .join("profiles")
+            .join(profile)
+            .join("sequences")
+            .join(format!("{sequence}.agent-chats.json")),
+    )
+}
+
+/// Compute the legacy single-conversation file path (for migration).
+fn legacy_agent_chat_file_path(state: &AppState) -> Option<std::path::PathBuf> {
+    let settings = state.settings.lock();
+    let data_dir = settings.as_ref().map(|s| &s.data_dir)?;
+    let profile = state.current_profile.lock().clone()?;
+    let sequence = state.current_sequence.lock().clone()?;
+    Some(
+        data_dir
+            .join("profiles")
+            .join(profile)
+            .join("sequences")
+            .join(format!("{sequence}.agent-chat.json")),
+    )
+}
+
+fn iso_now() -> String {
+    // Use a simple ISO 8601 timestamp
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("{now}")
+}
+
+fn generate_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{ts:x}")
+}
+
+fn title_from_message(msg: &str) -> String {
+    let trimmed = msg.trim();
+    if trimmed.len() <= 60 {
+        trimmed.to_string()
+    } else {
+        let truncated: String = trimmed.chars().take(57).collect();
+        format!("{truncated}...")
+    }
+}
+
+/// Sync current in-memory state into the active conversation within `AgentChatsData`.
+fn sync_active_to_chats(state: &AppState, chats: &mut AgentChatsData) {
+    let session_id = state.agent_session_id.lock().clone();
+    let messages = state.agent_display_messages.lock().clone();
+
+    if let Some(ref active_id) = chats.active_id {
+        if let Some(conv) = chats.conversations.iter_mut().find(|c| &c.id == active_id) {
+            conv.session_id = session_id;
+            conv.messages = messages;
+        }
+    }
+}
+
+/// Load the active conversation from `AgentChatsData` into in-memory state.
+fn load_active_from_chats(state: &AppState, chats: &AgentChatsData) {
+    if let Some(ref active_id) = chats.active_id {
+        if let Some(conv) = chats.conversations.iter().find(|c| &c.id == active_id) {
+            (*state.agent_session_id.lock()).clone_from(&conv.session_id);
+            (*state.agent_display_messages.lock()).clone_from(&conv.messages);
+            return;
+        }
+    }
+    // No active conversation
+    *state.agent_session_id.lock() = None;
+    state.agent_display_messages.lock().clear();
+}
+
+/// Load agent chats from disk, with migration from legacy format.
+pub fn load_agent_chats(state: &Arc<AppState>) {
+    let Some(path) = agent_chats_file_path(state) else {
+        *state.agent_session_id.lock() = None;
+        state.agent_display_messages.lock().clear();
+        *state.agent_chats.lock() = AgentChatsData::default();
+        return;
+    };
+
+    // Try loading new format
+    if path.exists() {
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(chats_data) = serde_json::from_str::<AgentChatsData>(&data) {
+                load_active_from_chats(state, &chats_data);
+                *state.agent_chats.lock() = chats_data;
+                return;
+            }
+        }
+    }
+
+    // Migration: try legacy format
+    if let Some(legacy_path) = legacy_agent_chat_file_path(state) {
+        if legacy_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&legacy_path) {
+                if let Ok(legacy) = serde_json::from_str::<LegacyAgentChatData>(&data) {
+                    let id = generate_id();
+                    let title = legacy
+                        .messages
+                        .iter()
+                        .find(|m| m.role == ChatRole::User)
+                        .map_or_else(
+                            || "Imported conversation".to_string(),
+                            |m| title_from_message(&m.text),
+                        );
+
+                    let conv = AgentConversation {
+                        id: id.clone(),
+                        created_at: iso_now(),
+                        title,
+                        session_id: legacy.session_id,
+                        messages: legacy.messages,
+                    };
+
+                    let chats_data = AgentChatsData {
+                        active_id: Some(id),
+                        conversations: vec![conv],
+                    };
+
+                    load_active_from_chats(state, &chats_data);
+                    *state.agent_chats.lock() = chats_data;
+
+                    // Save in new format and remove old file
+                    if let Ok(json) = serde_json::to_string_pretty(&*state.agent_chats.lock()) {
+                        let _ = std::fs::write(&path, json);
+                    }
+                    let _ = std::fs::remove_file(&legacy_path);
+                    return;
+                }
+            }
+        }
+    }
+
+    // Nothing found — start fresh
+    *state.agent_session_id.lock() = None;
+    state.agent_display_messages.lock().clear();
+    *state.agent_chats.lock() = AgentChatsData::default();
+}
+
+/// Save agent chats to disk. Syncs current in-memory state into the active conversation first.
+pub fn save_agent_chats(state: &Arc<AppState>) {
+    let Some(path) = agent_chats_file_path(state) else {
+        return;
+    };
+
+    let mut chats = state.agent_chats.lock().clone();
+    sync_active_to_chats(state, &mut chats);
+
+    // Auto-prune to MAX_CONVERSATIONS (keep active)
+    if chats.conversations.len() > MAX_CONVERSATIONS {
+        let active_id = chats.active_id.clone();
+        // Remove oldest non-active conversations
+        while chats.conversations.len() > MAX_CONVERSATIONS {
+            if let Some(pos) = chats
+                .conversations
+                .iter()
+                .position(|c| Some(&c.id) != active_id.as_ref())
+            {
+                chats.conversations.remove(pos);
+            } else {
+                break;
+            }
+        }
+    }
+
+    *state.agent_chats.lock() = chats.clone();
+
+    if chats.conversations.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+
+    if let Ok(json) = serde_json::to_string_pretty(&chats) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+/// Create a new conversation. Saves the current one first, returns the new conversation ID.
+pub fn new_agent_conversation(state: &Arc<AppState>) -> String {
+    // Save current state into the active conversation
+    {
+        let mut chats = state.agent_chats.lock();
+        sync_active_to_chats(state, &mut chats);
+    }
+
+    // Remove empty conversations (no messages)
+    {
+        let mut chats = state.agent_chats.lock();
+        chats
+            .conversations
+            .retain(|c| !c.messages.is_empty());
+    }
+
+    let new_id = generate_id();
+
+    // Create new conversation and set as active
+    {
+        let mut chats = state.agent_chats.lock();
+        let conv = AgentConversation {
+            id: new_id.clone(),
+            created_at: iso_now(),
+            title: "New conversation".to_string(),
+            session_id: None,
+            messages: Vec::new(),
+        };
+        chats.conversations.push(conv);
+        chats.active_id = Some(new_id.clone());
+    }
+
+    // Clear active state
+    *state.agent_session_id.lock() = None;
+    state.agent_display_messages.lock().clear();
+
+    // Persist
+    save_agent_chats(state);
+
+    new_id
+}
+
+/// Switch to a different conversation by ID.
+pub fn switch_agent_conversation(state: &Arc<AppState>, id: &str) -> Result<(), String> {
+    // Save current first
+    {
+        let mut chats = state.agent_chats.lock();
+        sync_active_to_chats(state, &mut chats);
+    }
+
+    let mut chats = state.agent_chats.lock();
+    if !chats.conversations.iter().any(|c| c.id == id) {
+        return Err(format!("Conversation '{id}' not found"));
+    }
+
+    chats.active_id = Some(id.to_string());
+    load_active_from_chats(state, &chats);
+
+    // Persist
+    let chats_clone = chats.clone();
+    drop(chats);
+    if let Some(path) = agent_chats_file_path(state) {
+        if let Ok(json) = serde_json::to_string_pretty(&chats_clone) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
+
+    Ok(())
+}
+
+/// Delete a conversation by ID.
+pub fn delete_agent_conversation(state: &Arc<AppState>, id: &str) -> Result<(), String> {
+    let mut chats = state.agent_chats.lock();
+
+    let was_active = chats.active_id.as_deref() == Some(id);
+    chats.conversations.retain(|c| c.id != id);
+
+    if was_active {
+        chats.active_id = None;
+        *state.agent_session_id.lock() = None;
+        state.agent_display_messages.lock().clear();
+    }
+
+    let chats_clone = chats.clone();
+    drop(chats);
+
+    if let Some(path) = agent_chats_file_path(state) {
+        if chats_clone.conversations.is_empty() {
+            let _ = std::fs::remove_file(&path);
+        } else if let Ok(json) = serde_json::to_string_pretty(&chats_clone) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
+
+    Ok(())
+}
+
+/// List conversation summaries.
+pub fn list_agent_conversations(state: &Arc<AppState>) -> Vec<ConversationSummary> {
+    // Sync current state so the active conversation's message count is accurate
+    {
+        let mut chats = state.agent_chats.lock();
+        sync_active_to_chats(state, &mut chats);
+    }
+
+    let chats = state.agent_chats.lock();
+    chats
+        .conversations
+        .iter()
+        .map(|c| ConversationSummary {
+            id: c.id.clone(),
+            title: c.title.clone(),
+            created_at: c.created_at.clone(),
+            message_count: c.messages.len(),
+            is_active: chats.active_id.as_deref() == Some(&c.id),
+        })
+        .collect()
+}
+
+/// Clear agent chat state (in-memory and on disk). Used for full reset.
+pub fn clear_agent_chat(state: &Arc<AppState>) {
+    *state.agent_session_id.lock() = None;
+    state.agent_display_messages.lock().clear();
+    *state.agent_chats.lock() = AgentChatsData::default();
+    if let Some(path) = agent_chats_file_path(state) {
+        let _ = std::fs::remove_file(&path);
+    }
+    // Also clean up legacy file if it exists
+    if let Some(legacy_path) = legacy_agent_chat_file_path(state) {
+        let _ = std::fs::remove_file(&legacy_path);
     }
 }

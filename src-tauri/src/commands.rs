@@ -93,6 +93,7 @@ pub async fn open_sequence(
 
         // Load persisted chat history for this sequence
         crate::chat::load_chat_history(&state_arc);
+        crate::chat::load_agent_chats(&state_arc);
 
         emit_progress(&app, "open_sequence", "Ready", 1.0, None);
 
@@ -743,7 +744,8 @@ pub struct ScriptError {
 
 // ── Helper functions (used by registry handlers and kept commands) ─
 
-/// Recompile all scripts in the active sequence (e.g., after loading a show from disk).
+/// Recompile all scripts in the active sequence **and** the profile library
+/// (e.g., after loading a show from disk).
 /// Returns a list of scripts that failed to compile.
 pub fn recompile_all_scripts(state: &AppState) -> Vec<String> {
     let sources: Vec<(String, String)> = state.with_show(|show| {
@@ -753,9 +755,30 @@ pub fn recompile_all_scripts(state: &AppState) -> Vec<String> {
             .unwrap_or_default()
     });
 
+    // Also load profile library scripts so their previews work.
+    let profile_sources: Vec<(String, String)> = (|| {
+        let slug = state.current_profile.lock().clone()?;
+        let data_dir = state::get_data_dir(state).ok()?;
+        let libs = profile::load_libraries(&data_dir, &slug).ok()?;
+        Some(libs.scripts.into_iter().collect::<Vec<_>>())
+    })()
+    .unwrap_or_default();
+
     let mut failures = Vec::new();
     let mut cache = state.script_cache.lock();
     cache.clear();
+
+    // Profile library scripts first (sequence scripts override on name collision)
+    for (name, source) in profile_sources {
+        match dsl::compile_source(&source) {
+            Ok(compiled) => {
+                cache.insert(name, std::sync::Arc::new(compiled));
+            }
+            Err(_) => {
+                failures.push(name);
+            }
+        }
+    }
 
     for (name, source) in sources {
         match dsl::compile_source(&source) {
@@ -787,6 +810,86 @@ pub fn extract_script_params(compiled: &dsl::compiler::CompiledScript) -> Vec<Sc
         .collect()
 }
 
+/// Extract the default `ParamValue` from the DSL default expression.
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn eval_param_default(
+    cp: &dsl::compiler::CompiledParam,
+    compiled: &dsl::compiler::CompiledScript,
+) -> Option<crate::model::timeline::ParamValue> {
+    use crate::dsl::ast::{ExprKind, ParamType as Dsl};
+    use crate::model::timeline::ParamValue;
+
+    match (&cp.ty, &cp.default.kind) {
+        // Float: literal number
+        (Dsl::Float(_), ExprKind::FloatLit(v)) => Some(ParamValue::Float(*v)),
+        (Dsl::Float(_), ExprKind::IntLit(v)) => Some(ParamValue::Float(f64::from(*v))),
+        // Int: literal number
+        (Dsl::Int(_), ExprKind::IntLit(v)) => Some(ParamValue::Int(*v)),
+        (Dsl::Int(_), ExprKind::FloatLit(v)) => Some(ParamValue::Int(*v as i32)),
+        // Bool: literal
+        (Dsl::Bool, ExprKind::BoolLit(v)) => Some(ParamValue::Bool(*v)),
+        // Color: hex literal
+        (Dsl::Color, ExprKind::ColorLit { r, g, b }) => {
+            Some(ParamValue::Color(crate::model::color::Color {
+                r: *r,
+                g: *g,
+                b: *b,
+                a: 255,
+            }))
+        }
+        // Gradient: gradient literal with color stops
+        (Dsl::Gradient, ExprKind::GradientLit(stops)) => {
+            let count = stops.len();
+            let model_stops: Vec<crate::model::color_gradient::ColorStop> = stops
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let position = s.position.unwrap_or_else(|| {
+                        if count <= 1 {
+                            0.0
+                        } else {
+                            i as f64 / (count - 1) as f64
+                        }
+                    });
+                    crate::model::color_gradient::ColorStop {
+                        position,
+                        color: crate::model::color::Color {
+                            r: s.color.0,
+                            g: s.color.1,
+                            b: s.color.2,
+                            a: 255,
+                        },
+                    }
+                })
+                .collect();
+            crate::model::color_gradient::ColorGradient::new(model_stops)
+                .map(ParamValue::ColorGradient)
+        }
+        // Curve: curve literal with control points
+        (Dsl::Curve, ExprKind::CurveLit(points)) => {
+            let model_points: Vec<crate::model::curve::CurvePoint> = points
+                .iter()
+                .map(|(x, y)| crate::model::curve::CurvePoint { x: *x, y: *y })
+                .collect();
+            crate::model::curve::Curve::new(model_points).map(ParamValue::Curve)
+        }
+        // Enum: identifier (variant name)
+        (Dsl::Named(type_name), ExprKind::Ident(variant)) => {
+            // Verify it's an enum
+            if compiled.enums.iter().any(|e| e.name == *type_name) {
+                Some(ParamValue::EnumVariant(variant.clone()))
+            } else {
+                None
+            }
+        }
+        // Flags: flag combination
+        (Dsl::Named(_), ExprKind::FlagCombine(flags)) => {
+            Some(ParamValue::FlagSet(flags.clone()))
+        }
+        _ => None,
+    }
+}
+
 /// Map a DSL `CompiledParam` to model-layer `ParamType` + optional default `ParamValue`.
 #[allow(clippy::cast_possible_truncation)]
 pub fn dsl_param_to_model(
@@ -799,6 +902,8 @@ pub fn dsl_param_to_model(
     use crate::dsl::ast::ParamType as Dsl;
     use crate::model::timeline::{ParamType as Model, ParamValue};
 
+    let default = eval_param_default(cp, compiled);
+
     match &cp.ty {
         Dsl::Float(range) => {
             let (min, max) = range.unwrap_or((0.0, 1.0));
@@ -808,31 +913,31 @@ pub fn dsl_param_to_model(
                     max,
                     step: 0.01,
                 },
-                Some(ParamValue::Float(min)),
+                default.or(Some(ParamValue::Float(min))),
             )
         }
         Dsl::Int(range) => {
             let (min, max) = range.unwrap_or((0, 100));
-            (Model::Int { min, max }, Some(ParamValue::Int(min)))
+            (Model::Int { min, max }, default.or(Some(ParamValue::Int(min))))
         }
-        Dsl::Bool => (Model::Bool, Some(ParamValue::Bool(false))),
+        Dsl::Bool => (Model::Bool, default.or(Some(ParamValue::Bool(false)))),
         Dsl::Color => (
             Model::Color,
-            Some(ParamValue::Color(crate::model::color::Color {
+            default.or(Some(ParamValue::Color(crate::model::color::Color {
                 r: 255,
                 g: 255,
                 b: 255,
                 a: 255,
-            })),
+            }))),
         ),
         Dsl::Gradient => (
             Model::ColorGradient {
                 min_stops: 2,
                 max_stops: 8,
             },
-            None,
+            default,
         ),
-        Dsl::Curve => (Model::Curve, None),
+        Dsl::Curve => (Model::Curve, default),
         Dsl::Named(type_name) => {
             // Check enums first, then flags
             for e in &compiled.enums {
@@ -841,7 +946,9 @@ pub fn dsl_param_to_model(
                         Model::Enum {
                             options: e.variants.clone(),
                         },
-                        e.variants.first().map(|v| ParamValue::EnumVariant(v.clone())),
+                        default.or_else(|| {
+                            e.variants.first().map(|v| ParamValue::EnumVariant(v.clone()))
+                        }),
                     );
                 }
             }
@@ -851,7 +958,7 @@ pub fn dsl_param_to_model(
                         Model::Flags {
                             options: f.flags.clone(),
                         },
-                        Some(ParamValue::FlagSet(vec![])),
+                        default.or(Some(ParamValue::FlagSet(vec![]))),
                     );
                 }
             }

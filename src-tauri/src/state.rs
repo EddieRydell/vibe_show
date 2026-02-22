@@ -44,6 +44,10 @@ pub struct AppState {
     pub agent_port: AtomicU16,
     /// Session ID for agent conversation continuity.
     pub agent_session_id: Mutex<Option<String>>,
+    /// Display messages for agent mode chat (persisted per-sequence).
+    pub agent_display_messages: Mutex<Vec<crate::chat::ChatHistoryEntry>>,
+    /// Multi-conversation agent chat data.
+    pub agent_chats: Mutex<crate::chat::AgentChatsData>,
 }
 
 impl AppState {

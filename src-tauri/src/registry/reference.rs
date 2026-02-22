@@ -15,7 +15,7 @@ flags Features { Glow, Trail, Fade }
 param speed: float(0.1, 10.0) = 2.0
 param color1: color = #ff0000
 param grad: gradient = #ff0000, #0000ff
-param curve1: curve = 0,0 0.5,1 1,0
+param curve1: curve = 0:0, 0.5:1, 1:0
 param mode: Mode = Pulse
 param features: Features = Glow | Trail
 param count: int(1, 100) = 10
@@ -31,14 +31,22 @@ fn pulse(center: float, width: float) -> float {
     smoothstep(width, 0.0, d)
 }
 
--- Conditionals
+-- Conditionals (if / else if / else)
 if mode == Mode.Pulse {
     color1.scale(pulse(0.5, 0.3))
+} else if mode == Mode.Wave {
+    grad(pos)
 } else {
     grad(t)
 }
 
 -- Last expression is the output color
+```
+
+## Comments
+```
+// C-style line comment
+-- Lua-style line comment (also valid)
 ```
 
 ## Implicit Variables
@@ -61,13 +69,42 @@ if mode == Mode.Pulse {
 - `gradient` — color gradient (callable: `grad(position)`)
 - `curve` — timing curve (callable: `curve1(x)`)
 
+## Operators
+
+### Arithmetic
+| Operator | Description |
+|----------|-------------|
+| `+`  | Addition |
+| `-`  | Subtraction (or unary negation) |
+| `*`  | Multiplication |
+| `/`  | Division (returns 0 on divide by zero) |
+| `%`  | Modulo (returns 0 on divide by zero) |
+
+### Comparison (→ bool)
+| Operator | Description |
+|----------|-------------|
+| `==` | Equal |
+| `!=` | Not equal |
+| `<`  | Less than |
+| `>`  | Greater than |
+| `<=` | Less than or equal |
+| `>=` | Greater than or equal |
+
+### Logical
+| Operator | Description |
+|----------|-------------|
+| `&&` | Logical AND |
+| `\|\|` | Logical OR |
+| `!`  | Logical NOT (unary) |
+| `&`  | Flag test (bitwise AND for flags) |
+
 ## Parameter Types
 - `float(min, max)` — float slider with range
 - `int(min, max)` — integer slider with range
 - `bool` — checkbox
 - `color` — color picker (default: hex like `#ff0000`)
 - `gradient` — gradient editor (default: comma-separated hex `#ff0000, #0000ff`)
-- `curve` — curve editor (default: space-separated x,y pairs `0,0 0.5,1 1,0`)
+- `curve` — curve editor (default: comma-separated x:y pairs `0:0, 0.5:1, 1:0`)
 - `EnumName` — dropdown from defined enum
 - `FlagsName` — multi-select from defined flags
 
@@ -85,6 +122,9 @@ if mode == Mode.Pulse {
 | `round(x)` | Round to nearest |
 | `fract(x)` | Fractional part (x - floor(x)) |
 | `sqrt(x)` | Square root |
+| `sign(x)` | Sign: -1.0, 0.0, or 1.0 |
+| `exp(x)` | e^x (exponential) |
+| `log(x)` | Natural logarithm (ln) |
 
 ### Math (2 arguments → float)
 | Function | Description |
@@ -92,6 +132,7 @@ if mode == Mode.Pulse {
 | `pow(base, exp)` | Power |
 | `min(a, b)` | Minimum |
 | `max(a, b)` | Maximum |
+| `mod(a, b)` | Modulo (same as `a % b`) |
 | `step(edge, x)` | 0 if x < edge, else 1 |
 | `atan2(y, x)` | Arctangent of y/x |
 
@@ -105,16 +146,16 @@ if mode == Mode.Pulse {
 ### Color Constructors → color
 | Function | Description |
 |----------|-------------|
-| `rgb(r, g, b)` | RGB color (0-255 range) |
+| `rgb(r, g, b)` | RGB color (0.0-1.0 range) |
 | `hsv(h, s, v)` | HSV color (h: 0-360, s: 0-1, v: 0-1) |
-| `rgba(r, g, b, a)` | RGBA color (0-255 range) |
+| `rgba(r, g, b, a)` | RGBA color (0.0-1.0 range) |
 
 ### Color Operations
 | Operation | Description |
 |-----------|-------------|
-| `c.r`, `c.g`, `c.b`, `c.a` | Channel access (0-255) |
-| `c.scale(f)` | Multiply RGB by float |
-| Gradient call: `grad(0.5)` | Evaluate gradient at position |
+| `c.r`, `c.g`, `c.b`, `c.a` | Channel access (0.0-1.0) |
+| `c.scale(f)` | Multiply RGB by float, returns new color |
+| Gradient call: `grad(0.5)` | Evaluate gradient at position [0.0, 1.0] |
 
 ### Vec2
 | Function | Description |
@@ -122,12 +163,45 @@ if mode == Mode.Pulse {
 | `vec2(x, y)` | Construct vec2 |
 | `distance(a, b)` | Euclidean distance between two vec2 |
 | `length(v)` | Length of vec2 |
+| `dot(a, b)` | Dot product of two vec2 |
+| `normalize(v)` | Normalize vec2 to unit length |
 | `v.x`, `v.y` | Component access |
 
 ### Noise / Random
 | Function | Description |
 |----------|-------------|
 | `hash(a, b)` | Deterministic pseudo-random [0, 1] — same inputs always produce same output |
+
+## Control Flow
+
+### If / Else If / Else
+```
+if condition {
+    expr1
+} else if other_condition {
+    expr2
+} else {
+    expr3
+}
+```
+If-expressions return a value (the last expression in the taken branch).
+
+### Boolean Logic
+```
+-- Combine conditions with && and ||
+if speed > 1.0 && enabled {
+    color1
+} else {
+    #000000
+}
+
+-- Negate with !
+if !enabled {
+    #000000
+} else {
+    color1
+}
+```
 
 ## Enum & Flags Usage
 ```
@@ -141,8 +215,25 @@ if dir == Direction.Left { ... }
 flags Options { Sparkle, Glow, Pulse }
 param opts: Options = Sparkle | Glow
 
-if opts & Options.Sparkle { ... }
+-- Test individual flags with &
+if opts & Options.Sparkle {
+    -- sparkle is enabled
+}
+
+-- Combine flag tests with && and ||
+if opts & Options.Sparkle && opts & Options.Glow {
+    -- both enabled
+}
 ```
+
+## User-Defined Functions
+```
+fn function_name(param1: type, param2: type) -> return_type {
+    -- function body (last expression is the return value)
+    expr
+}
+```
+Supported types in signatures: `float`, `int`, `bool`, `color`, `vec2`, `gradient`, `curve`.
 
 ## Examples
 
@@ -168,6 +259,29 @@ let d = abs(pos - head)
 let d2 = min(d, 1.0 - d)
 let brightness = smoothstep(width, 0.0, d2)
 grad(pos).scale(brightness)
+```
+
+### Advanced: Rainbow Sparkles
+```
+@name "Rainbow Sparkles"
+param colors: gradient = #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3
+param density: float(0.01, 1.0) = 0.15
+param speed: float(0.1, 10.0) = 2.0
+param sparkle_duration: float(0.05, 0.5) = 0.15
+param brightness: float(0.0, 2.0) = 1.0
+param sharpness: float(0.0, 1.0) = 0.7
+
+let time_phase = t * speed
+let sparkle_phase = hash(pixel, 456.0)
+let sparkle_time = fract(time_phase + sparkle_phase)
+let time_seed = floor(time_phase * 10.0)
+let is_sparkling = hash(pixel, time_seed) < density
+let pulse_pos = sparkle_time / sparkle_duration
+let pulse = 1.0 - pow(pulse_pos, 2.0)
+let active = if sparkle_time < sparkle_duration && is_sparkling { 1.0 } else { 0.0 }
+let final_brightness = clamp(pulse * active * brightness, 0.0, 1.0)
+let color_position = fract(hash(pixel, 789.0) + t * 0.5)
+colors(color_position).scale(final_brightness)
 ```
 
 ### Advanced: Spatial Burst

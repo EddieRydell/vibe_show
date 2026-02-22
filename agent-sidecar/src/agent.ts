@@ -81,6 +81,7 @@ export async function runAgentQuery(
   config: AgentConfig,
   message: string,
   res: ServerResponse,
+  sessionIdOverride?: string,
 ): Promise<void> {
   const client = new VibeLightsClient(config.vibelightsPort);
   const mcpServer = createVibeLightsMcpServer(client);
@@ -114,7 +115,7 @@ export async function runAgentQuery(
         maxTurns: 30,
         model: config.model || undefined,
         abortController: abort,
-        resume: currentSessionId,
+        resume: sessionIdOverride ?? currentSessionId,
         includePartialMessages: true,
         ...(overrides.pathToClaudeCodeExecutable
           ? { pathToClaudeCodeExecutable: overrides.pathToClaudeCodeExecutable }
@@ -131,7 +132,7 @@ export async function runAgentQuery(
       },
     });
 
-    let lastText = "";
+    let streamed = false;
 
     for await (const msg of stream) {
       if (abort.signal.aborted) break;
@@ -140,22 +141,18 @@ export async function runAgentQuery(
         case "system": {
           if (msg.subtype === "init") {
             currentSessionId = msg.session_id;
+            sendEvent("session_id", currentSessionId);
           }
           break;
         }
 
         case "assistant": {
-          // Full assistant message — extract text blocks
+          // Full assistant message — only extract tool_use blocks.
+          // Text is already streamed via stream_event tokens.
           const apiMsg = msg.message;
           if (apiMsg.content && Array.isArray(apiMsg.content)) {
             for (const block of apiMsg.content) {
-              if (block.type === "text" && block.text) {
-                // Only send new text (delta from lastText)
-                if (block.text.length > lastText.length) {
-                  // Don't double-emit if we got partials
-                }
-                lastText = block.text;
-              } else if (block.type === "tool_use") {
+              if (block.type === "tool_use") {
                 sendEvent("tool_call", block.name);
                 sendEvent("thinking", true);
               }
@@ -171,6 +168,7 @@ export async function runAgentQuery(
             const delta = (event as Record<string, unknown>).delta as Record<string, unknown> | undefined;
             if (delta?.type === "text_delta" && typeof delta.text === "string") {
               sendEvent("token", delta.text);
+              streamed = true;
             }
           } else if (event.type === "content_block_start") {
             const block = (event as Record<string, unknown>).content_block as Record<string, unknown> | undefined;
@@ -209,8 +207,8 @@ export async function runAgentQuery(
 
         case "result": {
           if (msg.subtype === "success") {
-            // Send the final result text as a token if we haven't streamed it
-            if (msg.result && msg.result !== lastText) {
+            // Only send result text if we didn't stream it already
+            if (!streamed && msg.result) {
               sendEvent("token", msg.result);
             }
           } else {

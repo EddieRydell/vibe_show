@@ -1,13 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
-    <style>@import url('https://fonts.googleapis.com/css2?family=Prompt:wght@500&amp;display=swap');</style>
+    <style>@import url('https://fonts.googleapis.com/css2?family=Prompt:wght@700&amp;display=swap');</style>
   </defs>
   <text
-    x="32" y="46"
+    x="32" y="43"
     text-anchor="middle"
     font-family="'Prompt', 'Segoe UI', sans-serif"
     font-size="56"
-    font-weight="500"
+    font-weight="700"
     fill="#111111"
   >v</text>
 </svg>

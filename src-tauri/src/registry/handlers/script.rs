@@ -174,10 +174,10 @@ pub fn list_profile_scripts(state: &Arc<AppState>) -> Result<CommandOutput, AppE
     let libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
         message: e.to_string(),
     })?;
-    let names: Vec<&String> = libs.scripts.keys().collect();
+    let scripts: Vec<(String, String)> = libs.scripts.into_iter().collect();
     Ok(CommandOutput::json(
-        serde_json::to_string(&names).unwrap_or_default(),
-        &names,
+        format!("{} scripts.", scripts.len()),
+        &scripts,
     ))
 }
 

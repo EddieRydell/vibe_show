@@ -388,6 +388,15 @@ pub struct CompileScriptPreviewParams {
     pub source: String,
 }
 
+// ── Conversation params ────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+pub struct ConversationIdParams {
+    pub conversation_id: String,
+}
+
 // ── Vixen import params ────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -123,6 +123,9 @@ pub fn execute(script: &CompiledScript, ctx: &VmContext<'_>) -> Color {
             Op::Round => float_unary(&mut stack, f64::round),
             Op::Fract => float_unary(&mut stack, f64::fract),
             Op::Sqrt => float_unary(&mut stack, f64::sqrt),
+            Op::Sign => float_unary(&mut stack, f64::signum),
+            Op::Exp => float_unary(&mut stack, f64::exp),
+            Op::Log => float_unary(&mut stack, f64::ln),
 
             // Math (2-arg)
             Op::Pow => float_binop(&mut stack, f64::powf),
@@ -130,6 +133,7 @@ pub fn execute(script: &CompiledScript, ctx: &VmContext<'_>) -> Color {
             Op::Max => float_binop(&mut stack, f64::max),
             Op::Step => float_binop(&mut stack, |edge, x| if x < edge { 0.0 } else { 1.0 }),
             Op::Atan2 => float_binop(&mut stack, f64::atan2),
+            Op::Modf => float_binop(&mut stack, |a, b| if b == 0.0 { 0.0 } else { a % b }),
 
             // Math (3-arg)
             Op::Clamp => {
@@ -272,6 +276,33 @@ pub fn execute(script: &CompiledScript, ctx: &VmContext<'_>) -> Color {
                     match val {
                         Value::Vec2(x, y) => stack.push(Value::Float((x * x + y * y).sqrt())),
                         _ => stack.push(Value::Float(0.0)),
+                    }
+                }
+            }
+            Op::Dot => {
+                if stack.len() >= 2 {
+                    let b = stack.pop().unwrap_or(Value::Float(0.0));
+                    let a = stack.pop().unwrap_or(Value::Float(0.0));
+                    match (a, b) {
+                        (Value::Vec2(ax, ay), Value::Vec2(bx, by)) => {
+                            stack.push(Value::Float(ax * bx + ay * by));
+                        }
+                        _ => stack.push(Value::Float(0.0)),
+                    }
+                }
+            }
+            Op::Normalize => {
+                if let Some(val) = stack.pop() {
+                    match val {
+                        Value::Vec2(x, y) => {
+                            let len = (x * x + y * y).sqrt();
+                            if len > 0.0 {
+                                stack.push(Value::Vec2(x / len, y / len));
+                            } else {
+                                stack.push(Value::Vec2(0.0, 0.0));
+                            }
+                        }
+                        _ => stack.push(Value::Vec2(0.0, 0.0)),
                     }
                 }
             }

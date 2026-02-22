@@ -2,6 +2,7 @@
 
 /**
  * All known effect parameter keys. Compile-time checked.
- * Built-in keys serialize as snake_case; `Custom` keys serialize as their raw string.
+ * Built-in keys serialize as their variant name; `Custom` keys serialize as their raw string.
+ * Unknown strings deserialize as `Custom(s)` so script params round-trip through JSON.
  */
 export type ParamKey = "Color" | "Colors" | "Gradient" | "MovementCurve" | "PulseCurve" | "IntensityCurve" | "ColorMode" | "Speed" | "PulseWidth" | "BackgroundLevel" | "Reverse" | "Spread" | "Saturation" | "Brightness" | "Rate" | "DutyCycle" | "Density" | "Offset" | "Direction" | "CenterX" | "CenterY" | "PassCount" | "WipeOn" | { "Custom": string };

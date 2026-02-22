@@ -8,16 +8,16 @@ use serde::{Deserialize, Serialize};
 
 use params::{
     AddEffectParams, AddTrackParams, BatchEditParams, CheckVixenPreviewFileParams,
-    CompileScriptParams, CompileScriptPreviewParams, CreateProfileParams, CreateSequenceParams,
-    DeleteEffectsParams, DeleteTrackParams, GetAnalysisDetailParams, GetBeatsInRangeParams,
-    GetEffectDetailParams, ImportMediaParams, ImportVixenParams, ImportVixenProfileParams,
-    ImportVixenSequenceParams, InitializeDataDirParams, LinkEffectToLibraryParams,
-    MoveEffectToTrackParams, NameParams, RenameParams, ScanVixenDirectoryParams, SeekParams,
-    SetLibraryCurveParams, SetLibraryGradientParams, SetLlmConfigParams, SetLoopingParams,
-    SetProfileCurveParams, SetProfileGradientParams, SetRegionParams, SlugParams,
-    UpdateEffectParamParams, UpdateEffectTimeRangeParams, UpdateProfileFixturesParams,
-    UpdateProfileLayoutParams, UpdateProfileSetupParams, UpdateSequenceSettingsParams,
-    WriteScriptParams,
+    CompileScriptParams, CompileScriptPreviewParams, ConversationIdParams, CreateProfileParams,
+    CreateSequenceParams, DeleteEffectsParams, DeleteTrackParams, GetAnalysisDetailParams,
+    GetBeatsInRangeParams, GetEffectDetailParams, ImportMediaParams, ImportVixenParams,
+    ImportVixenProfileParams, ImportVixenSequenceParams, InitializeDataDirParams,
+    LinkEffectToLibraryParams, MoveEffectToTrackParams, NameParams, RenameParams,
+    ScanVixenDirectoryParams, SeekParams, SetLibraryCurveParams, SetLibraryGradientParams,
+    SetLlmConfigParams, SetLoopingParams, SetProfileCurveParams, SetProfileGradientParams,
+    SetRegionParams, SlugParams, UpdateEffectParamParams, UpdateEffectTimeRangeParams,
+    UpdateProfileFixturesParams, UpdateProfileLayoutParams, UpdateProfileSetupParams,
+    UpdateSequenceSettingsParams, WriteScriptParams,
 };
 
 // ── Command enum ────────────────────────────────────────────────
@@ -137,8 +137,13 @@ pub enum Command {
 
     // ── Chat ────────────────────────────────────────────────
     GetChatHistory,
+    GetAgentChatHistory,
     ClearChat,
     StopChat,
+    ListAgentConversations,
+    NewAgentConversation,
+    SwitchAgentConversation(ConversationIdParams),
+    DeleteAgentConversation(ConversationIdParams),
 
     // ── Vixen Import (sync) ─────────────────────────────────
     ImportVixen(ImportVixenParams),
@@ -716,6 +721,12 @@ impl Command {
                 category: CommandCategory::Chat,
                 undoable: false,
             },
+            Command::GetAgentChatHistory => CommandInfo {
+                name: "get_agent_chat_history",
+                description: "Get the agent chat history for the current sequence.",
+                category: CommandCategory::Chat,
+                undoable: false,
+            },
             Command::ClearChat => CommandInfo {
                 name: "clear_chat",
                 description: "Clear the chat history.",
@@ -725,6 +736,30 @@ impl Command {
             Command::StopChat => CommandInfo {
                 name: "stop_chat",
                 description: "Cancel the in-flight chat request.",
+                category: CommandCategory::Chat,
+                undoable: false,
+            },
+            Command::ListAgentConversations => CommandInfo {
+                name: "list_agent_conversations",
+                description: "List all agent conversations for the current sequence.",
+                category: CommandCategory::Chat,
+                undoable: false,
+            },
+            Command::NewAgentConversation => CommandInfo {
+                name: "new_agent_conversation",
+                description: "Archive the current agent conversation and start a new one.",
+                category: CommandCategory::Chat,
+                undoable: false,
+            },
+            Command::SwitchAgentConversation(_) => CommandInfo {
+                name: "switch_agent_conversation",
+                description: "Switch to a different agent conversation by ID.",
+                category: CommandCategory::Chat,
+                undoable: false,
+            },
+            Command::DeleteAgentConversation(_) => CommandInfo {
+                name: "delete_agent_conversation",
+                description: "Delete an agent conversation by ID.",
                 category: CommandCategory::Chat,
                 undoable: false,
             },

@@ -12,3 +12,12 @@ __pycache__/
 *.pyo
 .env
 .credentials
+
+# Bun build cache
+*.bun-build
+
+# Generated Tauri icons (regenerate with: pnpm tauri icon)
+src-tauri/icons/*.png
+src-tauri/icons/*.icns
+src-tauri/icons/android/
+src-tauri/icons/ios/

@@ -6,16 +6,16 @@ use serde_json::Value;
 
 use super::params::{
     AddEffectParams, AddTrackParams, BatchEditParams, CheckVixenPreviewFileParams,
-    CompileScriptParams, CompileScriptPreviewParams, CreateProfileParams, CreateSequenceParams,
-    DeleteEffectsParams, DeleteTrackParams, GetAnalysisDetailParams, GetBeatsInRangeParams,
-    GetEffectDetailParams, ImportMediaParams, ImportVixenParams, ImportVixenProfileParams,
-    ImportVixenSequenceParams, InitializeDataDirParams, LinkEffectToLibraryParams,
-    MoveEffectToTrackParams, NameParams, RenameParams, ScanVixenDirectoryParams, SeekParams,
-    SetLibraryCurveParams, SetLibraryGradientParams, SetLlmConfigParams, SetLoopingParams,
-    SetProfileCurveParams, SetProfileGradientParams, SetRegionParams, SlugParams,
-    UpdateEffectParamParams, UpdateEffectTimeRangeParams, UpdateProfileFixturesParams,
-    UpdateProfileLayoutParams, UpdateProfileSetupParams, UpdateSequenceSettingsParams,
-    WriteScriptParams,
+    CompileScriptParams, CompileScriptPreviewParams, ConversationIdParams, CreateProfileParams,
+    CreateSequenceParams, DeleteEffectsParams, DeleteTrackParams, GetAnalysisDetailParams,
+    GetBeatsInRangeParams, GetEffectDetailParams, ImportMediaParams, ImportVixenParams,
+    ImportVixenProfileParams, ImportVixenSequenceParams, InitializeDataDirParams,
+    LinkEffectToLibraryParams, MoveEffectToTrackParams, NameParams, RenameParams,
+    ScanVixenDirectoryParams, SeekParams, SetLibraryCurveParams, SetLibraryGradientParams,
+    SetLlmConfigParams, SetLoopingParams, SetProfileCurveParams, SetProfileGradientParams,
+    SetRegionParams, SlugParams, UpdateEffectParamParams, UpdateEffectTimeRangeParams,
+    UpdateProfileFixturesParams, UpdateProfileLayoutParams, UpdateProfileSetupParams,
+    UpdateSequenceSettingsParams, WriteScriptParams,
 };
 use super::{CommandCategory, CommandInfo};
 
@@ -360,8 +360,19 @@ pub fn command_registry() -> Vec<CommandRegistryEntry> {
 
         // ── Chat ────────────────────────────────────────────
         (Command::GetChatHistory.info(), empty_object_schema()),
+        (Command::GetAgentChatHistory.info(), empty_object_schema()),
         (Command::ClearChat.info(), empty_object_schema()),
         (Command::StopChat.info(), empty_object_schema()),
+        (Command::ListAgentConversations.info(), empty_object_schema()),
+        (Command::NewAgentConversation.info(), empty_object_schema()),
+        (
+            Command::SwitchAgentConversation(ConversationIdParams { conversation_id: String::new() }).info(),
+            schema_value::<ConversationIdParams>(),
+        ),
+        (
+            Command::DeleteAgentConversation(ConversationIdParams { conversation_id: String::new() }).info(),
+            schema_value::<ConversationIdParams>(),
+        ),
 
         // ── Vixen Import ────────────────────────────────────
         (
@@ -654,8 +665,13 @@ pub fn deserialize_from_tool_call(name: &str, input: &Value) -> Result<super::Co
         "resolve_media_path" => Ok(Command::ResolveMediaPath(de(input)?)),
         // Chat
         "get_chat_history" => Ok(Command::GetChatHistory),
+        "get_agent_chat_history" => Ok(Command::GetAgentChatHistory),
         "clear_chat" => Ok(Command::ClearChat),
         "stop_chat" => Ok(Command::StopChat),
+        "list_agent_conversations" => Ok(Command::ListAgentConversations),
+        "new_agent_conversation" => Ok(Command::NewAgentConversation),
+        "switch_agent_conversation" => Ok(Command::SwitchAgentConversation(de(input)?)),
+        "delete_agent_conversation" => Ok(Command::DeleteAgentConversation(de(input)?)),
         // Vixen Import
         "import_vixen" => Ok(Command::ImportVixen(de(input)?)),
         "import_vixen_profile" => Ok(Command::ImportVixenProfile(de(input)?)),

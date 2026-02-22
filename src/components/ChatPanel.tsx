@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { cmd } from "../commands";
-import { MessageSquare, Send, X, Trash2, Loader2, Key } from "lucide-react";
+import { cmd, type ConversationSummary } from "../commands";
+import { MessageSquare, Send, X, Trash2, Loader2, Key, Check, History, Plus } from "lucide-react";
 import { useAppShell } from "./ScreenShell";
+import Markdown from "react-markdown";
 import type { ChatMode } from "../types";
 
 interface ChatEntry {
@@ -11,13 +12,20 @@ interface ChatEntry {
   text: string;
 }
 
+interface ToolActivity {
+  tool: string;
+  status: "running" | "done";
+  result?: string;
+}
+
 interface ChatPanelProps {
   open: boolean;
   onClose: () => void;
   onRefresh: () => void;
+  sequenceKey: string;
 }
 
-export function ChatPanel({ open, onClose, onRefresh }: ChatPanelProps) {
+export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelProps) {
   const { openSettings } = useAppShell();
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [input, setInput] = useState("");
@@ -25,7 +33,14 @@ export function ChatPanel({ open, onClose, onRefresh }: ChatPanelProps) {
   const [streaming, setStreaming] = useState("");
   const [hasApiKey, setHasApiKey] = useState(false);
   const [chatMode, setChatMode] = useState<ChatMode>("Basic");
+  const [toolActivity, setToolActivity] = useState<ToolActivity[]>([]);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const refreshConversations = useCallback(() => {
+    cmd.listAgentConversations().then(setConversations).catch(() => {});
+  }, []);
 
   // Check API key and chat mode on mount
   useEffect(() => {
@@ -35,27 +50,67 @@ export function ChatPanel({ open, onClose, onRefresh }: ChatPanelProps) {
     }).catch(() => {});
   }, [open]);
 
-  // Listen for chat events (both backends emit the same events)
+  // Load persisted chat history when sequence changes
   useEffect(() => {
+    if (!sequenceKey) {
+      setMessages([]);
+      setConversations([]);
+      return;
+    }
+    cmd.getLlmConfig().then((config) => {
+      if (config.chat_mode === "Agent") {
+        cmd.getAgentChatHistory().then((entries) => {
+          setMessages(entries && entries.length > 0 ? (entries as ChatEntry[]) : []);
+        }).catch(() => {});
+        refreshConversations();
+      } else {
+        cmd.getChatHistory().then((entries) => {
+          setMessages(entries && entries.length > 0 ? (entries as ChatEntry[]) : []);
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+    setStreaming("");
+    setSending(false);
+  }, [sequenceKey, refreshConversations]);
+
+  // Listen for chat events (both backends emit the same events).
+  // Uses cancelled-flag pattern to avoid stale listener accumulation.
+  useEffect(() => {
+    let cancelled = false;
     const unlisteners: Array<() => void> = [];
 
-    listen<string>("chat:token", (event) => {
-      setStreaming((prev) => prev + event.payload);
-    }).then((unlisten) => unlisteners.push(unlisten));
+    const reg = <T,>(event: string, handler: (payload: T) => void) => {
+      listen<T>(event, (e) => handler(e.payload)).then((fn) => {
+        if (cancelled) fn();
+        else unlisteners.push(fn);
+      });
+    };
 
-    listen<string>("chat:tool_call", () => {
-      // Tool calls happen behind the scenes — just clear streaming text
-      // so the "Thinking..." spinner shows while tools execute
-      setStreaming("");
-    }).then((unlisten) => unlisteners.push(unlisten));
+    reg<string>("chat:token", (text) => {
+      setStreaming((prev) => prev + text);
+    });
 
-    listen<{ tool: string; result: string }>("chat:tool_result", () => {
-      setStreaming("");
+    reg<string>("chat:tool_call", (tool) => {
+      setToolActivity((prev) => [...prev, { tool, status: "running" }]);
+    });
+
+    reg<{ tool: string; result: string }>("chat:tool_result", (payload) => {
+      setToolActivity((prev) => {
+        let idx = -1;
+        for (let i = prev.length - 1; i >= 0; i--) {
+          if (prev[i].status === "running") { idx = i; break; }
+        }
+        if (idx === -1) return prev;
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], status: "done", result: payload.result };
+        return updated;
+      });
       onRefresh();
-    }).then((unlisten) => unlisteners.push(unlisten));
+    });
 
-    listen<boolean>("chat:complete", () => {
+    reg<boolean>("chat:complete", () => {
       setSending(false);
+      setToolActivity([]);
       // Capture streamed text as a message before clearing
       setStreaming((prev) => {
         if (prev.trim()) {
@@ -63,20 +118,32 @@ export function ChatPanel({ open, onClose, onRefresh }: ChatPanelProps) {
         }
         return "";
       });
-      // Refresh messages from backend (Basic mode only — Agent mode doesn't persist history)
-      cmd.getChatHistory().then((entries) => {
-        if (entries && entries.length > 0) {
-          setMessages(entries as ChatEntry[]);
+      // Refresh messages from the appropriate backend
+      setChatMode((currentMode) => {
+        if (currentMode === "Agent") {
+          cmd.getAgentChatHistory().then((entries) => {
+            if (entries && entries.length > 0) {
+              setMessages(entries as ChatEntry[]);
+            }
+          }).catch(() => {});
+        } else {
+          cmd.getChatHistory().then((entries) => {
+            if (entries && entries.length > 0) {
+              setMessages(entries as ChatEntry[]);
+            }
+          }).catch(() => {});
         }
-      }).catch(() => {});
+        return currentMode;
+      });
       onRefresh();
-    }).then((unlisten) => unlisteners.push(unlisten));
+    });
 
-    listen<boolean>("chat:thinking", () => {
-      setStreaming("");
-    }).then((unlisten) => unlisteners.push(unlisten));
+    reg<boolean>("chat:thinking", () => {
+      // Don't clear streaming — let text accumulate
+    });
 
     return () => {
+      cancelled = true;
       unlisteners.forEach((fn) => fn());
     };
   }, [onRefresh]);
@@ -116,12 +183,16 @@ export function ChatPanel({ open, onClose, onRefresh }: ChatPanelProps) {
 
   const handleClear = useCallback(async () => {
     if (chatMode === "Agent") {
+      await cmd.newAgentConversation().catch(() => {});
       await invoke("clear_agent_session").catch(() => {});
+      refreshConversations();
+    } else {
+      await cmd.clearChat();
     }
-    await cmd.clearChat();
     setMessages([]);
     setStreaming("");
-  }, [chatMode]);
+    setToolActivity([]);
+  }, [chatMode, refreshConversations]);
 
   const handleStop = useCallback(async () => {
     if (chatMode === "Agent") {
@@ -131,10 +202,29 @@ export function ChatPanel({ open, onClose, onRefresh }: ChatPanelProps) {
     setSending(false);
   }, [chatMode]);
 
-  if (!open) return null;
+  const handleSwitchConversation = useCallback(async (id: string) => {
+    await cmd.switchAgentConversation(id).catch(() => {});
+    const entries = await cmd.getAgentChatHistory().catch(() => []);
+    setMessages(entries && (entries as ChatEntry[]).length > 0 ? (entries as ChatEntry[]) : []);
+    setStreaming("");
+    setToolActivity([]);
+    setShowHistory(false);
+    refreshConversations();
+  }, [refreshConversations]);
+
+  const handleDeleteConversation = useCallback(async (id: string) => {
+    await cmd.deleteAgentConversation(id).catch(() => {});
+    refreshConversations();
+    // If we deleted the active one, reload messages
+    const active = conversations.find((c) => c.is_active);
+    if (active?.id === id) {
+      setMessages([]);
+      setStreaming("");
+    }
+  }, [conversations, refreshConversations]);
 
   return (
-    <div className="border-border bg-surface flex h-full w-80 flex-shrink-0 flex-col border-l">
+    <div className={`border-border bg-surface flex h-full w-80 flex-shrink-0 flex-col border-l ${open ? "" : "hidden"}`}>
       {/* Header */}
       <div className="border-border flex items-center justify-between border-b px-3 py-2">
         <div className="flex items-center gap-2">
@@ -147,12 +237,21 @@ export function ChatPanel({ open, onClose, onRefresh }: ChatPanelProps) {
           )}
         </div>
         <div className="flex items-center gap-1">
+          {chatMode === "Agent" && (
+            <button
+              onClick={() => setShowHistory((v) => !v)}
+              className={`rounded p-1 transition-colors ${showHistory ? "text-primary bg-primary/10" : "text-text-2 hover:text-text"}`}
+              title="Conversation history"
+            >
+              <History size={14} />
+            </button>
+          )}
           <button
             onClick={handleClear}
             className="text-text-2 hover:text-text rounded p-1 transition-colors"
-            title="Clear conversation"
+            title={chatMode === "Agent" ? "New conversation" : "Clear conversation"}
           >
-            <Trash2 size={14} />
+            {chatMode === "Agent" ? <Plus size={14} /> : <Trash2 size={14} />}
           </button>
           <button
             onClick={onClose}
@@ -162,6 +261,40 @@ export function ChatPanel({ open, onClose, onRefresh }: ChatPanelProps) {
           </button>
         </div>
       </div>
+
+      {/* Conversation History */}
+      {showHistory && chatMode === "Agent" && (
+        <div className="border-border border-b overflow-y-auto max-h-48">
+          {conversations.length === 0 ? (
+            <div className="text-text-2 px-3 py-3 text-center text-xs">No conversations yet</div>
+          ) : (
+            conversations.map((conv) => (
+              <div
+                key={conv.id}
+                className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer text-xs transition-colors ${
+                  conv.is_active ? "bg-primary/10 text-primary" : "text-text hover:bg-surface-2"
+                }`}
+                onClick={() => handleSwitchConversation(conv.id)}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="truncate font-medium">{conv.title}</div>
+                  <div className="text-text-2 text-[10px]">{conv.message_count} messages</div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteConversation(conv.id);
+                  }}
+                  className="text-text-2 hover:text-error flex-shrink-0 rounded p-0.5 transition-colors"
+                  title="Delete conversation"
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
@@ -191,24 +324,42 @@ export function ChatPanel({ open, onClose, onRefresh }: ChatPanelProps) {
                 {msg.text}
               </div>
             ) : (
-              <div className="bg-surface-2 text-text max-w-[90%] rounded-lg px-3 py-2 whitespace-pre-wrap">
-                {msg.text}
+              <div className="bg-surface-2 text-text max-w-[90%] rounded-lg px-3 py-2 prose-chat">
+                <Markdown>{msg.text}</Markdown>
               </div>
             )}
           </div>
         ))}
 
         {streaming && (
-          <div className="bg-surface-2 text-text rounded-lg px-3 py-2 text-xs whitespace-pre-wrap">
-            {streaming}
+          <div className="bg-surface-2 text-text rounded-lg px-3 py-2 text-xs prose-chat">
+            <Markdown>{streaming}</Markdown>
             <span className="bg-text-2 ml-0.5 inline-block h-3 w-1 animate-pulse" />
           </div>
         )}
 
-        {sending && !streaming && (
+        {sending && !streaming && toolActivity.length === 0 && (
           <div className="text-text-2 flex items-center gap-2 py-1 text-xs">
             <Loader2 size={12} className="animate-spin" />
             Thinking...
+          </div>
+        )}
+
+        {toolActivity.length > 0 && (
+          <div className="space-y-0.5 py-1">
+            {toolActivity.map((activity, i) => (
+              <div key={i} className="text-text-2 flex items-center gap-1.5 text-[11px] py-0.5">
+                {activity.status === "running" ? (
+                  <Loader2 size={10} className="animate-spin flex-shrink-0" />
+                ) : (
+                  <Check size={10} className="flex-shrink-0" />
+                )}
+                <span className="font-mono">{activity.tool}</span>
+                {activity.status === "done" && activity.result && (
+                  <span className="truncate opacity-60">— {activity.result.slice(0, 80)}</span>
+                )}
+              </div>
+            ))}
           </div>
         )}
 

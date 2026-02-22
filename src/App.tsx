@@ -11,17 +11,13 @@ import { SettingsScreen } from "./screens/SettingsScreen";
 import { useProgress } from "./hooks/useProgress";
 import { ProgressOverlay } from "./components/ProgressOverlay";
 import { AppShellContext } from "./components/ScreenShell";
+import { ChatPanel } from "./components/ChatPanel";
 
 export default function App() {
   const progressOps = useProgress();
   const [screen, setScreen] = useState<AppScreen>({ kind: "loading" });
   const [chatOpen, setChatOpen] = useState(false);
   const refreshRef = useRef<(() => void) | null>(null);
-
-  // Reset chat panel on screen transitions
-  useEffect(() => {
-    setChatOpen(false);
-  }, [screen.kind]);
 
   useEffect(() => {
     cmd.getSettings().then((settings) => {
@@ -90,6 +86,9 @@ export default function App() {
     [chatOpen, toggleChat, handleOpenSettings],
   );
 
+  // Derive a key that changes when the active sequence changes
+  const sequenceKey = screen.kind === "editor" ? `${screen.profileSlug}/${screen.sequenceSlug}` : "";
+
   let content: React.ReactNode;
   switch (screen.kind) {
     case "loading":
@@ -142,7 +141,15 @@ export default function App() {
 
   return (
     <AppShellContext.Provider value={shellContext}>
-      {content}
+      <div className="flex h-full">
+        <div className="min-w-0 flex-1">{content}</div>
+        <ChatPanel
+          open={chatOpen}
+          onClose={toggleChat}
+          onRefresh={() => refreshRef.current?.()}
+          sequenceKey={sequenceKey}
+        />
+      </div>
       <ProgressOverlay operations={progressOps} />
     </AppShellContext.Provider>
   );

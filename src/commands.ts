@@ -42,6 +42,16 @@ import type {
 } from "./types";
 import type { VixenDiscovery } from "../src-tauri/bindings/VixenDiscovery";
 
+// ── Conversation types ────────────────────────────────────────────
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  message_count: number;
+  is_active: boolean;
+}
+
 // ── Core exec helpers ─────────────────────────────────────────────
 
 async function exec(
@@ -220,8 +230,13 @@ export const cmd = {
 
   // ── Chat ────────────────────────────────────────────────
   getChatHistory: () => execData<unknown[]>("GetChatHistory"),
+  getAgentChatHistory: () => execData<unknown[]>("GetAgentChatHistory"),
   clearChat: () => exec("ClearChat"),
   stopChat: () => exec("StopChat"),
+  listAgentConversations: () => execData<ConversationSummary[]>("ListAgentConversations"),
+  newAgentConversation: () => execData<{ id: string }>("NewAgentConversation"),
+  switchAgentConversation: (id: string) => exec("SwitchAgentConversation", { conversation_id: id }),
+  deleteAgentConversation: (id: string) => exec("DeleteAgentConversation", { conversation_id: id }),
 
   // ── Library (sequence) ──────────────────────────────────
   listLibraryGradients: () =>
