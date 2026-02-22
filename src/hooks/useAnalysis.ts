@@ -5,6 +5,7 @@ import type {
   PythonEnvStatus,
   AnalysisFeatures,
 } from "../types";
+import { cmd } from "../commands";
 
 export function useAnalysis() {
   const [analysis, setAnalysis] = useState<AudioAnalysis | null>(null);
@@ -31,7 +32,7 @@ export function useAnalysis() {
   }, [checkPython]);
 
   const refreshAnalysis = useCallback(async () => {
-    const cached = await invoke<AudioAnalysis | null>("get_analysis");
+    const cached = await cmd.getAnalysis();
     setAnalysis(cached);
     return cached;
   }, []);

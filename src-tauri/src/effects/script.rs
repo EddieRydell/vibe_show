@@ -30,6 +30,7 @@ pub fn evaluate_pixels_batch(
     let mut param_values = vec![0.0f64; param_count];
     let mut gradients_owned: Vec<Option<ColorGradient>> = vec![None; param_count];
     let mut curves_owned: Vec<Option<Curve>> = vec![None; param_count];
+    let mut colors: Vec<Option<Color>> = vec![None; param_count];
 
     for (i, cp) in script.params.iter().enumerate() {
         let key = ParamKey::Custom(cp.name.clone());
@@ -38,14 +39,11 @@ pub fn evaluate_pixels_batch(
                 ParamValue::Float(f) => param_values[i] = *f,
                 ParamValue::Int(n) => param_values[i] = f64::from(*n),
                 ParamValue::Bool(b) => param_values[i] = if *b { 1.0 } else { 0.0 },
+                ParamValue::Color(c) => colors[i] = Some(*c),
                 ParamValue::ColorGradient(g) => gradients_owned[i] = Some(g.clone()),
                 ParamValue::Curve(c) => curves_owned[i] = Some(c.clone()),
                 ParamValue::EnumVariant(variant_name) => {
-                    // Resolve variant name to index
                     if let ast::ParamType::Named(ref type_name) = cp.ty {
-                        // For enum params, look up variant index
-                        // The variant name maps to its position in the enum definition
-                        // This info was captured in the compiled param
                         param_values[i] = resolve_enum_variant(script, type_name, variant_name);
                     }
                 }
@@ -56,9 +54,6 @@ pub fn evaluate_pixels_batch(
                 }
                 _ => {}
             }
-        } else {
-            // Use default from the script's param definition
-            // (The defaults are already embedded in the AST; for now, 0.0 is fine)
         }
     }
 
@@ -93,6 +88,7 @@ pub fn evaluate_pixels_batch(
             param_values: &param_values,
             gradients: &gradient_refs,
             curves: &curve_refs,
+            colors: &colors,
         };
 
         let mut color = vm::execute(script, &ctx);

@@ -16,6 +16,7 @@ use crate::model::Show;
 use crate::profile::{self, MediaFile, ProfileSummary, SequenceSummary, MEDIA_EXTENSIONS};
 use crate::settings::{self, AppSettings};
 use crate::state::{self, AppState, EffectDetail, EffectInfo, PlaybackInfo};
+use crate::registry;
 
 /// JSON response envelope for API calls.
 #[derive(Serialize)]
@@ -561,22 +562,34 @@ async fn post_chat_stop(AxumState(state): AppArc) -> Json<ApiResponse<()>> {
 }
 
 #[derive(Deserialize)]
-struct ApiKeyBody {
+struct LlmConfigBody {
+    provider: crate::settings::LlmProvider,
     api_key: String,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
 }
 
 async fn put_chat_api_key(
     AxumState(state): AppArc,
-    Json(body): Json<ApiKeyBody>,
+    Json(body): Json<LlmConfigBody>,
 ) -> ApiResult<()> {
     let mut settings_guard = state.settings.lock();
     if let Some(ref mut s) = *settings_guard {
-        s.claude_api_key = if body.api_key.is_empty() {
-            None
-        } else {
-            Some(body.api_key)
+        s.llm = crate::settings::LlmProviderConfig {
+            provider: body.provider,
+            api_key: if body.api_key.is_empty() {
+                None
+            } else {
+                Some(body.api_key.clone())
+            },
+            base_url: body.base_url,
+            model: body.model,
         };
         settings::save_settings(&state.app_config_dir, s)
+            .map_err(|e| error_response(e.to_string()))?;
+        settings::save_api_key(&state.app_config_dir, &body.api_key)
             .map_err(|e| error_response(e.to_string()))?;
     }
     Ok(ApiResponse::success(()))
@@ -813,6 +826,290 @@ async fn post_vixen_execute(
 }
 
 // ══════════════════════════════════════════════════════════════════
+// Tool registry endpoints
+// ══════════════════════════════════════════════════════════════════
+
+async fn get_tools() -> Json<ApiResponse<serde_json::Value>> {
+    ApiResponse::success(registry::catalog::to_json_schema())
+}
+
+async fn post_tool_dispatch(
+    AxumState(state): AppArc,
+    Path(tool_name): Path<String>,
+    Json(params): Json<serde_json::Value>,
+) -> ApiResult<serde_json::Value> {
+    let result = crate::chat::execute_tool_api(&state, &tool_name, &params)
+        .map_err(error_response)?;
+    Ok(ApiResponse::success(serde_json::Value::String(result)))
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Analysis endpoints
+// ══════════════════════════════════════════════════════════════════
+
+/// Helper: get the current analysis for the loaded sequence.
+fn get_current_analysis(state: &AppState) -> Option<crate::model::analysis::AudioAnalysis> {
+    let show = state.show.lock();
+    let audio_file = show.sequences.first()?.audio_file.as_ref()?;
+    let cache = state.analysis_cache.lock();
+    cache.get(audio_file).cloned()
+}
+
+async fn get_analysis_summary(AxumState(state): AppArc) -> ApiResult<serde_json::Value> {
+    let analysis = get_current_analysis(&state)
+        .ok_or_else(|| error_response("No audio analysis available".into()))?;
+
+    let mut summary = serde_json::Map::new();
+    if let Some(ref beats) = analysis.beats {
+        summary.insert("tempo".to_string(), serde_json::json!(beats.tempo));
+        summary.insert("time_signature".to_string(), serde_json::json!(beats.time_signature));
+        summary.insert("beat_count".to_string(), serde_json::json!(beats.beats.len()));
+    }
+    if let Some(ref harmony) = analysis.harmony {
+        summary.insert("key".to_string(), serde_json::json!(harmony.key));
+    }
+    if let Some(ref mood) = analysis.mood {
+        summary.insert("valence".to_string(), serde_json::json!(mood.valence));
+        summary.insert("arousal".to_string(), serde_json::json!(mood.arousal));
+        summary.insert("danceability".to_string(), serde_json::json!(mood.danceability));
+        summary.insert("genres".to_string(), serde_json::json!(mood.genres));
+    }
+    if let Some(ref structure) = analysis.structure {
+        let sections: Vec<serde_json::Value> = structure.sections.iter().map(|s| {
+            serde_json::json!({"label": s.label, "start": s.start, "end": s.end})
+        }).collect();
+        summary.insert("sections".to_string(), serde_json::Value::Array(sections));
+    }
+
+    Ok(ApiResponse::success(serde_json::Value::Object(summary)))
+}
+
+#[derive(Deserialize)]
+struct BeatsQuery {
+    start: f64,
+    end: f64,
+}
+
+async fn get_analysis_beats(
+    AxumState(state): AppArc,
+    Query(q): Query<BeatsQuery>,
+) -> ApiResult<serde_json::Value> {
+    let analysis = get_current_analysis(&state)
+        .ok_or_else(|| error_response("No audio analysis available".into()))?;
+    let beats = analysis.beats.as_ref()
+        .ok_or_else(|| error_response("No beat analysis available".into()))?;
+    let filtered: Vec<f64> = beats.beats.iter().copied().filter(|&b| b >= q.start && b <= q.end).collect();
+    let downbeats: Vec<f64> = beats.downbeats.iter().copied().filter(|&b| b >= q.start && b <= q.end).collect();
+    Ok(ApiResponse::success(serde_json::json!({
+        "beats": filtered, "downbeats": downbeats, "count": filtered.len(), "tempo": beats.tempo,
+    })))
+}
+
+async fn get_analysis_sections(AxumState(state): AppArc) -> ApiResult<serde_json::Value> {
+    let analysis = get_current_analysis(&state)
+        .ok_or_else(|| error_response("No audio analysis available".into()))?;
+    let structure = analysis.structure.as_ref()
+        .ok_or_else(|| error_response("No structure analysis available".into()))?;
+    Ok(ApiResponse::success(serde_json::to_value(&structure.sections).unwrap_or_default()))
+}
+
+async fn get_analysis_detail_handler(
+    AxumState(state): AppArc,
+    Path(feature): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let analysis = get_current_analysis(&state)
+        .ok_or_else(|| error_response("No audio analysis available".into()))?;
+    let detail = match feature.as_str() {
+        "beats" => serde_json::to_value(&analysis.beats),
+        "structure" => serde_json::to_value(&analysis.structure),
+        "mood" => serde_json::to_value(&analysis.mood),
+        "harmony" => serde_json::to_value(&analysis.harmony),
+        "lyrics" => serde_json::to_value(&analysis.lyrics),
+        "pitch" => serde_json::to_value(&analysis.pitch),
+        "drums" => serde_json::to_value(&analysis.drums),
+        "vocal_presence" => serde_json::to_value(&analysis.vocal_presence),
+        "low_level" => serde_json::to_value(&analysis.low_level),
+        _ => return Err(error_response(format!("Unknown feature: {feature}"))),
+    }.unwrap_or_default();
+    Ok(ApiResponse::success(detail))
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Script endpoints
+// ══════════════════════════════════════════════════════════════════
+
+async fn get_scripts(AxumState(state): AppArc) -> Json<ApiResponse<Vec<String>>> {
+    let show = state.show.lock();
+    let names: Vec<String> = show.sequences.first()
+        .map(|seq| seq.scripts.keys().cloned().collect())
+        .unwrap_or_default();
+    ApiResponse::success(names)
+}
+
+async fn get_script_source_handler(
+    AxumState(state): AppArc,
+    Path(name): Path<String>,
+) -> ApiResult<String> {
+    let show = state.show.lock();
+    let source = show.sequences.first()
+        .and_then(|seq| seq.scripts.get(&name))
+        .cloned()
+        .ok_or_else(|| error_response(format!("Script \"{name}\" not found")))?;
+    Ok(ApiResponse::success(source))
+}
+
+#[derive(Deserialize)]
+struct CompileScriptBody {
+    name: String,
+    source: String,
+}
+
+async fn post_script(
+    AxumState(state): AppArc,
+    Json(body): Json<CompileScriptBody>,
+) -> ApiResult<String> {
+    match crate::dsl::compile_source(&body.source) {
+        Ok(compiled) => {
+            state.script_cache.lock().insert(body.name.clone(), std::sync::Arc::new(compiled));
+            let cmd = EditCommand::SetScript {
+                sequence_index: 0,
+                name: body.name.clone(),
+                source: body.source,
+            };
+            let mut dispatcher = state.dispatcher.lock();
+            let mut show = state.show.lock();
+            dispatcher.execute(&mut show, &cmd).map_err(|e| error_response(e.to_string()))?;
+            Ok(ApiResponse::success(format!("Script \"{}\" compiled and saved", body.name)))
+        }
+        Err(errors) => {
+            let msgs: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
+            Err(error_response(format!("Compile errors: {}", msgs.join("; "))))
+        }
+    }
+}
+
+async fn delete_script_handler(
+    AxumState(state): AppArc,
+    Path(name): Path<String>,
+) -> ApiResult<()> {
+    let cmd = EditCommand::DeleteScript {
+        sequence_index: 0,
+        name: name.clone(),
+    };
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    dispatcher.execute(&mut show, &cmd).map_err(|e| error_response(e.to_string()))?;
+    state.script_cache.lock().remove(&name);
+    Ok(ApiResponse::success(()))
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Library endpoints
+// ══════════════════════════════════════════════════════════════════
+
+async fn get_library_gradients(AxumState(state): AppArc) -> ApiResult<serde_json::Value> {
+    let show = state.show.lock();
+    let seq = show.sequences.first().ok_or_else(|| error_response("No sequence".into()))?;
+    Ok(ApiResponse::success(serde_json::to_value(&seq.gradient_library).unwrap_or_default()))
+}
+
+#[derive(Deserialize)]
+struct GradientBody {
+    name: String,
+    stops: serde_json::Value,
+}
+
+async fn post_library_gradient(
+    AxumState(state): AppArc,
+    Json(body): Json<GradientBody>,
+) -> ApiResult<()> {
+    let stops: Vec<crate::model::ColorStop> = serde_json::from_value(body.stops)
+        .map_err(|e| error_response(format!("Invalid stops: {e}")))?;
+    let gradient = crate::model::ColorGradient::new(stops)
+        .ok_or_else(|| error_response("Gradient needs at least 2 stops".into()))?;
+    let cmd = EditCommand::SetGradient { sequence_index: 0, name: body.name, gradient };
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    dispatcher.execute(&mut show, &cmd).map_err(|e| error_response(e.to_string()))?;
+    Ok(ApiResponse::success(()))
+}
+
+async fn delete_library_gradient_handler(
+    AxumState(state): AppArc,
+    Path(name): Path<String>,
+) -> ApiResult<()> {
+    let cmd = EditCommand::DeleteGradient { sequence_index: 0, name };
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    dispatcher.execute(&mut show, &cmd).map_err(|e| error_response(e.to_string()))?;
+    Ok(ApiResponse::success(()))
+}
+
+async fn get_library_curves(AxumState(state): AppArc) -> ApiResult<serde_json::Value> {
+    let show = state.show.lock();
+    let seq = show.sequences.first().ok_or_else(|| error_response("No sequence".into()))?;
+    Ok(ApiResponse::success(serde_json::to_value(&seq.curve_library).unwrap_or_default()))
+}
+
+#[derive(Deserialize)]
+struct CurveBody {
+    name: String,
+    points: serde_json::Value,
+}
+
+async fn post_library_curve(
+    AxumState(state): AppArc,
+    Json(body): Json<CurveBody>,
+) -> ApiResult<()> {
+    let points: Vec<crate::model::CurvePoint> = serde_json::from_value(body.points)
+        .map_err(|e| error_response(format!("Invalid points: {e}")))?;
+    let curve = crate::model::Curve::new(points)
+        .ok_or_else(|| error_response("Curve needs at least 2 points".into()))?;
+    let cmd = EditCommand::SetCurve { sequence_index: 0, name: body.name, curve };
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    dispatcher.execute(&mut show, &cmd).map_err(|e| error_response(e.to_string()))?;
+    Ok(ApiResponse::success(()))
+}
+
+async fn delete_library_curve_handler(
+    AxumState(state): AppArc,
+    Path(name): Path<String>,
+) -> ApiResult<()> {
+    let cmd = EditCommand::DeleteCurve { sequence_index: 0, name };
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    dispatcher.execute(&mut show, &cmd).map_err(|e| error_response(e.to_string()))?;
+    Ok(ApiResponse::success(()))
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Batch edit endpoint
+// ══════════════════════════════════════════════════════════════════
+
+async fn post_batch(
+    AxumState(state): AppArc,
+    Json(body): Json<serde_json::Value>,
+) -> ApiResult<String> {
+    // Delegate to the chat tool executor for consistent behavior
+    let result = crate::chat::execute_tool_api(&state, "batch_edit", &body)
+        .map_err(error_response)?;
+    Ok(ApiResponse::success(result))
+}
+
+// ══════════════════════════════════════════════════════════════════
+// DSL reference & design guide endpoints
+// ══════════════════════════════════════════════════════════════════
+
+async fn get_dsl_reference() -> Json<ApiResponse<String>> {
+    ApiResponse::success(registry::reference::dsl_reference())
+}
+
+async fn get_design_guide() -> Json<ApiResponse<String>> {
+    ApiResponse::success(registry::reference::design_guide())
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Server startup
 // ══════════════════════════════════════════════════════════════════
 
@@ -871,6 +1168,26 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/vixen/scan", post(post_vixen_scan))
         .route("/api/vixen/check-preview", post(post_vixen_check_preview))
         .route("/api/vixen/execute", post(post_vixen_execute))
+        // Tool registry
+        .route("/api/tools", get(get_tools))
+        .route("/api/tools/{name}", post(post_tool_dispatch))
+        // Analysis
+        .route("/api/analysis/summary", get(get_analysis_summary))
+        .route("/api/analysis/beats", get(get_analysis_beats))
+        .route("/api/analysis/sections", get(get_analysis_sections))
+        .route("/api/analysis/detail/{feature}", get(get_analysis_detail_handler))
+        // Scripts
+        .route("/api/scripts", get(get_scripts).post(post_script))
+        .route("/api/scripts/{name}", get(get_script_source_handler).delete(delete_script_handler))
+        // Library
+        .route("/api/library/gradients", get(get_library_gradients).post(post_library_gradient))
+        .route("/api/library/gradients/{name}", delete(delete_library_gradient_handler))
+        .route("/api/library/curves", get(get_library_curves).post(post_library_curve))
+        .route("/api/library/curves/{name}", delete(delete_library_curve_handler))
+        // Batch + reference
+        .route("/api/batch", post(post_batch))
+        .route("/api/dsl-reference", get(get_dsl_reference))
+        .route("/api/design-guide", get(get_design_guide))
         .layer(cors)
         .with_state(state)
 }

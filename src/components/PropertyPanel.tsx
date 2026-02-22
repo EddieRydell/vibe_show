@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { Link } from "lucide-react";
-import type { Color, ColorGradient, ColorMode, ColorStop, Curve, CurvePoint, EffectDetail, ParamSchema, ParamValue } from "../types";
+import { cmd } from "../commands";
+import { Link, Maximize2 } from "lucide-react";
+import type { Color, ColorMode, ColorStop, CurvePoint, EffectDetail, ParamKey, ParamSchema, ParamValue } from "../types";
+import { CurveEditorDialog } from "./CurveEditorDialog";
+import { GradientEditorDialog } from "./GradientEditorDialog";
+import { paramKeyStr, effectKindLabel } from "../types";
 import { parseEffectKey } from "../utils/effectKey";
 import { formatTimeDuration } from "../utils/formatTime";
 import {
@@ -161,13 +164,21 @@ export function PropertyPanel({
   const currentKeyRef = useRef<string | null>(null);
   const [gradientNames, setGradientNames] = useState<string[]>([]);
   const [curveNames, setCurveNames] = useState<string[]>([]);
+  const [expandedEditor, setExpandedEditor] = useState<{
+    type: "curve" | "gradient";
+    key: string;
+    curveValue?: CurvePoint[];
+    gradientValue?: ColorStop[];
+    minStops?: number;
+    maxStops?: number;
+  } | null>(null);
 
   // Fetch library names for link dropdowns
   useEffect(() => {
-    invoke<[string, ColorGradient][]>("list_library_gradients")
+    cmd.listLibraryGradients()
       .then((items) => setGradientNames(items.map(([n]) => n)))
       .catch(() => {});
-    invoke<[string, Curve][]>("list_library_curves")
+    cmd.listLibraryCurves()
       .then((items) => setCurveNames(items.map(([n]) => n)))
       .catch(() => {});
   }, [selectedEffect]);
@@ -186,11 +197,7 @@ export function PropertyPanel({
     }
 
     setLoading(true);
-    invoke<EffectDetail | null>("get_effect_detail", {
-      sequenceIndex,
-      trackIndex: parsed.trackIndex,
-      effectIndex: parsed.effectIndex,
-    })
+    cmd.getEffectDetail(sequenceIndex, parsed.trackIndex, parsed.effectIndex)
       .then((d) => {
         if (currentKeyRef.current === selectedEffect) {
           setDetail(d);
@@ -215,13 +222,7 @@ export function PropertyPanel({
       // Debounced IPC call
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
-        invoke("update_effect_param", {
-          sequenceIndex,
-          trackIndex: parsed.trackIndex,
-          effectIndex: parsed.effectIndex,
-          key,
-          value,
-        })
+        cmd.updateEffectParam(parsed.trackIndex, parsed.effectIndex, key as ParamKey, value)
           .then(() => onParamChange())
           .catch((e) => console.error("[VibeLights] Failed to update param:", e));
       }, DEBOUNCE_MS);
@@ -258,7 +259,7 @@ export function PropertyPanel({
     >
       {/* Header */}
       <div className="border-border border-b px-3 py-2">
-        <div className="text-text text-xs font-semibold">{detail.kind}</div>
+        <div className="text-text text-xs font-semibold">{effectKindLabel(detail.kind)}</div>
         <div className="text-text-2 mt-0.5 text-[10px]">
           {detail.track_name} &middot; {formatTimeDuration(detail.time_range.start)} -{" "}
           {formatTimeDuration(detail.time_range.end)}
@@ -276,16 +277,42 @@ export function PropertyPanel({
         <div className="flex flex-col gap-3">
           {detail.schema.map((schema) => (
             <ParamControl
-              key={schema.key}
+              key={paramKeyStr(schema.key)}
               schema={schema}
               params={detail.params}
-              onChange={(value) => updateParam(schema.key, value)}
+              onChange={(value) => updateParam(paramKeyStr(schema.key), value)}
               gradientNames={gradientNames}
               curveNames={curveNames}
+              onExpandCurve={(k, v) => setExpandedEditor({ type: "curve", key: k, curveValue: v })}
+              onExpandGradient={(k, v, min, max) => setExpandedEditor({ type: "gradient", key: k, gradientValue: v, minStops: min, maxStops: max })}
             />
           ))}
         </div>
       </div>
+
+      {/* Expanded editor dialogs */}
+      {expandedEditor?.type === "curve" && expandedEditor.curveValue && (
+        <CurveEditorDialog
+          initialValue={expandedEditor.curveValue}
+          onApply={(v) => {
+            updateParam(expandedEditor.key, { Curve: { points: v } });
+            setExpandedEditor(null);
+          }}
+          onCancel={() => setExpandedEditor(null)}
+        />
+      )}
+      {expandedEditor?.type === "gradient" && expandedEditor.gradientValue && (
+        <GradientEditorDialog
+          initialValue={expandedEditor.gradientValue}
+          minStops={expandedEditor.minStops ?? 2}
+          maxStops={expandedEditor.maxStops ?? 16}
+          onApply={(v) => {
+            updateParam(expandedEditor.key, { ColorGradient: { stops: v } });
+            setExpandedEditor(null);
+          }}
+          onCancel={() => setExpandedEditor(null)}
+        />
+      )}
     </div>
   );
 }
@@ -340,6 +367,8 @@ interface ParamControlProps {
   onChange: (value: ParamValue) => void;
   gradientNames: string[];
   curveNames: string[];
+  onExpandCurve?: (key: string, value: CurvePoint[]) => void;
+  onExpandGradient?: (key: string, value: ColorStop[], minStops: number, maxStops: number) => void;
 }
 
 function RefBadge({ label, name, onUnlink }: { label: string; name: string; onUnlink: () => void }) {
@@ -362,11 +391,12 @@ function RefBadge({ label, name, onUnlink }: { label: string; name: string; onUn
   );
 }
 
-function ParamControl({ schema, params, onChange, gradientNames, curveNames }: ParamControlProps) {
+function ParamControl({ schema, params, onChange, gradientNames, curveNames, onExpandCurve, onExpandGradient }: ParamControlProps) {
   const pt = schema.param_type;
 
   // Check for library references — display name badge instead of inline editor
-  const rawValue = params[schema.key as string];
+  const keyStr = paramKeyStr(schema.key);
+  const rawValue = params[keyStr];
   if (rawValue && typeof rawValue === "object") {
     if ("GradientRef" in rawValue) {
       return (
@@ -397,7 +427,7 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames }: P
   }
 
   if (typeof pt === "object" && "Float" in pt) {
-    const value = getParamFloat(params, schema.key, getDefaultFloat(schema));
+    const value = getParamFloat(params, keyStr, getDefaultFloat(schema));
     return (
       <FloatSlider
         label={schema.label}
@@ -411,7 +441,7 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames }: P
   }
 
   if (typeof pt === "object" && "Int" in pt) {
-    const value = getParamInt(params, schema.key, getDefaultInt(schema));
+    const value = getParamInt(params, keyStr, getDefaultInt(schema));
     return (
       <IntSlider
         label={schema.label}
@@ -424,21 +454,21 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames }: P
   }
 
   if (pt === "Bool") {
-    const value = getParamBool(params, schema.key, getDefaultBool(schema));
+    const value = getParamBool(params, keyStr, getDefaultBool(schema));
     return (
       <BoolToggle label={schema.label} value={value} onChange={(v) => onChange({ Bool: v })} />
     );
   }
 
   if (pt === "Color") {
-    const value = getParamColor(params, schema.key, getDefaultColor(schema));
+    const value = getParamColor(params, keyStr, getDefaultColor(schema));
     return (
       <ColorInput label={schema.label} value={value} onChange={(v) => onChange({ Color: v })} />
     );
   }
 
   if (typeof pt === "object" && "ColorList" in pt) {
-    const value = getParamColorList(params, schema.key, getDefaultColorList(schema));
+    const value = getParamColorList(params, keyStr, getDefaultColorList(schema));
     return (
       <ColorListEditor
         label={schema.label}
@@ -451,12 +481,21 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames }: P
   }
 
   if (pt === "Curve") {
-    const value = getParamCurve(params, schema.key, getDefaultCurve(schema));
+    const value = getParamCurve(params, keyStr, getDefaultCurve(schema));
     return (
       <div>
         <div className="mb-0.5 flex items-center justify-between">
           <span className="text-text-2 text-[11px]">{schema.label}</span>
-          <LinkButton items={curveNames} onLink={(name) => onChange({ CurveRef: name })} />
+          <div className="flex items-center gap-1">
+            <button
+              className="text-text-2 hover:text-primary p-0.5"
+              title="Expand editor"
+              onClick={() => onExpandCurve?.(keyStr, value)}
+            >
+              <Maximize2 size={10} />
+            </button>
+            <LinkButton items={curveNames} onLink={(name) => onChange({ CurveRef: name })} />
+          </div>
         </div>
         <CurveEditor
           label=""
@@ -468,12 +507,21 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames }: P
   }
 
   if (typeof pt === "object" && "ColorGradient" in pt) {
-    const value = getParamGradient(params, schema.key, getDefaultGradient(schema));
+    const value = getParamGradient(params, keyStr, getDefaultGradient(schema));
     return (
       <div>
         <div className="mb-0.5 flex items-center justify-between">
           <span className="text-text-2 text-[11px]">{schema.label}</span>
-          <LinkButton items={gradientNames} onLink={(name) => onChange({ GradientRef: name })} />
+          <div className="flex items-center gap-1">
+            <button
+              className="text-text-2 hover:text-primary p-0.5"
+              title="Expand editor"
+              onClick={() => onExpandGradient?.(keyStr, value, pt.ColorGradient.min_stops, pt.ColorGradient.max_stops)}
+            >
+              <Maximize2 size={10} />
+            </button>
+            <LinkButton items={gradientNames} onLink={(name) => onChange({ GradientRef: name })} />
+          </div>
         </div>
         <GradientEditor
           label=""
@@ -487,7 +535,7 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames }: P
   }
 
   if (typeof pt === "object" && "ColorMode" in pt) {
-    const value = getParamColorMode(params, schema.key, getDefaultColorMode(schema));
+    const value = getParamColorMode(params, keyStr, getDefaultColorMode(schema));
     return (
       <SelectInput
         label={schema.label}
@@ -499,7 +547,7 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames }: P
   }
 
   if (typeof pt === "object" && "Text" in pt) {
-    const value = getParamText(params, schema.key, getDefaultText(schema));
+    const value = getParamText(params, keyStr, getDefaultText(schema));
     return (
       <SelectInput
         label={schema.label}

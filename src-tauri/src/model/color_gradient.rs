@@ -1,10 +1,11 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::color::Color;
 
 /// A color stop at a position along the gradient [0, 1].
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export)]
 pub struct ColorStop {
     pub position: f64,
@@ -13,14 +14,14 @@ pub struct ColorStop {
 
 /// A color gradient defined by stops with linear RGB interpolation.
 /// Stops are always sorted by position.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(try_from = "ColorGradientRaw")]
 #[ts(export)]
 pub struct ColorGradient {
     stops: Vec<ColorStop>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 struct ColorGradientRaw {
     stops: Vec<ColorStop>,
 }

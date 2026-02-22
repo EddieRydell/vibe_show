@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -66,7 +67,7 @@ impl TimeRange {
 }
 
 /// How multiple effect layers combine their output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export)]
 pub enum BlendMode {
     /// Top layer fully replaces the layer below.
@@ -113,7 +114,7 @@ impl BlendMode {
 
 /// All known effect parameter keys. Compile-time checked.
 /// Built-in keys serialize as snake_case; `Custom` keys serialize as their raw string.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export)]
 pub enum ParamKey {
     Color,
@@ -144,7 +145,7 @@ pub enum ParamKey {
 }
 
 /// Which direction a wipe effect sweeps across fixtures.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum WipeDirection {
@@ -173,7 +174,7 @@ impl WipeDirection {
 }
 
 /// How gradient colors are applied across time/space.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum ColorMode {
@@ -195,7 +196,7 @@ impl ColorMode {
 }
 
 /// Type-safe parameter values for effects.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export)]
 pub enum ParamValue {
     Float(f64),
@@ -357,7 +358,10 @@ pub struct ParamSchema {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 #[serde(transparent)]
 #[ts(export)]
-pub struct EffectParams(HashMap<ParamKey, ParamValue>);
+pub struct EffectParams(
+    #[ts(as = "HashMap<String, ParamValue>")]
+    HashMap<ParamKey, ParamValue>,
+);
 
 impl EffectParams {
     pub fn new() -> Self {
@@ -489,7 +493,7 @@ impl EffectParams {
 
 /// Which effect type an instance uses.
 /// Built-in effects are enum variants; DSL scripts use `Script(name)`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export)]
 pub enum EffectKind {
     Solid,

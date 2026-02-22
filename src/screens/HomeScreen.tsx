@@ -1,24 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import type { ProfileSummary } from "../types";
-import { Settings } from "lucide-react";
-import { AppBar } from "../components/AppBar";
+import { cmd } from "../commands";
+import { ScreenShell } from "../components/ScreenShell";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ImportWizard } from "../components/ImportWizard";
 
 interface Props {
   onOpenProfile: (slug: string) => void;
-  onOpenSettings: () => void;
 }
 
-export function HomeScreen({ onOpenProfile, onOpenSettings }: Props) {
+export function HomeScreen({ onOpenProfile }: Props) {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [newName, setNewName] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    invoke<ProfileSummary[]>("list_profiles")
+    cmd.listProfiles()
       .then(setProfiles)
       .catch((e) => setError(String(e)));
   }, []);
@@ -27,7 +25,7 @@ export function HomeScreen({ onOpenProfile, onOpenSettings }: Props) {
 
   const handleCreate = useCallback(() => {
     if (!newName.trim()) return;
-    invoke<ProfileSummary>("create_profile", { name: newName.trim() })
+    cmd.createProfile(newName.trim())
       .then(() => {
         setNewName("");
         setShowCreate(false);
@@ -47,7 +45,7 @@ export function HomeScreen({ onOpenProfile, onOpenSettings }: Props) {
 
   const confirmDelete = useCallback(() => {
     if (!deleteTarget) return;
-    invoke("delete_profile", { slug: deleteTarget.slug })
+    cmd.deleteProfile(deleteTarget.slug)
       .then(refresh)
       .catch((e) => setError(String(e)));
     setDeleteTarget(null);
@@ -64,35 +62,26 @@ export function HomeScreen({ onOpenProfile, onOpenSettings }: Props) {
     [refresh, onOpenProfile],
   );
 
+  const toolbar = (
+    <div className="border-border bg-surface flex select-none items-center gap-2 border-b px-4 py-1.5">
+      <div className="flex-1" />
+      <button
+        onClick={() => setShowImportWizard(true)}
+        className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-3 py-1.5 text-xs transition-colors"
+      >
+        Import from Vixen
+      </button>
+      <button
+        onClick={() => setShowCreate(true)}
+        className="bg-primary hover:bg-primary-hover rounded px-3 py-1.5 text-xs font-medium text-white transition-colors"
+      >
+        New Profile
+      </button>
+    </div>
+  );
+
   return (
-    <div className="bg-bg flex h-screen flex-col">
-      {/* Title bar */}
-      <AppBar />
-
-      {/* Screen toolbar */}
-      <div className="border-border bg-surface flex select-none items-center gap-2 border-b px-4 py-1.5">
-        <div className="flex-1" />
-        <button
-          onClick={() => setShowImportWizard(true)}
-          className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-3 py-1.5 text-xs transition-colors"
-        >
-          Import from Vixen
-        </button>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="bg-primary hover:bg-primary-hover rounded px-3 py-1.5 text-xs font-medium text-white transition-colors"
-        >
-          New Profile
-        </button>
-        <button
-          onClick={onOpenSettings}
-          className="text-text-2 hover:text-text p-1 transition-colors"
-          title="Settings"
-        >
-          <Settings size={14} />
-        </button>
-      </div>
-
+    <ScreenShell title="VibeLights" toolbar={toolbar}>
       {/* Error */}
       {error && (
         <div className="bg-error/10 border-error/20 text-error border-b px-6 py-2 text-xs">
@@ -196,7 +185,6 @@ export function HomeScreen({ onOpenProfile, onOpenSettings }: Props) {
           onCancel={() => setDeleteTarget(null)}
         />
       )}
-    </div>
+    </ScreenShell>
   );
 }
-

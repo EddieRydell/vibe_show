@@ -1,22 +1,30 @@
-import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppScreen } from "./screens";
-import type { AppSettings } from "./types";
+import { cmd } from "./commands";
 import { LoadingScreen } from "./screens/LoadingScreen";
 import { FirstLaunchScreen } from "./screens/FirstLaunchScreen";
 import { HomeScreen } from "./screens/HomeScreen";
 import { ProfileScreen } from "./screens/ProfileScreen";
 import { EditorScreen } from "./screens/EditorScreen";
+import { ScriptScreen } from "./screens/ScriptScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { useProgress } from "./hooks/useProgress";
 import { ProgressOverlay } from "./components/ProgressOverlay";
+import { AppShellContext } from "./components/ScreenShell";
 
 export default function App() {
   const progressOps = useProgress();
   const [screen, setScreen] = useState<AppScreen>({ kind: "loading" });
+  const [chatOpen, setChatOpen] = useState(false);
+  const refreshRef = useRef<(() => void) | null>(null);
+
+  // Reset chat panel on screen transitions
+  useEffect(() => {
+    setChatOpen(false);
+  }, [screen.kind]);
 
   useEffect(() => {
-    invoke<AppSettings | null>("get_settings").then((settings) => {
+    cmd.getSettings().then((settings) => {
       if (settings) {
         setScreen({ kind: "home" });
       } else {
@@ -59,6 +67,29 @@ export default function App() {
     });
   }, []);
 
+  const handleOpenScript = useCallback((profileSlug: string, scriptName: string | null) => {
+    setScreen((current) => ({
+      kind: "script",
+      profileSlug,
+      scriptName,
+      returnTo: current,
+    }));
+  }, []);
+
+  const toggleChat = useCallback(() => {
+    setChatOpen((o) => !o);
+  }, []);
+
+  const shellContext = useMemo(
+    () => ({
+      chatOpen,
+      toggleChat,
+      openSettings: handleOpenSettings,
+      refreshRef,
+    }),
+    [chatOpen, toggleChat, handleOpenSettings],
+  );
+
   let content: React.ReactNode;
   switch (screen.kind) {
     case "loading":
@@ -71,7 +102,6 @@ export default function App() {
       content = (
         <HomeScreen
           onOpenProfile={handleOpenProfile}
-          onOpenSettings={handleOpenSettings}
         />
       );
       break;
@@ -84,7 +114,7 @@ export default function App() {
           slug={screen.slug}
           onBack={handleBackToHome}
           onOpenSequence={(sequenceSlug) => handleOpenSequence(screen.slug, sequenceSlug)}
-          onOpenSettings={handleOpenSettings}
+          onOpenScript={(name) => handleOpenScript(screen.slug, name)}
         />
       );
       break;
@@ -94,16 +124,26 @@ export default function App() {
           profileSlug={screen.profileSlug}
           sequenceSlug={screen.sequenceSlug}
           onBack={() => handleBackToProfile(screen.profileSlug)}
-          onOpenSettings={handleOpenSettings}
+          onOpenScript={(name) => handleOpenScript(screen.profileSlug, name)}
+        />
+      );
+      break;
+    case "script":
+      content = (
+        <ScriptScreen
+          profileSlug={screen.profileSlug}
+          initialScriptName={screen.scriptName}
+          onBack={() => setScreen(screen.returnTo)}
+          onOpenScript={(name) => handleOpenScript(screen.profileSlug, name)}
         />
       );
       break;
   }
 
   return (
-    <>
+    <AppShellContext.Provider value={shellContext}>
       {content}
       <ProgressOverlay operations={progressOps} />
-    </>
+    </AppShellContext.Provider>
   );
 }

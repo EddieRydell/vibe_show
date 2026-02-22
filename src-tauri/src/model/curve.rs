@@ -1,8 +1,9 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// A single point on a curve, both axes normalized to [0, 1].
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export)]
 pub struct CurvePoint {
     pub x: f64,
@@ -11,14 +12,14 @@ pub struct CurvePoint {
 
 /// Piecewise-linear curve mapping time (x) to value (y), both normalized [0, 1].
 /// Points are always sorted by x. Evaluate via binary search + linear interpolation.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(try_from = "CurveRaw")]
 #[ts(export)]
 pub struct Curve {
     points: Vec<CurvePoint>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 struct CurveRaw {
     points: Vec<CurvePoint>,
 }

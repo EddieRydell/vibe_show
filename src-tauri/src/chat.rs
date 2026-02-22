@@ -1,11 +1,11 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::dispatcher::EditCommand;
-use crate::effects;
-use crate::model::{BlendMode, EffectKind};
+use crate::llm;
+use crate::registry;
 use crate::state::AppState;
 
 // ── ChatEmitter trait ────────────────────────────────────────────
@@ -105,133 +105,6 @@ pub enum ContentBlock {
 pub struct ChatHistoryEntry {
     pub role: ChatRole,
     pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_name: Option<String>,
-}
-
-// ── Tool definitions ─────────────────────────────────────────────
-
-#[allow(clippy::too_many_lines)]
-fn tool_definitions() -> Value {
-    serde_json::json!([
-        {
-            "name": "add_effect",
-            "description": "Add an effect to a track",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "track_index": { "type": "integer" },
-                    "kind": { "type": "string", "enum": EffectKind::all_builtin().iter().map(|k| format!("{k:?}")).collect::<Vec<_>>() },
-                    "start": { "type": "number", "description": "Start time in seconds" },
-                    "end": { "type": "number", "description": "End time in seconds" },
-                    "blend_mode": { "type": "string", "enum": BlendMode::all().iter().map(|b| format!("{b:?}")).collect::<Vec<_>>(), "default": "Override" },
-                    "opacity": { "type": "number", "description": "Opacity 0.0-1.0", "default": 1.0 }
-                },
-                "required": ["track_index", "kind", "start", "end"]
-            }
-        },
-        {
-            "name": "delete_effects",
-            "description": "Delete effects by (track_index, effect_index) pairs",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "targets": {
-                        "type": "array",
-                        "items": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }
-                    }
-                },
-                "required": ["targets"]
-            }
-        },
-        {
-            "name": "update_effect_param",
-            "description": "Set a parameter on an effect",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "track_index": { "type": "integer" },
-                    "effect_index": { "type": "integer" },
-                    "key": { "type": "string" },
-                    "value": { "description": "ParamValue - use {\"Color\":{\"r\":255,\"g\":0,\"b\":0,\"a\":255}} for colors, {\"Float\":1.0} for numbers, etc." }
-                },
-                "required": ["track_index", "effect_index", "key", "value"]
-            }
-        },
-        {
-            "name": "update_effect_time_range",
-            "description": "Change the start/end time of an effect",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "track_index": { "type": "integer" },
-                    "effect_index": { "type": "integer" },
-                    "start": { "type": "number" },
-                    "end": { "type": "number" }
-                },
-                "required": ["track_index", "effect_index", "start", "end"]
-            }
-        },
-        {
-            "name": "add_track",
-            "description": "Create a new track targeting a fixture",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string" },
-                    "fixture_id": { "type": "integer", "description": "Target fixture ID" }
-                },
-                "required": ["name", "fixture_id"]
-            }
-        },
-        {
-            "name": "delete_track",
-            "description": "Delete a track and all its effects by track index",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "track_index": { "type": "integer", "description": "Index of the track to delete" }
-                },
-                "required": ["track_index"]
-            }
-        },
-        {
-            "name": "play",
-            "description": "Start playback",
-            "input_schema": { "type": "object", "properties": {} }
-        },
-        {
-            "name": "pause",
-            "description": "Pause playback",
-            "input_schema": { "type": "object", "properties": {} }
-        },
-        {
-            "name": "seek",
-            "description": "Seek to a time in seconds",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "time": { "type": "number" }
-                },
-                "required": ["time"]
-            }
-        },
-        {
-            "name": "undo",
-            "description": "Undo the last editing action",
-            "input_schema": { "type": "object", "properties": {} }
-        },
-        {
-            "name": "redo",
-            "description": "Redo the last undone action",
-            "input_schema": { "type": "object", "properties": {} }
-        },
-        {
-            "name": "get_show",
-            "description": "Get the full show model including fixtures, tracks, and effects",
-            "input_schema": { "type": "object", "properties": {} }
-        }
-    ])
 }
 
 // ── System prompt builder ────────────────────────────────────────
@@ -241,190 +114,129 @@ fn build_system_prompt(state: &Arc<AppState>) -> String {
     let playback = state.playback.lock();
 
     let mut lines = Vec::new();
-    lines.push("You are a light show assistant integrated into VibeLights, a light show sequencer.".to_string());
-    lines.push("You can control the sequencer by calling the available tools.".to_string());
+
+    lines.push("You are VibeLights AI, a creative light show design assistant.".to_string());
+    lines.push("You have 3 tools: help (discover commands), run (execute one), batch (execute many as one undo step).".to_string());
+    lines.push("Key categories: query (inspect show), edit (modify effects/tracks), playback, profile, sequence, library, script, analysis.".to_string());
+    lines.push("Use help() to see all categories, help({topic: \"query\"}) for commands in a category.".to_string());
+    lines.push("The user only sees your text responses, not tool calls or results. Summarize results concisely in your reply.".to_string());
     lines.push(String::new());
 
-    // Current state summary
-    lines.push(format!("Show: {}", if show.name.is_empty() { "(untitled)" } else { &show.name }));
+    // Param value format (essential — the LLM needs this to construct correct params)
+    lines.push("## Param value format".to_string());
+    lines.push("Effect params use tagged format: {\"Float\": 1.0}, {\"Color\": {\"r\":255,\"g\":0,\"b\":0,\"a\":255}}, {\"Bool\": true}, {\"Int\": 5}".to_string());
+    lines.push("Curve: {\"Curve\":{\"points\":[{\"x\":0,\"y\":0},{\"x\":1,\"y\":1}]}}".to_string());
+    lines.push("Gradient: {\"ColorGradient\":{\"stops\":[{\"position\":0,\"color\":{\"r\":255,\"g\":0,\"b\":0,\"a\":255}},{\"position\":1,\"color\":{\"r\":0,\"g\":0,\"b\":255,\"a\":255}}]}}".to_string());
+    lines.push("Library refs: {\"GradientRef\":\"name\"} or {\"CurveRef\":\"name\"}".to_string());
+    lines.push(String::new());
+
+    // Minimal orientation — just counts, not full dumps
+    lines.push("## Current state".to_string());
     lines.push(format!("Fixtures: {}", show.fixtures.len()));
-    for f in &show.fixtures {
-        lines.push(format!("  - {} (id: {}, {} pixels)", f.name, f.id.0, f.pixel_count));
-    }
 
     if let Some(seq) = show.sequences.first() {
-        lines.push(format!("\nSequence: {} ({:.1}s @ {}fps)", seq.name, seq.duration, seq.frame_rate));
-        lines.push(format!("Tracks: {}", seq.tracks.len()));
-        for (i, t) in seq.tracks.iter().enumerate() {
-            lines.push(format!("  Track {}: \"{}\" ({} effects)", i, t.name, t.effects.len()));
-            for (j, e) in t.effects.iter().enumerate() {
-                let blend_info = if e.blend_mode != crate::model::BlendMode::Override || e.opacity < 1.0 {
-                    format!(" blend={:?} opacity={:.1}", e.blend_mode, e.opacity)
-                } else {
-                    String::new()
-                };
-                lines.push(format!("    Effect {}: {:?} [{:.1}s - {:.1}s]{}", j, e.kind, e.time_range.start(), e.time_range.end(), blend_info));
+        lines.push(format!("Sequence: {} ({:.1}s, {} tracks, {} total effects)",
+            seq.name, seq.duration, seq.tracks.len(),
+            seq.tracks.iter().map(|t| t.effects.len()).sum::<usize>(),
+        ));
+        if let Some(ref audio) = seq.audio_file {
+            lines.push(format!("Audio: {audio}"));
+        }
+    }
+
+    lines.push(format!("Playback: {} at {:.1}s",
+        if playback.playing { "playing" } else { "paused" },
+        playback.current_time,
+    ));
+
+    // Analysis hint
+    if let Some(seq) = show.sequences.first() {
+        if let Some(ref audio) = seq.audio_file {
+            let cache = state.analysis_cache.lock();
+            if cache.contains_key(audio) {
+                lines.push("Audio analysis available.".to_string());
             }
         }
     }
 
-    lines.push(format!("\nPlayback: {} at {:.1}s",
-        if playback.playing { "playing" } else { "paused" },
-        playback.current_time
-    ));
-
-    // Available effect types
-    lines.push("\nAvailable effect types:".to_string());
-    for kind in EffectKind::all_builtin() {
-        if let Some(effect) = effects::resolve_effect(kind) {
-            let schemas = effect.param_schema();
-            let params: Vec<String> = schemas.iter().map(|s| format!("{:?} ({})", s.key, s.label)).collect();
-            lines.push(format!("  {:?}: params [{}]", kind, params.join(", ")));
-        }
-    }
-
-    lines.push("\nParam values use tagged format: {\"Float\": 1.0}, {\"Color\": {\"r\":255,\"g\":0,\"b\":0,\"a\":255}}, {\"Bool\": true}, {\"ColorList\": [{\"r\":255,\"g\":0,\"b\":0,\"a\":255}]}, {\"Int\": 5}, {\"Text\": \"hello\"}".to_string());
+    lines.push(String::new());
+    lines.push("## Tool usage".to_string());
+    lines.push("run({command: \"get_show\"}) — commands without parameters".to_string());
+    lines.push("run({command: \"open_sequence\", params: {slug: \"my-sequence\"}}) — commands with parameters".to_string());
+    lines.push("batch({description: \"...\", commands: [{command: \"add_effect\", params: {...}}, ...]}) — multiple edits as one undo step".to_string());
 
     lines.join("\n")
 }
 
 // ── Tool execution ───────────────────────────────────────────────
 
-#[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
+/// Execute a registry command by name. Used by REST API and MCP.
+/// Dispatches directly to the registry (not through LLM meta-tools).
+pub fn execute_tool_api(state: &Arc<AppState>, name: &str, input: &Value) -> Result<String, String> {
+    let cmd = registry::catalog::deserialize_from_tool_call(name, input)?;
+    let output = registry::execute::execute(state, cmd).map_err(|e| e.to_string())?;
+    Ok(output.message)
+}
+
 fn execute_tool(state: &Arc<AppState>, name: &str, input: &Value) -> Result<String, String> {
     match name {
-        "add_effect" => {
-            let blend_mode = input.get("blend_mode")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or(crate::model::BlendMode::Override);
-            let opacity = input.get("opacity")
-                .and_then(Value::as_f64)
-                .unwrap_or(1.0);
-            let cmd = EditCommand::AddEffect {
-                sequence_index: 0,
-                track_index: input.get("track_index").and_then(Value::as_u64).ok_or("Missing track_index")? as usize,
-                kind: serde_json::from_value(input.get("kind").cloned().unwrap_or(Value::Null)).map_err(|e| e.to_string())?,
-                start: input.get("start").and_then(Value::as_f64).ok_or("Missing start")?,
-                end: input.get("end").and_then(Value::as_f64).ok_or("Missing end")?,
-                blend_mode,
-                opacity,
-            };
-            let mut dispatcher = state.dispatcher.lock();
-            let mut show = state.show.lock();
-            let result = dispatcher.execute(&mut show, &cmd)?;
-            Ok(format!("{result:?}"))
+        "help" => {
+            let topic = input.get("topic").and_then(Value::as_str);
+            Ok(registry::catalog::help_text(topic))
         }
-        "delete_effects" => {
-            let targets: Vec<(usize, usize)> = input.get("targets")
+        "run" => {
+            let command = input
+                .get("command")
+                .and_then(Value::as_str)
+                .ok_or("Missing 'command' field")?;
+            let params = input.get("params").unwrap_or(&Value::Null);
+            let cmd = registry::catalog::deserialize_from_tool_call(command, params)
+                .map_err(|e| {
+                    if params.is_null() {
+                        format!(
+                            "Command \"{command}\" requires params but none were provided. \
+                             Use help({{topic: \"{command}\"}}) to see the required parameters. \
+                             Pass them as: run({{command: \"{command}\", params: {{...}}}})"
+                        )
+                    } else {
+                        format!("Error deserializing params for \"{command}\": {e}")
+                    }
+                })?;
+            let output = registry::execute::execute(state, cmd).map_err(|e| e.to_string())?;
+            Ok(output.message)
+        }
+        "batch" => {
+            let description = input
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("Batch edit")
+                .to_string();
+            let commands = input
+                .get("commands")
                 .and_then(Value::as_array)
-                .ok_or("Missing targets")?
+                .ok_or("Missing 'commands' array")?;
+
+            // Transform {command, params} → {action, params} for batch_edit handler
+            let batch_commands: Vec<Value> = commands
                 .iter()
-                .map(|pair| {
-                    let arr = pair.as_array().ok_or("Invalid target pair")?;
-                    Ok((
-                        arr.first().and_then(Value::as_u64).ok_or("Invalid track index")? as usize,
-                        arr.get(1).and_then(Value::as_u64).ok_or("Invalid effect index")? as usize,
-                    ))
+                .map(|c| {
+                    let action = c.get("command").and_then(Value::as_str).unwrap_or("");
+                    let params = c.get("params").cloned().unwrap_or(Value::Null);
+                    serde_json::json!({ "action": action, "params": params })
                 })
-                .collect::<Result<_, String>>()?;
-            let cmd = EditCommand::DeleteEffects {
-                sequence_index: 0,
-                targets,
+                .collect();
+
+            let batch_params = registry::params::BatchEditParams {
+                description,
+                commands: batch_commands,
             };
-            let mut dispatcher = state.dispatcher.lock();
-            let mut show = state.show.lock();
-            dispatcher.execute(&mut show, &cmd)?;
-            Ok("Deleted".to_string())
+            let cmd = registry::Command::BatchEdit(batch_params);
+            let output = registry::execute::execute(state, cmd).map_err(|e| e.to_string())?;
+            Ok(output.message)
         }
-        "update_effect_param" => {
-            let cmd = EditCommand::UpdateEffectParam {
-                sequence_index: 0,
-                track_index: input.get("track_index").and_then(Value::as_u64).ok_or("Missing track_index")? as usize,
-                effect_index: input.get("effect_index").and_then(Value::as_u64).ok_or("Missing effect_index")? as usize,
-                key: serde_json::from_value(input.get("key").cloned().unwrap_or(Value::Null)).map_err(|e| format!("Invalid param key: {e}"))?,
-                value: serde_json::from_value(input.get("value").cloned().unwrap_or(Value::Null)).map_err(|e| e.to_string())?,
-            };
-            let mut dispatcher = state.dispatcher.lock();
-            let mut show = state.show.lock();
-            dispatcher.execute(&mut show, &cmd)?;
-            Ok("Updated".to_string())
-        }
-        "update_effect_time_range" => {
-            let cmd = EditCommand::UpdateEffectTimeRange {
-                sequence_index: 0,
-                track_index: input.get("track_index").and_then(Value::as_u64).ok_or("Missing track_index")? as usize,
-                effect_index: input.get("effect_index").and_then(Value::as_u64).ok_or("Missing effect_index")? as usize,
-                start: input.get("start").and_then(Value::as_f64).ok_or("Missing start")?,
-                end: input.get("end").and_then(Value::as_f64).ok_or("Missing end")?,
-            };
-            let mut dispatcher = state.dispatcher.lock();
-            let mut show = state.show.lock();
-            dispatcher.execute(&mut show, &cmd)?;
-            Ok("Updated".to_string())
-        }
-        "add_track" => {
-            let fixture_id = input.get("fixture_id").and_then(Value::as_u64).ok_or("Missing fixture_id")? as u32;
-            let cmd = EditCommand::AddTrack {
-                sequence_index: 0,
-                name: input.get("name").and_then(Value::as_str).ok_or("Missing name")?.to_string(),
-                target: crate::model::EffectTarget::Fixtures(vec![crate::model::FixtureId(fixture_id)]),
-            };
-            let mut dispatcher = state.dispatcher.lock();
-            let mut show = state.show.lock();
-            let result = dispatcher.execute(&mut show, &cmd)?;
-            Ok(format!("{result:?}"))
-        }
-        "delete_track" => {
-            let track_index = input.get("track_index").and_then(Value::as_u64).ok_or("Missing track_index")? as usize;
-            let cmd = EditCommand::DeleteTrack {
-                sequence_index: 0,
-                track_index,
-            };
-            let mut dispatcher = state.dispatcher.lock();
-            let mut show = state.show.lock();
-            dispatcher.execute(&mut show, &cmd)?;
-            Ok(format!("Deleted track {track_index}"))
-        }
-        "play" => {
-            let mut playback = state.playback.lock();
-            playback.playing = true;
-            playback.last_tick = Some(std::time::Instant::now());
-            Ok("Playing".to_string())
-        }
-        "pause" => {
-            let mut playback = state.playback.lock();
-            playback.playing = false;
-            playback.last_tick = None;
-            Ok("Paused".to_string())
-        }
-        "seek" => {
-            let time = input.get("time").and_then(Value::as_f64).ok_or("Missing time")?;
-            let mut playback = state.playback.lock();
-            playback.current_time = time.max(0.0);
-            if playback.playing {
-                playback.last_tick = Some(std::time::Instant::now());
-            } else {
-                playback.last_tick = None;
-            }
-            Ok(format!("Seeked to {time:.1}s"))
-        }
-        "undo" => {
-            let mut dispatcher = state.dispatcher.lock();
-            let mut show = state.show.lock();
-            let desc = dispatcher.undo(&mut show)?;
-            Ok(format!("Undone: {desc}"))
-        }
-        "redo" => {
-            let mut dispatcher = state.dispatcher.lock();
-            let mut show = state.show.lock();
-            let desc = dispatcher.redo(&mut show)?;
-            Ok(format!("Redone: {desc}"))
-        }
-        "get_show" => {
-            let show = state.show.lock();
-            Ok(serde_json::to_string_pretty(&*show).unwrap_or_default())
-        }
-        _ => Err(format!("Unknown tool: {name}")),
+        _ => Err(format!(
+            "Unknown tool: {name}. Available tools: help, run, batch."
+        )),
     }
 }
 
@@ -445,6 +257,9 @@ impl ChatManager {
         }
     }
 
+    /// Return only user messages and assistant text responses for display.
+    /// Tool calls and results are internal implementation details — the user
+    /// only sees the conversation (their messages + the AI's final answers).
     #[must_use]
     pub fn history_for_display(&self) -> Vec<ChatHistoryEntry> {
         let mut entries = Vec::new();
@@ -452,36 +267,22 @@ impl ChatManager {
             match &msg.content {
                 ChatContent::Text(text) => {
                     entries.push(ChatHistoryEntry {
-                        role: msg.role.clone(),
+                        role: msg.role,
                         text: text.clone(),
-                        tool_name: None,
                     });
                 }
                 ChatContent::Blocks(blocks) => {
                     for block in blocks {
-                        match block {
-                            ContentBlock::Text { text } => {
+                        if let ContentBlock::Text { text } = block {
+                            // Only include non-empty text from user/assistant
+                            if !text.is_empty() {
                                 entries.push(ChatHistoryEntry {
-                                    role: msg.role.clone(),
+                                    role: msg.role,
                                     text: text.clone(),
-                                    tool_name: None,
-                                });
-                            }
-                            ContentBlock::ToolUse { name, .. } => {
-                                entries.push(ChatHistoryEntry {
-                                    role: ChatRole::Assistant,
-                                    text: format!("Calling {name}..."),
-                                    tool_name: Some(name.clone()),
-                                });
-                            }
-                            ContentBlock::ToolResult { content, .. } => {
-                                entries.push(ChatHistoryEntry {
-                                    role: ChatRole::Tool,
-                                    text: content.clone(),
-                                    tool_name: None,
                                 });
                             }
                         }
+                        // Skip ToolUse and ToolResult — they're behind-the-scenes
                     }
                 }
             }
@@ -489,8 +290,49 @@ impl ChatManager {
         entries
     }
 
+    /// Get the raw chat history for persistence.
+    #[must_use]
+    pub fn history(&self) -> &[ChatMessage] {
+        &self.history
+    }
+
+    /// Load chat history (e.g. from a persisted file). Truncates to last 50 messages.
+    pub fn load_history(&mut self, messages: Vec<ChatMessage>) {
+        let len = messages.len();
+        if len > 50 {
+            self.history = messages.into_iter().skip(len - 50).collect();
+        } else {
+            self.history = messages;
+        }
+    }
+
     pub fn clear(&mut self) {
         self.history.clear();
+    }
+
+    /// Save chat history to a JSON file.
+    pub fn save_to_file(&self, path: &Path) {
+        if self.history.is_empty() {
+            // Remove stale file if chat is empty
+            let _ = std::fs::remove_file(path);
+            return;
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&self.history) {
+            let _ = std::fs::write(path, json);
+        }
+    }
+
+    /// Load chat history from a JSON file. Truncates to 50 messages.
+    pub fn load_from_file(&mut self, path: &Path) {
+        self.history.clear();
+        if !path.exists() {
+            return;
+        }
+        if let Ok(data) = std::fs::read_to_string(path) {
+            if let Ok(messages) = serde_json::from_str::<Vec<ChatMessage>>(&data) {
+                self.load_history(messages);
+            }
+        }
     }
 
     pub fn cancel(&mut self) {
@@ -509,12 +351,14 @@ impl ChatManager {
         emitter: &dyn ChatEmitter,
         message: String,
     ) -> Result<(), String> {
-        let api_key = {
+        // Resolve LLM provider from settings
+        let provider = {
             let settings = state.settings.lock();
-            settings
+            let config = settings
                 .as_ref()
-                .and_then(|s| s.claude_api_key.clone())
-                .ok_or("No Claude API key configured. Set it in Settings.")?
+                .map(|s| &s.llm)
+                .ok_or("No settings configured.")?;
+            llm::ResolvedProvider::from_config(config)?
         };
 
         // Add user message
@@ -528,7 +372,7 @@ impl ChatManager {
         }
 
         let client = reqwest::Client::new();
-        let max_iterations = 10;
+        let max_iterations = 20;
 
         for _ in 0..max_iterations {
             // Check cancellation
@@ -545,25 +389,21 @@ impl ChatManager {
                     .collect()
             };
 
-            let body = serde_json::json!({
-                "model": "claude-sonnet-4-20250514",
-                "max_tokens": 4096,
-                "system": system_prompt,
-                "tools": tool_definitions(),
-                "messages": messages,
-            });
+            // Minimal tool set: help + run + batch (discovery-based)
+            let tool_defs = registry::catalog::to_llm_tools();
 
             emitter.emit_thinking(true);
 
-            let response = client
-                .post("https://api.anthropic.com/v1/messages")
-                .header("x-api-key", &api_key)
-                .header("anthropic-version", "2023-06-01")
-                .header("content-type", "application/json")
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| format!("API request failed: {e}"))?;
+            let response = llm::build_request(
+                &client,
+                &provider,
+                &system_prompt,
+                &messages,
+                &tool_defs,
+            )
+            .send()
+            .await
+            .map_err(|e| format!("API request failed: {e}"))?;
 
             if !response.status().is_success() {
                 let status = response.status();
@@ -576,11 +416,8 @@ impl ChatManager {
                 .await
                 .map_err(|e| format!("Failed to parse response: {e}"))?;
 
-            let stop_reason = response_json.get("stop_reason").and_then(Value::as_str).unwrap_or("");
-            let content_blocks = response_json.get("content")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
+            let (content_blocks, stop_reason) =
+                llm::parse_response(&provider.provider, &response_json)?;
 
             // Process response blocks
             let mut has_tool_use = false;
@@ -609,7 +446,7 @@ impl ChatManager {
                             input: input.clone(),
                         });
 
-                        // Execute the tool
+                        // Execute the tool via unified registry
                         let result = execute_tool(&state, &name, &input)
                             .unwrap_or_else(|e| format!("Error: {e}"));
 
@@ -642,12 +479,16 @@ impl ChatManager {
             }
 
             // If no tool use, we're done
-            if !has_tool_use || stop_reason == "end_turn" {
+            if !has_tool_use || stop_reason == "end_turn" || stop_reason.is_empty() {
                 break;
             }
         }
 
         emitter.emit_complete();
+
+        // Persist chat history after each completed exchange
+        save_chat_history(&state);
+
         Ok(())
     }
 
@@ -669,5 +510,34 @@ impl ChatManager {
             }
         }
         None
+    }
+}
+
+// ── Chat persistence helpers ─────────────────────────────────────
+
+/// Compute the chat file path: {data_dir}/profiles/{profile}/sequences/{seq}.chat.json
+fn chat_file_path(state: &AppState) -> Option<std::path::PathBuf> {
+    let settings = state.settings.lock();
+    let data_dir = settings.as_ref().map(|s| &s.data_dir)?;
+    let profile = state.current_profile.lock().clone()?;
+    let sequence = state.current_sequence.lock().clone()?;
+    Some(data_dir.join("profiles").join(profile).join("sequences").join(format!("{sequence}.chat.json")))
+}
+
+/// Save the current chat history to disk (best-effort, non-blocking).
+pub fn save_chat_history(state: &Arc<AppState>) {
+    if let Some(path) = chat_file_path(state) {
+        let chat = state.chat.lock();
+        chat.save_to_file(&path);
+    }
+}
+
+/// Load chat history from disk for the current profile/sequence.
+pub fn load_chat_history(state: &Arc<AppState>) {
+    if let Some(path) = chat_file_path(state) {
+        let mut chat = state.chat.lock();
+        chat.load_from_file(&path);
+    } else {
+        state.chat.lock().clear();
     }
 }

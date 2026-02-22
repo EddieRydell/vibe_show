@@ -129,11 +129,13 @@ pub enum Op {
     /// Pop Vec2 → push float length
     Length,
 
-    // Gradient/Curve evaluation
+    // Gradient/Curve/Color param evaluation
     /// Pop float t → push Color from gradient param
     EvalGradient(u16),
     /// Pop float t → push float from curve param
     EvalCurve(u16),
+    /// Push Color from a color param
+    LoadColor(u16),
 
     // Hash
     /// Pop a, b → push float
@@ -292,6 +294,9 @@ impl Compiler {
             }
             TypedExprKind::LoadParam(idx) => {
                 self.emit(Op::PushParam(*idx));
+            }
+            TypedExprKind::LoadColor(idx) => {
+                self.emit(Op::LoadColor(*idx));
             }
             TypedExprKind::LoadBuiltin(var) => {
                 self.emit(match var {

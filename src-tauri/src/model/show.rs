@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -5,7 +6,7 @@ use super::fixture::{Controller, FixtureDef, FixtureGroup, FixtureId, Patch};
 use super::timeline::Sequence;
 
 /// 2D position for preview rendering. Coordinates are normalized (0.0 to 1.0).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export)]
 pub struct Position2D {
     pub x: f32,
@@ -13,7 +14,7 @@ pub struct Position2D {
 }
 
 /// Describes the geometric shape used to distribute fixture pixels in the layout.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS, JsonSchema)]
 #[ts(export)]
 pub enum LayoutShape {
     Line {
@@ -171,7 +172,7 @@ impl LayoutShape {
 }
 
 /// Maps a fixture's pixels to 2D positions for the preview renderer.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export)]
 pub struct FixtureLayout {
     pub fixture_id: FixtureId,
@@ -191,7 +192,7 @@ impl FixtureLayout {
 }
 
 /// The spatial layout of all fixtures for preview rendering.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export)]
 pub struct Layout {
     pub fixtures: Vec<FixtureLayout>,

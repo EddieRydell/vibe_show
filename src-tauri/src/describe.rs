@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::effects::resolve_effect;
 use crate::engine::Frame;
 use crate::model::{EffectInstance, Sequence, Show};
@@ -134,6 +136,86 @@ pub fn describe_sequence(seq: &Sequence) -> String {
                 j,
                 describe_effect(effect)
             ));
+        }
+    }
+
+    lines.join("\n")
+}
+
+/// Compact summary for LLM consumption. Gives the LLM enough context to
+/// understand the show without dumping every track and effect.
+pub fn summarize_show(show: &Show) -> String {
+    let mut lines = Vec::new();
+
+    lines.push(format!(
+        "Show: {}",
+        if show.name.is_empty() { "(untitled)" } else { &show.name }
+    ));
+    lines.push(format!("Fixtures: {}", show.fixtures.len()));
+    if !show.groups.is_empty() {
+        lines.push(format!("Groups: {}", show.groups.len()));
+    }
+
+    for (i, seq) in show.sequences.iter().enumerate() {
+        lines.push(format!(
+            "\nSequence [{}]: \"{}\" ({:.1}s @ {}fps)",
+            i, seq.name, seq.duration, seq.frame_rate
+        ));
+        if let Some(ref audio) = seq.audio_file {
+            lines.push(format!("  Audio: {audio}"));
+        }
+
+        let total_effects: usize = seq.tracks.iter().map(|t| t.effects.len()).sum();
+        lines.push(format!(
+            "  Tracks: {}, Effects: {}",
+            seq.tracks.len(),
+            total_effects
+        ));
+
+        // Effect type distribution
+        let mut type_counts: HashMap<String, usize> = HashMap::new();
+        for track in &seq.tracks {
+            for effect in &track.effects {
+                let key = format!("{}", effect.kind);
+                *type_counts.entry(key).or_insert(0) += 1;
+            }
+        }
+        if !type_counts.is_empty() {
+            let mut sorted: Vec<_> = type_counts.into_iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(&a.1));
+            let parts: Vec<String> = sorted.iter().map(|(k, v)| format!("{k}: {v}")).collect();
+            lines.push(format!("  Effect types: {}", parts.join(", ")));
+        }
+
+        // Library summary
+        if !seq.gradient_library.is_empty() {
+            lines.push(format!("  Library gradients: {}", seq.gradient_library.len()));
+        }
+        if !seq.curve_library.is_empty() {
+            lines.push(format!("  Library curves: {}", seq.curve_library.len()));
+        }
+        if !seq.scripts.is_empty() {
+            let names: Vec<&String> = seq.scripts.keys().collect();
+            lines.push(format!("  Scripts: {}", names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
+        }
+
+        // Sample of first few tracks (so LLM can see structure)
+        let sample_count = seq.tracks.len().min(5);
+        if sample_count > 0 {
+            lines.push(format!("\n  First {sample_count} tracks:"));
+            for (i, track) in seq.tracks.iter().take(sample_count).enumerate() {
+                let effects_desc: Vec<String> = track.effects.iter().map(|e| {
+                    format!("{} [{:.1}s-{:.1}s]", e.kind, e.time_range.start(), e.time_range.end())
+                }).collect();
+                lines.push(format!("    Track {}: \"{}\" (target: {:?}) — {}",
+                    i, track.name, track.target,
+                    if effects_desc.is_empty() { "no effects".to_string() } else { effects_desc.join(", ") }
+                ));
+            }
+            if seq.tracks.len() > sample_count {
+                lines.push(format!("    ... and {} more tracks", seq.tracks.len() - sample_count));
+            }
+            lines.push("  Use get_effect_detail({sequence_index, track_index, effect_index}) to inspect any effect.".to_string());
         }
     }
 

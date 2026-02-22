@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
+import { cmd } from "../commands";
 
 interface Props {
   onComplete: () => void;
@@ -30,7 +30,7 @@ export function FirstLaunchScreen({ onComplete }: Props) {
     setError(null);
     try {
       const dataDir = parentDir.replace(/[\\/]+$/, "") + "/" + folderName.trim();
-      await invoke("initialize_data_dir", { dataDir });
+      await cmd.initializeDataDir(dataDir);
       onComplete();
     } catch (e) {
       setError(String(e));
@@ -39,7 +39,7 @@ export function FirstLaunchScreen({ onComplete }: Props) {
   }, [parentDir, folderName, onComplete]);
 
   return (
-    <div className="bg-bg flex h-screen items-center justify-center">
+    <div className="bg-bg flex h-full items-center justify-center">
       <div className="max-w-lg text-center">
         <h1 className="text-text text-4xl font-bold">Vibe Lights</h1>
         <p className="text-text mt-6 text-sm">

@@ -40,6 +40,7 @@ pub struct VmContext<'a> {
     pub param_values: &'a [f64],
     pub gradients: &'a [Option<&'a ColorGradient>],
     pub curves: &'a [Option<&'a Curve>],
+    pub colors: &'a [Option<Color>],
 }
 
 /// Execute a compiled script for one pixel, returning the output color.
@@ -294,6 +295,12 @@ pub fn execute(script: &CompiledScript, ctx: &VmContext<'_>) -> Color {
                     stack.push(Value::Float(y));
                 }
             }
+            Op::LoadColor(param_idx) => {
+                let color = ctx.colors.get(param_idx as usize)
+                    .and_then(|c| *c)
+                    .unwrap_or(Color::BLACK);
+                stack.push(Value::Color(color));
+            }
 
             // Hash (deterministic pseudo-random)
             Op::Hash => {
@@ -430,6 +437,7 @@ mod tests {
             param_values: &[],
             gradients: &[],
             curves: &[],
+            colors: &[],
         };
 
         execute(&compiled, &ctx)
@@ -561,6 +569,7 @@ mod tests {
             param_values: &[0.0], // gradient params don't use this slot
             gradients: &gradients,
             curves: &[],
+            colors: &[],
         };
 
         let color = execute(&compiled, &ctx);
@@ -572,6 +581,32 @@ mod tests {
     fn user_function() {
         let color = run("fn half(x: float) -> float {\nx * 0.5\n}\nlet v = half(1.0)\nrgb(v, v, v)");
         assert_eq!(color.r, 128);
+    }
+
+    #[test]
+    fn color_param() {
+        let src = "param bg: color = #ff0000\nbg";
+        let tokens = lex(src).unwrap();
+        let script = parse(tokens).unwrap();
+        let typed = type_check(&script).unwrap();
+        let compiled = compile(&typed).unwrap();
+
+        let colors = vec![Some(Color::rgb(0, 255, 0))]; // override to green
+        let ctx = VmContext {
+            t: 0.0,
+            pixel: 0,
+            pixels: 1,
+            pos: 0.0,
+            pos2d: (0.0, 0.0),
+            param_values: &[0.0],
+            gradients: &[],
+            curves: &[],
+            colors: &colors,
+        };
+        let color = execute(&compiled, &ctx);
+        assert_eq!(color.r, 0);
+        assert_eq!(color.g, 255);
+        assert_eq!(color.b, 0);
     }
 
     #[test]
@@ -592,6 +627,7 @@ mod tests {
             param_values: &[0.0],
             gradients: &[],
             curves: &[],
+            colors: &[],
         };
         let color = execute(&compiled, &ctx);
         assert_eq!(color.r, 255);
@@ -607,6 +643,7 @@ mod tests {
             param_values: &[1.0],
             gradients: &[],
             curves: &[],
+            colors: &[],
         };
         let color2 = execute(&compiled, &ctx2);
         assert_eq!(color2.r, 0);
@@ -644,6 +681,7 @@ rgb(r, g, b)
                 param_values: &[1.0, 0.0, 0.0], // r=1.0, g=0.0, b=0.0
                 gradients: &[],
                 curves: &[],
+                colors: &[],
             };
             let dsl_color = execute(&compiled, &ctx);
             assert_eq!(dsl_color.r, native.r, "pixel {pixel}: r mismatch");
@@ -707,6 +745,7 @@ hsv(hue, 1.0, 1.0)
                     param_values: &[1.0, 1.0], // speed=1.0, spread=1.0
                     gradients: &[],
                     curves: &[],
+                    colors: &[],
                 };
                 let dsl_color = execute(&compiled, &ctx);
 
@@ -761,6 +800,7 @@ if phase < duty_cycle {
                 param_values: &[rate, duty_cycle],
                 gradients: &[],
                 curves: &[],
+                colors: &[],
             };
             let dsl_color = execute(&compiled, &ctx);
 

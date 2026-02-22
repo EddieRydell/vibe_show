@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { cmd } from "../commands";
 import type { Frame, PlaybackInfo, Show, TickResult, UndoState } from "../types";
 
 export interface EngineState {
@@ -41,8 +42,9 @@ export function useEngine(
 
   /** Refresh show + playback + frame + undo state from backend after a state change. */
   const refreshAll = useCallback(() => {
-    invoke<Show>("get_show").then(setShow).catch(console.error);
-    invoke<PlaybackInfo>("get_playback")
+    cmd.getShow().then(setShow).catch(console.error);
+    cmd
+      .getPlayback()
       .then((pb) => {
         setPlayback(pb);
         playbackRef.current = pb;
@@ -51,7 +53,7 @@ export function useEngine(
       .catch(console.error);
     const time = playbackRef.current?.current_time ?? 0.0;
     invoke<Frame>("get_frame", { time }).then(setFrame).catch(console.error);
-    invoke<UndoState>("get_undo_state").then(setUndoState).catch(console.error);
+    cmd.getUndoState().then(setUndoState).catch(console.error);
   }, []);
 
   // Animation loop: tick the engine and receive frames.
@@ -85,7 +87,7 @@ export function useEngine(
             } else {
               audioPauseRef.current?.();
               audioSeekRef.current?.(regionEnd);
-              invoke("pause").catch(() => {});
+              cmd.pause().catch(() => {});
               setPlayback((prev) => {
                 const updated = prev ? { ...prev, current_time: regionEnd, playing: false } : prev;
                 playbackRef.current = updated;
@@ -146,9 +148,10 @@ export function useEngine(
 
   const play = useCallback(() => {
     setError(null);
-    invoke("play")
+    cmd
+      .play()
       .then(() =>
-        invoke<PlaybackInfo>("get_playback").then((pb) => {
+        cmd.getPlayback().then((pb) => {
           setPlayback(pb);
           playbackRef.current = pb;
           playingRef.current = pb.playing;
@@ -163,9 +166,10 @@ export function useEngine(
 
   const pause = useCallback(() => {
     setError(null);
-    invoke("pause")
+    cmd
+      .pause()
       .then(() =>
-        invoke<PlaybackInfo>("get_playback").then((pb) => {
+        cmd.getPlayback().then((pb) => {
           setPlayback(pb);
           playbackRef.current = pb;
           playingRef.current = pb.playing;
@@ -180,10 +184,11 @@ export function useEngine(
 
   const seek = useCallback((time: number) => {
     setError(null);
-    invoke("seek", { time })
+    cmd
+      .seek(time)
       .then(() => {
         invoke<Frame>("get_frame", { time }).then(setFrame);
-        invoke<PlaybackInfo>("get_playback").then((pb) => {
+        cmd.getPlayback().then((pb) => {
           setPlayback(pb);
           playbackRef.current = pb;
           playingRef.current = pb.playing;
@@ -197,19 +202,19 @@ export function useEngine(
   }, []);
 
   const setRegion = useCallback((region: [number, number] | null) => {
-    invoke("set_region", { region }).catch(console.error);
+    cmd.setRegion(region).catch(console.error);
     setPlayback((prev) => (prev ? { ...prev, region } : prev));
   }, []);
 
   const setLooping = useCallback((looping: boolean) => {
-    invoke("set_looping", { looping }).catch(console.error);
+    cmd.setLooping(looping).catch(console.error);
     setPlayback((prev) => (prev ? { ...prev, looping } : prev));
   }, []);
 
   const undo = useCallback(async () => {
     setError(null);
     try {
-      await invoke("undo");
+      await cmd.undo();
       refreshAll();
     } catch (e) {
       const msg = String(e);
@@ -221,7 +226,7 @@ export function useEngine(
   const redo = useCallback(async () => {
     setError(null);
     try {
-      await invoke("redo");
+      await cmd.redo();
       refreshAll();
     } catch (e) {
       const msg = String(e);

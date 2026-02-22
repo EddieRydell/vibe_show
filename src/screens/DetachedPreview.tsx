@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { cmd } from "../commands";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Frame, PlaybackInfo, Show, TickResult } from "../types";
+import type { Frame, Show, TickResult } from "../types";
 import { usePreviewRenderer } from "../hooks/usePreviewRenderer";
 import { usePreviewSettings } from "../hooks/usePreviewSettings";
 import { usePreviewCamera } from "../hooks/usePreviewCamera";
@@ -59,7 +60,7 @@ export function DetachedPreview() {
 
   // Fetch show data
   const fetchShow = useCallback(() => {
-    invoke<Show>("get_show")
+    cmd.getShow()
       .then((s) => setShow(s))
       .catch((e) => console.error("[Preview] get_show failed:", e));
   }, []);
@@ -120,7 +121,7 @@ export function DetachedPreview() {
             setFrame(result.frame);
           } else {
             // Paused — read current state for display
-            return invoke<PlaybackInfo>("get_playback").then((pb) => {
+            return cmd.getPlayback().then((pb) => {
               if (cancelled) return;
               setMainPlaying(pb.playing);
               return invoke<Frame>("get_frame", { time: pb.current_time });
@@ -210,7 +211,7 @@ export function DetachedPreview() {
   usePreviewRenderer(canvasRef, show, displayFrame, size.width, size.height, settings, camera);
 
   return (
-    <div className="bg-bg text-text flex h-screen flex-col">
+    <div className="bg-bg text-text flex h-full flex-col">
       <AppBar onClose={handleClose} />
 
       <PreviewToolbar

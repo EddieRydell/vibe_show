@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { cmd } from "../commands";
 
 export interface WaveformData {
   peaks: Float32Array;
@@ -69,7 +69,7 @@ export function useAudio(): AudioState {
 
       if (!filename) return;
 
-      invoke<string>("resolve_media_path", { filename })
+      cmd.resolveMediaPath(filename)
         .then((absolutePath) => {
           const url = convertFileSrc(absolutePath);
 

@@ -240,8 +240,9 @@ async fn run_serve(
     // Override API key if provided
     if let Some(ref key) = api_key {
         if let Some(ref mut s) = loaded_settings {
-            s.claude_api_key = Some(key.clone());
-            settings::save_settings(&app_config_dir, s).ok();
+            s.llm.api_key = Some(key.clone());
+            // Save key to credentials file, not settings.json
+            settings::save_api_key(&app_config_dir, key).ok();
         }
     }
 
@@ -266,6 +267,9 @@ async fn run_serve(
         python_sidecar: Mutex::new(None),
         python_port: AtomicU16::new(0),
         analysis_cache: Mutex::new(std::collections::HashMap::new()),
+        agent_sidecar: Mutex::new(None),
+        agent_port: AtomicU16::new(0),
+        agent_session_id: Mutex::new(None),
     });
 
     // Open profile and sequence if specified

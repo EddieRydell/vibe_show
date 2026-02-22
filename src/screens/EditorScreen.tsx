@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo } from "@tauri-apps/api/event";
+import { cmd } from "../commands";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { Layers, MessageSquare, Settings, SlidersHorizontal } from "lucide-react";
+import { Code, Layers, SlidersHorizontal } from "lucide-react";
 import { Timeline } from "../components/Timeline";
 import { Toolbar } from "../components/Toolbar";
 import { PropertyPanel } from "../components/PropertyPanel";
 import { EffectPicker } from "../components/EffectPicker";
 import { SequenceSettingsDialog } from "../components/SequenceSettingsDialog";
-import { ChatPanel } from "../components/ChatPanel";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { LibraryPanel } from "../components/LibraryPanel";
 import { PythonSetupWizard } from "../components/PythonSetupWizard";
 import { AnalysisWizard } from "../components/AnalysisWizard";
-import { AppBar } from "../components/AppBar";
+import { ScreenShell, useAppShell } from "../components/ScreenShell";
 import { useEngine } from "../hooks/useEngine";
 import { useAudio } from "../hooks/useAudio";
 import { useAnalysis } from "../hooks/useAnalysis";
@@ -26,10 +26,11 @@ interface Props {
   profileSlug: string;
   sequenceSlug: string;
   onBack: () => void;
-  onOpenSettings: () => void;
+  onOpenScript?: (name: string | null) => void;
 }
 
-export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
+export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
+  const { refreshRef } = useAppShell();
   const progressOps = useProgress();
   const audio = useAudio();
   const {
@@ -68,7 +69,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
   } = useEngine(audioGetCurrentTime, audioSeekCb, audioPauseCb);
   const [previewOpen, setPreviewOpen] = useState(false);
   const previewWindowRef = useRef<WebviewWindow | null>(null);
-  const [chatOpen, setChatOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [selectedEffects, setSelectedEffects] = useState<Set<string>>(new Set());
   const [refreshKey, setRefreshKey] = useState(0);
@@ -222,14 +222,21 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
     [refreshAll, previewOpen],
   );
 
+  // Register refresh handler for ChatPanel via context
+  const handleRefresh = useCallback(() => {
+    commitChange({ skipDirty: true });
+  }, [commitChange]);
+
+  useEffect(() => {
+    refreshRef.current = handleRefresh;
+    return () => { refreshRef.current = null; };
+  }, [handleRefresh, refreshRef]);
+
   const handleDeleteSelected = useCallback(async () => {
     if (selectedEffects.size === 0 || !playback) return;
     const targets = deduplicateEffectKeys(selectedEffects);
     try {
-      await invoke("delete_effects", {
-        sequenceIndex: playback.sequence_index,
-        targets,
-      });
+      await cmd.deleteEffects(targets);
       setSelectedEffects(new Set());
       commitChange();
     } catch (e) {
@@ -245,7 +252,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
     if (saveState === "saving") return;
     setSaveState("saving");
     try {
-      await invoke("save_current_sequence");
+      await cmd.saveCurrentSequence();
       setDirty(false);
       setSaveState("saved");
       clearTimeout(savedTimerRef.current);
@@ -309,10 +316,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
     onBack();
   }, [dirty, onBack]);
 
-  const handleRefresh = useCallback(() => {
-    commitChange({ skipDirty: true });
-  }, [commitChange]);
-
   const handleSequenceSettingsSaved = useCallback(() => {
     setShowSequenceSettings(false);
     commitChange();
@@ -352,22 +355,12 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
         if (trackIndex === -1) {
           const fixture = show.fixtures.find((f) => f.id === fixtureId);
           const trackName = fixture ? fixture.name : `Fixture ${fixtureId}`;
-          trackIndex = await invoke<number>("add_track", {
-            sequenceIndex,
-            name: trackName,
-            target: { Fixtures: [fixtureId] },
-          });
+          trackIndex = await cmd.addTrack(trackName, fixtureId);
         }
 
         const end = Math.min(time + 2.0, sequence.duration);
         const start = Math.max(0, end - 2.0);
-        const effectIndex = await invoke<number>("add_effect", {
-          sequenceIndex,
-          trackIndex,
-          kind,
-          start,
-          end,
-        });
+        const effectIndex = await cmd.addEffect(trackIndex, kind, start, end);
 
         commitChange();
         setSelectedEffects(new Set([`${trackIndex}-${effectIndex}`]));
@@ -406,13 +399,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
 
       if (staysOnSameFixture) {
         // Just update time
-        await invoke("update_effect_time_range", {
-          sequenceIndex,
-          trackIndex: fromTrackIndex,
-          effectIndex,
-          start: newStart,
-          end: newEnd,
-        });
+        await cmd.updateEffectTimeRange(fromTrackIndex, effectIndex, newStart, newEnd);
         commitChange();
       } else {
         // Moving to a different fixture: find or create target track
@@ -429,27 +416,12 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
         if (toTrackIndex === -1) {
           const fixture = show.fixtures.find((f) => f.id === targetFixtureId);
           const trackName = fixture ? fixture.name : `Fixture ${targetFixtureId}`;
-          toTrackIndex = await invoke<number>("add_track", {
-            sequenceIndex,
-            name: trackName,
-            target: { Fixtures: [targetFixtureId] },
-          });
+          toTrackIndex = await cmd.addTrack(trackName, targetFixtureId);
         }
 
-        const newEffectIndex = await invoke<number>("move_effect_to_track", {
-          sequenceIndex,
-          fromTrack: fromTrackIndex,
-          effectIndex,
-          toTrack: toTrackIndex,
-        });
+        const newEffectIndex = await cmd.moveEffectToTrack(fromTrackIndex, effectIndex, toTrackIndex);
 
-        await invoke("update_effect_time_range", {
-          sequenceIndex,
-          trackIndex: toTrackIndex,
-          effectIndex: newEffectIndex,
-          start: newStart,
-          end: newEnd,
-        });
+        await cmd.updateEffectTimeRange(toTrackIndex, newEffectIndex, newStart, newEnd);
 
         commitChange();
         setSelectedEffects(new Set([`${toTrackIndex}-${newEffectIndex}`]));
@@ -471,13 +443,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
   const handleResizeEffect = useCallback(
     async (trackIndex: number, effectIndex: number, newStart: number, newEnd: number) => {
       if (!playback) return;
-      await invoke("update_effect_time_range", {
-        sequenceIndex: playback.sequence_index,
-        trackIndex,
-        effectIndex,
-        start: newStart,
-        end: newEnd,
-      });
+      await cmd.updateEffectTimeRange(trackIndex, effectIndex, newStart, newEnd);
       commitChange();
     },
     [playback, commitChange],
@@ -549,7 +515,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
     const pct = loadProgress && loadProgress.progress >= 0 ? Math.round(loadProgress.progress * 100) : 0;
     const indeterminate = !loadProgress || loadProgress.progress < 0;
     return (
-      <div className="bg-bg flex h-screen flex-col items-center justify-center gap-3">
+      <div className="bg-bg flex h-full flex-col items-center justify-center gap-3">
         <div className="border-primary h-6 w-6 animate-spin rounded-full border-2 border-t-transparent" />
         <p className="text-text-2 text-sm">{loadProgress?.phase ?? "Loading sequence..."}</p>
         <div className="bg-border/30 h-1.5 w-48 overflow-hidden rounded-full">
@@ -566,78 +532,64 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
     );
   }
 
-  return (
-    <div className="bg-bg text-text flex h-screen flex-col">
-      {/* Title bar */}
-      <AppBar />
-
-      {/* Screen toolbar */}
-      <div className="border-border bg-surface flex select-none items-center gap-1 border-b px-4 py-1.5">
+  const screenToolbar = (
+    <div className="border-border bg-surface flex select-none items-center gap-1 border-b px-4 py-1.5">
+      <div className="flex-1" />
+      <div className="flex items-center gap-1">
         <button
-          onClick={handleBack}
-          className="text-text-2 hover:text-text mr-2 text-sm transition-colors"
+          onClick={() => setLibraryOpen((o) => !o)}
+          className={`flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors ${
+            libraryOpen
+              ? "border-primary/30 bg-primary/10 text-primary"
+              : "border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text"
+          }`}
         >
-          &larr; Back
+          <Layers size={12} />
+          Library
         </button>
-        <span className="text-text-2 text-xs">{show?.name ?? "Untitled"}</span>
-        <div className="flex-1" />
-        <div className="flex items-center gap-1">
+        <button
+          onClick={() => setShowSequenceSettings(true)}
+          className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors"
+        >
+          <SlidersHorizontal size={12} />
+          Sequence
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={saveState === "saving" || (!dirty && saveState === "idle")}
+          className={`rounded border px-2 py-0.5 text-[11px] transition-colors ${
+            saveState === "saved"
+              ? "border-green-500/30 bg-green-500/10 text-green-400"
+              : dirty
+                ? "border-primary bg-primary text-white hover:bg-primary-hover"
+                : "border-border bg-surface text-text-2"
+          } disabled:opacity-50`}
+        >
+          {saveState === "saving"
+            ? "Saving..."
+            : saveState === "saved"
+              ? "Saved"
+              : "Save"}
+        </button>
+        {onOpenScript && (
           <button
-            onClick={() => setLibraryOpen((o) => !o)}
-            className={`flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors ${
-              libraryOpen
-                ? "border-primary/30 bg-primary/10 text-primary"
-                : "border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text"
-            }`}
-          >
-            <Layers size={12} />
-            Library
-          </button>
-          <button
-            onClick={() => setChatOpen((o) => !o)}
-            className={`flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors ${
-              chatOpen
-                ? "border-primary/30 bg-primary/10 text-primary"
-                : "border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text"
-            }`}
-          >
-            <MessageSquare size={12} />
-            Chat
-          </button>
-          <button
-            onClick={() => setShowSequenceSettings(true)}
-            className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors"
-          >
-            <SlidersHorizontal size={12} />
-            Sequence
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saveState === "saving" || (!dirty && saveState === "idle")}
-            className={`rounded border px-2 py-0.5 text-[11px] transition-colors ${
-              saveState === "saved"
-                ? "border-green-500/30 bg-green-500/10 text-green-400"
-                : dirty
-                  ? "border-primary bg-primary text-white hover:bg-primary-hover"
-                  : "border-border bg-surface text-text-2"
-            } disabled:opacity-50`}
-          >
-            {saveState === "saving"
-              ? "Saving..."
-              : saveState === "saved"
-                ? "Saved"
-                : "Save"}
-          </button>
-          <button
-            onClick={onOpenSettings}
+            onClick={() => onOpenScript(null)}
             className="text-text-2 hover:text-text ml-1 p-1 transition-colors"
-            title="Settings"
+            title="Script Studio"
           >
-            <Settings size={14} />
+            <Code size={14} />
           </button>
-        </div>
+        )}
       </div>
+    </div>
+  );
 
+  return (
+    <ScreenShell
+      title={show?.name ?? "Untitled"}
+      onBack={handleBack}
+      toolbar={screenToolbar}
+    >
       {/* Toolbar */}
       <Toolbar
         playback={playback}
@@ -695,12 +647,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
           sequenceIndex={playback?.sequence_index ?? 0}
           onParamChange={handleParamChange}
         />
-        <ChatPanel
-          open={chatOpen}
-          onClose={() => setChatOpen(false)}
-          onOpenSettings={onOpenSettings}
-          onRefresh={handleRefresh}
-        />
       </div>
 
       {/* Effect Picker popover */}
@@ -751,6 +697,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenSettings }: Props) {
           onClose={() => setShowAnalysisWizard(false)}
         />
       )}
-    </div>
+    </ScreenShell>
   );
 }

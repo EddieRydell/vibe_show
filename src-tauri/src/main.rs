@@ -49,6 +49,9 @@ fn main() {
                 python_sidecar: Mutex::new(None),
                 python_port: AtomicU16::new(0),
                 analysis_cache: Mutex::new(std::collections::HashMap::new()),
+                agent_sidecar: Mutex::new(None),
+                agent_port: AtomicU16::new(0),
+                agent_session_id: Mutex::new(None),
             });
 
             app.manage(state.clone());
@@ -69,116 +72,38 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // Settings
-            commands::get_settings,
-            commands::get_api_port,
-            commands::initialize_data_dir,
-            // Profiles
-            commands::list_profiles,
-            commands::create_profile,
-            commands::open_profile,
-            commands::delete_profile,
-            commands::save_profile,
-            commands::update_profile_fixtures,
-            commands::update_profile_setup,
-            commands::update_profile_layout,
-            // Sequences
-            commands::list_sequences,
-            commands::create_sequence,
-            commands::open_sequence,
-            commands::save_current_sequence,
-            commands::delete_sequence,
-            // Media
-            commands::list_media,
-            commands::import_media,
-            commands::delete_media,
-            commands::resolve_media_path,
-            // Sequence settings
-            commands::update_sequence_settings,
-            // Effects
-            commands::list_effects,
-            // Undo / Redo
-            commands::undo,
-            commands::redo,
-            commands::get_undo_state,
-            // Chat
+            // Async commands
             commands::send_chat_message,
-            commands::get_chat_history,
-            commands::clear_chat,
-            commands::stop_chat,
-            commands::set_claude_api_key,
-            commands::has_claude_api_key,
-            // Engine / playback
-            commands::get_show,
-            commands::get_frame,
-            commands::get_frame_filtered,
-            commands::play,
-            commands::pause,
-            commands::seek,
-            commands::get_playback,
-            commands::set_region,
-            commands::set_looping,
-            commands::tick,
-            commands::render_effect_thumbnail,
-            commands::get_effect_detail,
-            commands::update_effect_param,
-            commands::add_effect,
-            commands::add_track,
-            commands::delete_track,
-            commands::delete_effects,
-            commands::update_effect_time_range,
-            commands::move_effect_to_track,
-            // Import
-            commands::import_vixen,
-            commands::import_vixen_profile,
-            commands::import_vixen_sequence,
-            commands::scan_vixen_directory,
-            commands::check_vixen_preview_file,
+            commands::send_agent_message,
+            commands::cancel_agent_message,
+            commands::clear_agent_session,
+            commands::open_sequence,
             commands::execute_vixen_import,
-            // DSL Scripts
-            commands::compile_script,
-            commands::list_scripts,
-            commands::get_script_source,
-            commands::delete_script,
-            // Profile libraries
-            commands::list_profile_gradients,
-            commands::set_profile_gradient,
-            commands::delete_profile_gradient,
-            commands::rename_profile_gradient,
-            commands::list_profile_curves,
-            commands::set_profile_curve,
-            commands::delete_profile_curve,
-            commands::rename_profile_curve,
-            commands::list_profile_scripts,
-            commands::set_profile_script,
-            commands::delete_profile_script,
-            commands::compile_profile_script,
-            // Sequence resource libraries
-            commands::list_library_gradients,
-            commands::set_library_gradient,
-            commands::delete_library_gradient,
-            commands::rename_library_gradient,
-            commands::list_library_curves,
-            commands::set_library_curve,
-            commands::delete_library_curve,
-            commands::rename_library_curve,
-            // Python / Analysis
+            commands::analyze_audio,
             commands::get_python_status,
             commands::setup_python_env,
             commands::start_python_sidecar,
             commands::stop_python_sidecar,
-            commands::get_analysis,
-            commands::analyze_audio,
+            // Binary/hot-path commands
+            commands::tick,
+            commands::get_frame,
+            commands::get_frame_filtered,
+            commands::render_effect_thumbnail,
+            commands::preview_script,
+            commands::preview_script_frame,
+            // Unified registry
+            commands::exec,
+            commands::get_command_registry,
         ])
         .build(tauri::generate_context!())
         .expect("error while building VibeLights")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
-                // Stop Python sidecar on app exit
                 let state = app.state::<Arc<AppState>>();
+
+                // Stop Python sidecar on app exit
                 let port = state.python_port.load(Ordering::Relaxed);
                 if port > 0 {
-                    // Best-effort shutdown — send POST and kill
                     let shutdown_url = format!("http://127.0.0.1:{port}/shutdown");
                     let _ = reqwest::blocking::Client::new()
                         .post(shutdown_url)
@@ -189,6 +114,21 @@ fn main() {
                         let _ = child.start_kill();
                     }
                     state.python_port.store(0, Ordering::Relaxed);
+                }
+
+                // Stop Agent sidecar on app exit
+                let agent_port = state.agent_port.load(Ordering::Relaxed);
+                if agent_port > 0 {
+                    let shutdown_url = format!("http://127.0.0.1:{agent_port}/shutdown");
+                    let _ = reqwest::blocking::Client::new()
+                        .post(shutdown_url)
+                        .timeout(std::time::Duration::from_secs(2))
+                        .send();
+                    let mut child_opt = state.agent_sidecar.lock().take();
+                    if let Some(ref mut child) = child_opt {
+                        let _ = child.start_kill();
+                    }
+                    state.agent_port.store(0, Ordering::Relaxed);
                 }
             }
         });

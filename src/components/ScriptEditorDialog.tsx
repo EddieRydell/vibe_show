@@ -1,16 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import type { ScriptCompileResult } from "../types";
+import { cmd } from "../commands";
 
 interface Props {
   scriptName: string | null; // null = new script
   initialSource: string;
   onSaved: () => void;
   onCancel: () => void;
-  /** Tauri command for compiling (default: "compile_script") */
-  compileCommand?: string;
-  /** Tauri command for listing script names (default: "list_scripts") */
-  listCommand?: string;
 }
 
 export function ScriptEditorDialog({
@@ -18,8 +14,6 @@ export function ScriptEditorDialog({
   initialSource,
   onSaved,
   onCancel,
-  compileCommand = "compile_script",
-  listCommand = "list_scripts",
 }: Props) {
   const [name, setName] = useState(scriptName ?? "");
   const [source, setSource] = useState(initialSource);
@@ -32,14 +26,12 @@ export function ScriptEditorDialog({
   // Auto-generate name for new scripts
   useEffect(() => {
     if (scriptName !== null) return;
-    invoke<string[] | [string, string][]>(listCommand).then((result) => {
-      // list_scripts returns string[], list_profile_scripts returns [name, source][]
-      const names = result.map((r) => (Array.isArray(r) ? r[0] : r));
+    cmd.listScripts().then((names) => {
       let idx = 1;
       while (names.includes(`script_${idx}`)) idx++;
       setName(`script_${idx}`);
     }).catch(console.error);
-  }, [scriptName, listCommand]);
+  }, [scriptName]);
 
   // Auto-compile on change (debounced)
   useEffect(() => {
@@ -48,7 +40,7 @@ export function ScriptEditorDialog({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       setCompiling(true);
-      invoke<ScriptCompileResult>(compileCommand, { name: name.trim(), source })
+      cmd.compileScript(name.trim(), source)
         .then((result) => {
           setCompileResult(result);
           if (result.success) setModified(false);
@@ -57,17 +49,14 @@ export function ScriptEditorDialog({
         .finally(() => setCompiling(false));
     }, 500);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [source, name, compileCommand]);
+  }, [source, name]);
 
   const handleSave = useCallback(async () => {
     if (!name.trim()) return;
     setSaving(true);
     try {
       if (modified || !compileResult?.success) {
-        const result = await invoke<ScriptCompileResult>(compileCommand, {
-          name: name.trim(),
-          source,
-        });
+        const result = await cmd.compileScript(name.trim(), source);
         setCompileResult(result);
         if (!result.success) {
           setSaving(false);
@@ -80,7 +69,7 @@ export function ScriptEditorDialog({
     } finally {
       setSaving(false);
     }
-  }, [name, source, modified, compileResult, compileCommand, onSaved]);
+  }, [name, source, modified, compileResult, onSaved]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

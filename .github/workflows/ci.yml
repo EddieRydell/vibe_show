@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install system dependencies for Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install npm dependencies
+        run: pnpm install
+
+      - name: Cargo clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+
+      - name: Cargo test
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- \
+            --skip test_real_vixen \
+            --skip test_find_preview_in_real \
+            --skip test_all_we_are \
+            --skip test_color_mode_diagnostic \
+            --skip test_frame_color_diagnostic \
+            --skip test_parsed_gradient_colors \
+            --skip test_vixen_effect_color_data
+
+      - name: TypeScript check
+        run: pnpm check
+
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: ESLint
+        run: pnpm lint
+
+      - name: Audit Rust dependencies
+        run: |
+          cargo install cargo-audit --quiet
+          cargo audit --file src-tauri/Cargo.lock
+
+      - name: Audit npm dependencies
+        run: pnpm audit --audit-level=high || true

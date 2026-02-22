@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import type { EffectInfo, EffectKind } from "../types";
+import { cmd } from "../commands";
 
 interface EffectPickerProps {
   position: { x: number; y: number };
@@ -10,10 +10,12 @@ interface EffectPickerProps {
 
 export function EffectPicker({ position, onSelect, onCancel }: EffectPickerProps) {
   const [effects, setEffects] = useState<EffectInfo[]>([]);
+  const [scripts, setScripts] = useState<string[]>([]);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    invoke<EffectInfo[]>("list_effects").then(setEffects).catch(console.error);
+    cmd.listEffects().then(setEffects).catch(console.error);
+    cmd.listScripts().then(setScripts).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -33,6 +35,9 @@ export function EffectPicker({ position, onSelect, onCancel }: EffectPickerProps
     };
   }, [onCancel]);
 
+  const effectKindKey = (kind: EffectKind): string =>
+    typeof kind === "string" ? kind : `Script:${kind.Script}`;
+
   return (
     <div
       ref={ref}
@@ -44,13 +49,30 @@ export function EffectPicker({ position, onSelect, onCancel }: EffectPickerProps
       </div>
       {effects.map((effect) => (
         <button
-          key={effect.kind}
+          key={effectKindKey(effect.kind)}
           className="text-text hover:bg-primary/15 hover:text-primary flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors"
           onClick={() => onSelect(effect.kind)}
         >
           {effect.name}
         </button>
       ))}
+      {scripts.length > 0 && (
+        <>
+          <div className="bg-border mx-2 my-1 h-px" />
+          <div className="text-text-2 px-3 py-1 text-[10px] tracking-wider uppercase">
+            Scripts
+          </div>
+          {scripts.map((name) => (
+            <button
+              key={`script:${name}`}
+              className="text-text hover:bg-primary/15 hover:text-primary flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors"
+              onClick={() => onSelect({ Script: name })}
+            >
+              {name}
+            </button>
+          ))}
+        </>
+      )}
     </div>
   );
 }

@@ -25,6 +25,7 @@ export type { EffectInfo } from "../src-tauri/bindings/EffectInfo";
 export type { EffectInstance } from "../src-tauri/bindings/EffectInstance";
 export type { EffectKind } from "../src-tauri/bindings/EffectKind";
 export type { EffectParams } from "../src-tauri/bindings/EffectParams";
+export type { ParamValue } from "../src-tauri/bindings/ParamValue";
 export type { EffectTarget } from "../src-tauri/bindings/EffectTarget";
 export type { EffectThumbnail } from "../src-tauri/bindings/EffectThumbnail";
 export type { FixtureDef } from "../src-tauri/bindings/FixtureDef";
@@ -36,12 +37,16 @@ export type { GroupId } from "../src-tauri/bindings/GroupId";
 export type { GroupMember } from "../src-tauri/bindings/GroupMember";
 export type { Layout } from "../src-tauri/bindings/Layout";
 export type { LayoutShape } from "../src-tauri/bindings/LayoutShape";
+export type { LlmConfigInfo } from "../src-tauri/bindings/LlmConfigInfo";
+export type { LlmProvider } from "../src-tauri/bindings/LlmProvider";
+export type { ChatMode } from "../src-tauri/bindings/ChatMode";
+export type { LlmProviderConfig } from "../src-tauri/bindings/LlmProviderConfig";
 export type { MediaFile } from "../src-tauri/bindings/MediaFile";
 export type { OutputMapping } from "../src-tauri/bindings/OutputMapping";
 export type { ParamKey } from "../src-tauri/bindings/ParamKey";
 export type { ParamSchema } from "../src-tauri/bindings/ParamSchema";
 export type { ParamType } from "../src-tauri/bindings/ParamType";
-export type { ParamValue } from "../src-tauri/bindings/ParamValue";
+// ParamValue re-exported above alongside EffectParams
 export type { Patch } from "../src-tauri/bindings/Patch";
 export type { PixelType } from "../src-tauri/bindings/PixelType";
 export type { PlaybackInfo } from "../src-tauri/bindings/PlaybackInfo";
@@ -51,6 +56,8 @@ export type { Profile } from "../src-tauri/bindings/Profile";
 export type { ProfileSummary } from "../src-tauri/bindings/ProfileSummary";
 export type { ScriptCompileResult } from "../src-tauri/bindings/ScriptCompileResult";
 export type { ScriptError } from "../src-tauri/bindings/ScriptError";
+export type { ScriptParamInfo } from "../src-tauri/bindings/ScriptParamInfo";
+export type { ScriptPreviewData } from "../src-tauri/bindings/ScriptPreviewData";
 export type { Sequence } from "../src-tauri/bindings/Sequence";
 export type { SequenceSummary } from "../src-tauri/bindings/SequenceSummary";
 export type { Show } from "../src-tauri/bindings/Show";
@@ -103,3 +110,18 @@ export const BULB_SHAPE_RADIUS: Record<BulbShape, number> = {
 };
 
 export type InteractionMode = "select" | "edit" | "swipe";
+
+// ── Type helpers for serde enum unions ────────────────────────────
+// ParamKey and EffectKind include object variants ({ Custom: string }, { Script: string })
+// from Rust's serde. These helpers extract a plain string for use as keys, labels, etc.
+
+import type { ParamKey } from "../src-tauri/bindings/ParamKey";
+import type { EffectKind } from "../src-tauri/bindings/EffectKind";
+
+export function paramKeyStr(key: ParamKey): string {
+  return typeof key === "string" ? key : key.Custom;
+}
+
+export function effectKindLabel(kind: EffectKind): string {
+  return typeof kind === "string" ? kind : kind.Script;
+}

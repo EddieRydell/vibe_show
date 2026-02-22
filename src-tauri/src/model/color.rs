@@ -1,12 +1,13 @@
 use std::ops;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::BlendMode;
 
 /// RGBA color with 8-bit channels. Alpha is used for blending during composition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
 #[repr(C)]
 #[ts(export)]
 pub struct Color {

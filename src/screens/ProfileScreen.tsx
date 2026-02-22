@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { cmd } from "../commands";
 import type {
   Profile,
   SequenceSummary,
@@ -14,8 +14,7 @@ import type {
   Curve,
   CurvePoint,
 } from "../types";
-import { Settings } from "lucide-react";
-import { AppBar } from "../components/AppBar";
+import { ScreenShell } from "../components/ScreenShell";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { HouseTree } from "../components/house/HouseTree";
 import { FixtureEditor } from "../components/house/FixtureEditor";
@@ -26,7 +25,7 @@ import { ShapeConfigurator } from "../components/layout/ShapeConfigurator";
 import { FixturePlacer } from "../components/layout/FixturePlacer";
 import { GradientEditor } from "../components/controls/GradientEditor";
 import { CurveEditor } from "../components/controls/CurveEditor";
-import { ScriptEditorDialog } from "../components/ScriptEditorDialog";
+
 
 type Tab = "sequences" | "music" | "house" | "layout" | "effects" | "gradients" | "curves";
 
@@ -34,16 +33,16 @@ interface Props {
   slug: string;
   onBack: () => void;
   onOpenSequence: (sequenceSlug: string) => void;
-  onOpenSettings: () => void;
+  onOpenScript: (name: string | null) => void;
 }
 
-export function ProfileScreen({ slug, onBack, onOpenSequence, onOpenSettings }: Props) {
+export function ProfileScreen({ slug, onBack, onOpenSequence, onOpenScript }: Props) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [tab, setTab] = useState<Tab>("sequences");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<Profile>("open_profile", { slug })
+    cmd.openProfile(slug)
       .then(setProfile)
       .catch((e) => setError(String(e)));
   }, [slug]);
@@ -59,29 +58,7 @@ export function ProfileScreen({ slug, onBack, onOpenSequence, onOpenSettings }: 
   ];
 
   return (
-    <div className="bg-bg text-text flex h-screen flex-col">
-      {/* Title bar */}
-      <AppBar />
-
-      {/* Screen toolbar */}
-      <div className="border-border bg-surface flex select-none items-center gap-2 border-b px-4 py-1.5">
-        <button
-          onClick={onBack}
-          className="text-text-2 hover:text-text mr-1 text-sm transition-colors"
-        >
-          &larr; Home
-        </button>
-        <h2 className="text-text text-sm font-bold">{profile?.name ?? "Loading..."}</h2>
-        <div className="flex-1" />
-        <button
-          onClick={onOpenSettings}
-          className="text-text-2 hover:text-text p-1 transition-colors"
-          title="Settings"
-        >
-          <Settings size={14} />
-        </button>
-      </div>
-
+    <ScreenShell title={profile?.name ?? "Loading..."} onBack={onBack} backLabel="Home">
       {/* Error */}
       {error && (
         <div className="bg-error/10 border-error/20 text-error border-b px-6 py-2 text-xs">
@@ -119,11 +96,11 @@ export function ProfileScreen({ slug, onBack, onOpenSequence, onOpenSettings }: 
         {profile && tab === "layout" && (
           <LayoutTab profile={profile} onProfileUpdate={setProfile} setError={setError} />
         )}
-        {profile && tab === "effects" && <EffectsTab setError={setError} />}
+        {profile && tab === "effects" && <EffectsTab setError={setError} onOpenScript={onOpenScript} />}
         {profile && tab === "gradients" && <GradientsTab setError={setError} />}
         {profile && tab === "curves" && <CurvesTab setError={setError} />}
       </div>
-    </div>
+    </ScreenShell>
   );
 }
 
@@ -144,7 +121,7 @@ function SequencesTab({
   const [importingVixen, setImportingVixen] = useState(false);
 
   const refresh = useCallback(() => {
-    invoke<SequenceSummary[]>("list_sequences")
+    cmd.listSequences()
       .then(setSequences)
       .catch((e) => setError(String(e)));
   }, [setError]);
@@ -153,7 +130,7 @@ function SequencesTab({
 
   const handleCreate = useCallback(() => {
     if (!newName.trim()) return;
-    invoke<SequenceSummary>("create_sequence", { name: newName.trim() })
+    cmd.createSequence(newName.trim())
       .then(() => {
         setNewName("");
         setShowCreate(false);
@@ -173,7 +150,7 @@ function SequencesTab({
 
   const confirmDelete = useCallback(() => {
     if (!deleteTarget) return;
-    invoke("delete_sequence", { slug: deleteTarget.slug })
+    cmd.deleteSequence(deleteTarget.slug)
       .then(refresh)
       .catch((e) => setError(String(e)));
     setDeleteTarget(null);
@@ -191,10 +168,7 @@ function SequencesTab({
     try {
       for (const timPath of picked) {
         try {
-          await invoke("import_vixen_sequence", {
-            profileSlug: slug,
-            timPath,
-          });
+          await cmd.importVixenSequence(slug, timPath);
         } catch (e) {
           setError(`Failed to import sequence: ${e}`);
         }
@@ -303,7 +277,7 @@ function MusicTab({ setError }: { setError: (e: string | null) => void }) {
   const [files, setFiles] = useState<MediaFile[]>([]);
 
   const refresh = useCallback(() => {
-    invoke<MediaFile[]>("list_media")
+    cmd.listMedia()
       .then(setFiles)
       .catch((e) => setError(String(e)));
   }, [setError]);
@@ -318,7 +292,7 @@ function MusicTab({ setError }: { setError: (e: string | null) => void }) {
       ],
     });
     if (!selected) return;
-    invoke<MediaFile>("import_media", { sourcePath: selected })
+    cmd.importMedia(selected)
       .then(() => refresh())
       .catch((e) => setError(String(e)));
   }, [refresh, setError]);
@@ -334,7 +308,7 @@ function MusicTab({ setError }: { setError: (e: string | null) => void }) {
 
   const confirmDelete = useCallback(() => {
     if (!deleteFilename) return;
-    invoke("delete_media", { filename: deleteFilename })
+    cmd.deleteMedia(deleteFilename)
       .then(refresh)
       .catch((e) => setError(String(e)));
     setDeleteFilename(null);
@@ -485,7 +459,7 @@ function HouseSetupTab({
 
   const handleSave = async () => {
     try {
-      await invoke("update_profile_fixtures", { fixtures, groups });
+      await cmd.updateProfileFixtures(fixtures, groups);
       const updated = { ...profile, fixtures, groups };
       onProfileUpdate(updated);
       setDirty(false);
@@ -644,7 +618,7 @@ function LayoutTab({
   const handleSave = async () => {
     try {
       const layout = { fixtures: layouts };
-      await invoke("update_profile_layout", { layout });
+      await cmd.updateProfileLayout(layout);
       onProfileUpdate({ ...profile, layout });
       setDirty(false);
     } catch (e) {
@@ -706,19 +680,17 @@ function LayoutTab({
 
 // ── Effects Tab ────────────────────────────────────────────────────
 
-function EffectsTab({ setError }: { setError: (e: string | null) => void }) {
+function EffectsTab({ setError, onOpenScript }: { setError: (e: string | null) => void; onOpenScript: (name: string | null) => void }) {
   const [effects, setEffects] = useState<EffectInfo[]>([]);
   const [scripts, setScripts] = useState<[string, string][]>([]);
-  const [editingScript, setEditingScript] = useState<{ name: string; source: string } | null>(null);
-  const [creatingScript, setCreatingScript] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const refreshEffects = useCallback(() => {
-    invoke<EffectInfo[]>("list_effects").then(setEffects).catch(console.error);
+    cmd.listEffects().then(setEffects).catch(console.error);
   }, []);
 
   const refreshScripts = useCallback(() => {
-    invoke<[string, string][]>("list_profile_scripts")
+    cmd.listProfileScripts()
       .then(setScripts)
       .catch((e) => setError(String(e)));
   }, [setError]);
@@ -728,7 +700,7 @@ function EffectsTab({ setError }: { setError: (e: string | null) => void }) {
 
   const handleDeleteScript = useCallback(() => {
     if (!deleteTarget) return;
-    invoke("delete_profile_script", { name: deleteTarget })
+    cmd.deleteProfileScript(deleteTarget)
       .then(refreshScripts)
       .catch((e) => setError(String(e)));
     setDeleteTarget(null);
@@ -769,12 +741,20 @@ function EffectsTab({ setError }: { setError: (e: string | null) => void }) {
       <section>
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-text text-sm font-medium">Custom Scripts</h3>
-          <button
-            onClick={() => setCreatingScript(true)}
-            className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white transition-colors"
-          >
-            New Script
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => onOpenScript(null)}
+              className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-3 py-1 text-xs transition-colors"
+            >
+              Open Script Studio
+            </button>
+            <button
+              onClick={() => onOpenScript(null)}
+              className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white transition-colors"
+            >
+              New Script
+            </button>
+          </div>
         </div>
 
         {scripts.length === 0 ? (
@@ -786,7 +766,7 @@ function EffectsTab({ setError }: { setError: (e: string | null) => void }) {
             {scripts.map(([name, source]) => (
               <div
                 key={name}
-                onClick={() => setEditingScript({ name, source })}
+                onClick={() => onOpenScript(name)}
                 className="border-border bg-surface hover:border-primary group cursor-pointer rounded-lg border p-4 transition-colors"
               >
                 <h4 className="text-text text-sm font-medium">{name}</h4>
@@ -805,25 +785,6 @@ function EffectsTab({ setError }: { setError: (e: string | null) => void }) {
           </div>
         )}
       </section>
-
-      {/* Script editor dialog */}
-      {(editingScript || creatingScript) && (
-        <ScriptEditorDialog
-          scriptName={editingScript?.name ?? null}
-          initialSource={editingScript?.source ?? ""}
-          compileCommand="compile_profile_script"
-          listCommand="list_profile_scripts"
-          onSaved={() => {
-            setEditingScript(null);
-            setCreatingScript(false);
-            refreshScripts();
-          }}
-          onCancel={() => {
-            setEditingScript(null);
-            setCreatingScript(false);
-          }}
-        />
-      )}
 
       {deleteTarget && (
         <ConfirmDialog
@@ -849,7 +810,7 @@ function GradientsTab({ setError }: { setError: (e: string | null) => void }) {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    invoke<[string, ColorGradient][]>("list_profile_gradients")
+    cmd.listProfileGradients()
       .then(setGradients)
       .catch((e) => setError(String(e)));
   }, [setError]);
@@ -867,7 +828,7 @@ function GradientsTab({ setError }: { setError: (e: string | null) => void }) {
         { position: 1, color: { r: 0, g: 0, b: 255, a: 255 } },
       ],
     };
-    invoke("set_profile_gradient", { name, gradient: defaultGradient })
+    cmd.setProfileGradient(name, defaultGradient)
       .then(() => {
         refresh();
         setExpandedName(name);
@@ -878,7 +839,7 @@ function GradientsTab({ setError }: { setError: (e: string | null) => void }) {
   const handleUpdate = useCallback(
     (name: string, stops: ColorStop[]) => {
       const gradient: ColorGradient = { stops };
-      invoke("set_profile_gradient", { name, gradient })
+      cmd.setProfileGradient(name, gradient)
         .then(refresh)
         .catch((e) => setError(String(e)));
     },
@@ -891,7 +852,7 @@ function GradientsTab({ setError }: { setError: (e: string | null) => void }) {
         setRenamingName(null);
         return;
       }
-      invoke("rename_profile_gradient", { oldName, newName: renameValue.trim() })
+      cmd.renameProfileGradient(oldName, renameValue.trim())
         .then(() => {
           if (expandedName === oldName) setExpandedName(renameValue.trim());
           setRenamingName(null);
@@ -904,7 +865,7 @@ function GradientsTab({ setError }: { setError: (e: string | null) => void }) {
 
   const confirmDelete = useCallback(() => {
     if (!deleteTarget) return;
-    invoke("delete_profile_gradient", { name: deleteTarget })
+    cmd.deleteProfileGradient(deleteTarget)
       .then(() => {
         if (expandedName === deleteTarget) setExpandedName(null);
         refresh();
@@ -1040,7 +1001,7 @@ function CurvesTab({ setError }: { setError: (e: string | null) => void }) {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    invoke<[string, Curve][]>("list_profile_curves")
+    cmd.listProfileCurves()
       .then(setCurves)
       .catch((e) => setError(String(e)));
   }, [setError]);
@@ -1058,7 +1019,7 @@ function CurvesTab({ setError }: { setError: (e: string | null) => void }) {
         { x: 1, y: 1 },
       ],
     };
-    invoke("set_profile_curve", { name, curve: defaultCurve })
+    cmd.setProfileCurve(name, defaultCurve)
       .then(() => {
         refresh();
         setExpandedName(name);
@@ -1069,7 +1030,7 @@ function CurvesTab({ setError }: { setError: (e: string | null) => void }) {
   const handleUpdate = useCallback(
     (name: string, points: CurvePoint[]) => {
       const curve: Curve = { points };
-      invoke("set_profile_curve", { name, curve })
+      cmd.setProfileCurve(name, curve)
         .then(refresh)
         .catch((e) => setError(String(e)));
     },
@@ -1082,7 +1043,7 @@ function CurvesTab({ setError }: { setError: (e: string | null) => void }) {
         setRenamingName(null);
         return;
       }
-      invoke("rename_profile_curve", { oldName, newName: renameValue.trim() })
+      cmd.renameProfileCurve(oldName, renameValue.trim())
         .then(() => {
           if (expandedName === oldName) setExpandedName(renameValue.trim());
           setRenamingName(null);
@@ -1095,7 +1056,7 @@ function CurvesTab({ setError }: { setError: (e: string | null) => void }) {
 
   const confirmDelete = useCallback(() => {
     if (!deleteTarget) return;
-    invoke("delete_profile_curve", { name: deleteTarget })
+    cmd.deleteProfileCurve(deleteTarget)
       .then(() => {
         if (expandedName === deleteTarget) setExpandedName(null);
         refresh();

@@ -112,6 +112,8 @@ pub enum TypedExprKind {
         param_index: u16,
         bit_mask: u32,
     },
+    /// Load a color param by index.
+    LoadColor(u16),
     /// Int to float conversion.
     IntToFloat(Box<TypedExpr>),
 }
@@ -120,6 +122,9 @@ pub fn type_check(script: &Script) -> Result<TypedScript, Vec<CompileError>> {
     let mut ctx = TypeContext::new();
     ctx.check(script)
 }
+
+/// Maximum function inlining depth to prevent stack overflow from recursive functions.
+const MAX_INLINE_DEPTH: u16 = 16;
 
 struct TypeContext {
     /// Local variables: name → (type, local_index)
@@ -135,6 +140,8 @@ struct TypeContext {
     flags: HashMap<String, Vec<String>>,
     /// Errors accumulated
     errors: Vec<CompileError>,
+    /// Current function inlining depth (guards against recursive functions)
+    inline_depth: u16,
 }
 
 impl TypeContext {
@@ -147,6 +154,7 @@ impl TypeContext {
             enums: HashMap::new(),
             flags: HashMap::new(),
             errors: Vec::new(),
+            inline_depth: 0,
         }
     }
 
@@ -543,14 +551,20 @@ impl TypeContext {
 
                 let result_ty = match (then_ty, else_ty) {
                     (Some(t), Some(e)) if t == e => t,
-                    (Some(t), None) => t,
+                    (Some(t), None) if else_body.is_none() => {
+                        // if-without-else used as a value — require else branch
+                        return Err(CompileError::type_error(
+                            format!("'if' expression produces a value ({t:?}) but has no 'else' branch; add an 'else' clause"),
+                            expr.span,
+                        ));
+                    }
                     (Some(_), Some(_)) => {
                         return Err(CompileError::type_error(
                             "if/else branches must have the same type",
                             expr.span,
                         ));
                     }
-                    _ => TypeName::Bool, // no result expressions
+                    _ => TypeName::Bool, // no result expressions (both branches are let-only)
                 };
 
                 Ok(TypedExpr {
@@ -609,19 +623,29 @@ impl TypeContext {
 
         // Check params
         if let Some((param_ty, idx)) = self.params.get(name) {
-            let ty = match param_ty {
-                ParamType::Float(_) => TypeName::Float,
-                ParamType::Int(_) | ParamType::Named(_) => TypeName::Int,
-                ParamType::Bool => TypeName::Bool,
-                ParamType::Color => TypeName::Color,
-                ParamType::Gradient => TypeName::Gradient,
-                ParamType::Curve => TypeName::Curve,
+            return match param_ty {
+                // Color params use a separate load path (not stored as f64)
+                ParamType::Color => Ok(TypedExpr {
+                    kind: TypedExprKind::LoadColor(*idx),
+                    ty: TypeName::Color,
+                    span,
+                }),
+                _ => {
+                    let ty = match param_ty {
+                        ParamType::Float(_) => TypeName::Float,
+                        ParamType::Int(_) | ParamType::Named(_) => TypeName::Int,
+                        ParamType::Bool => TypeName::Bool,
+                        ParamType::Color => TypeName::Color, // handled above
+                        ParamType::Gradient => TypeName::Gradient,
+                        ParamType::Curve => TypeName::Curve,
+                    };
+                    Ok(TypedExpr {
+                        kind: TypedExprKind::LoadParam(*idx),
+                        ty,
+                        span,
+                    })
+                }
             };
-            return Ok(TypedExpr {
-                kind: TypedExprKind::LoadParam(*idx),
-                ty,
-                span,
-            });
         }
 
         // Check implicit builtins (single source of truth in builtins::IMPLICIT_VARS)
@@ -676,13 +700,32 @@ impl TypeContext {
             ));
         }
 
+        // Guard against recursive (or deeply nested) function calls
+        if self.inline_depth >= MAX_INLINE_DEPTH {
+            return Err(CompileError::type_error(
+                format!(
+                    "Function '{}' exceeds maximum inlining depth ({MAX_INLINE_DEPTH}); recursive functions are not supported",
+                    fn_def.name
+                ),
+                span,
+            ));
+        }
+        self.inline_depth += 1;
+
         // Push a new scope for function parameters
         self.locals.push(HashMap::new());
 
         // Evaluate args and bind them as locals
         let mut preamble = Vec::new();
-        for (i, (param, arg)) in fn_def.params.iter().zip(args.iter()).enumerate() {
-            let typed_arg = self.check_expr(arg)?;
+        for (param, arg) in fn_def.params.iter().zip(args.iter()) {
+            let typed_arg = match self.check_expr(arg) {
+                Ok(a) => a,
+                Err(e) => {
+                    self.locals.pop();
+                    self.inline_depth -= 1;
+                    return Err(e);
+                }
+            };
             let local_idx = self.next_local;
             self.next_local += 1;
             if let Some(scope) = self.locals.last_mut() {
@@ -696,17 +739,25 @@ impl TypeContext {
                 },
                 span,
             });
-            let _ = i; // suppress unused warning
         }
 
         // Type check the function body
         let mut body = Vec::new();
+        let mut body_err = None;
         for stmt in &fn_def.body {
-            body.push(self.check_stmt(stmt)?);
+            match self.check_stmt(stmt) {
+                Ok(ts) => body.push(ts),
+                Err(e) => { body_err = Some(e); break; }
+            }
         }
 
-        // Pop the scope
+        // Pop the scope and restore inline depth (must happen even on error)
         self.locals.pop();
+        self.inline_depth -= 1;
+
+        if let Some(e) = body_err {
+            return Err(e);
+        }
 
         // The result is the last expression in the body
         // Wrap everything in a series of lets + final expr
@@ -825,5 +876,28 @@ mod tests {
     fn user_function_inline() {
         let typed = check("fn double(x: float) -> float {\nx * 2.0\n}\nlet v = double(t)\nrgb(v, v, v)");
         assert_eq!(typed.body.len(), 2);
+    }
+
+    #[test]
+    fn recursive_function_error() {
+        let errors = check_err("fn boom(x: float) -> float {\nboom(x)\n}\nlet v = boom(t)\nrgb(v, v, v)");
+        assert!(errors.iter().any(|e| e.message.contains("inlining depth")));
+    }
+
+    #[test]
+    fn mutual_recursion_error() {
+        let errors = check_err("fn a(x: float) -> float {\nb(x)\n}\nfn b(x: float) -> float {\na(x)\n}\nlet v = a(t)\nrgb(v, v, v)");
+        assert!(errors.iter().any(|e| e.message.contains("inlining depth")));
+    }
+
+    #[test]
+    fn if_without_else_error() {
+        let errors = check_err("if t > 0.5 {\nrgb(1.0, 0.0, 0.0)\n}");
+        assert!(errors.iter().any(|e| e.message.contains("no 'else' branch")));
+    }
+
+    #[test]
+    fn if_with_else_ok() {
+        let _typed = check("if t > 0.5 {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 0.0, 1.0)\n}");
     }
 }

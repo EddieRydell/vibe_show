@@ -72,6 +72,11 @@ pub enum EditCommand {
         sequence_index: usize,
         name: String,
     },
+    RenameScript {
+        sequence_index: usize,
+        old_name: String,
+        new_name: String,
+    },
     SetGradient {
         sequence_index: usize,
         name: String,
@@ -132,6 +137,9 @@ impl EditCommand {
             EditCommand::Batch { description, .. } => description.clone(),
             EditCommand::SetScript { name, .. } => format!("Set script \"{name}\""),
             EditCommand::DeleteScript { name, .. } => format!("Delete script \"{name}\""),
+            EditCommand::RenameScript { old_name, new_name, .. } => {
+                format!("Rename script \"{old_name}\" → \"{new_name}\"")
+            }
             EditCommand::SetGradient { name, .. } => format!("Set gradient \"{name}\""),
             EditCommand::DeleteGradient { name, .. } => format!("Delete gradient \"{name}\""),
             EditCommand::RenameGradient { old_name, new_name, .. } => {
@@ -158,6 +166,7 @@ impl EditCommand {
             | EditCommand::UpdateSequenceSettings { sequence_index, .. }
             | EditCommand::SetScript { sequence_index, .. }
             | EditCommand::DeleteScript { sequence_index, .. }
+            | EditCommand::RenameScript { sequence_index, .. }
             | EditCommand::SetGradient { sequence_index, .. }
             | EditCommand::DeleteGradient { sequence_index, .. }
             | EditCommand::RenameGradient { sequence_index, .. }
@@ -645,6 +654,32 @@ impl CommandDispatcher {
                         index: *sequence_index,
                     })?;
                 sequence.scripts.remove(name);
+                Ok(CommandResult::Unit)
+            }
+
+            EditCommand::RenameScript {
+                sequence_index,
+                old_name,
+                new_name,
+            } => {
+                let sequence = show
+                    .sequences
+                    .get_mut(*sequence_index)
+                    .ok_or(AppError::InvalidIndex {
+                        what: "sequence".into(),
+                        index: *sequence_index,
+                    })?;
+                if let Some(source) = sequence.scripts.remove(old_name) {
+                    sequence.scripts.insert(new_name.clone(), source);
+                    // Update any Script effect kinds that reference the old name
+                    for track in &mut sequence.tracks {
+                        for effect in &mut track.effects {
+                            if effect.kind == EffectKind::Script(old_name.clone()) {
+                                effect.kind = EffectKind::Script(new_name.clone());
+                            }
+                        }
+                    }
+                }
                 Ok(CommandResult::Unit)
             }
 

@@ -38,6 +38,12 @@ pub struct AppState {
     pub python_port: AtomicU16,
     /// Cache of audio analysis results. Key is media filename.
     pub analysis_cache: Mutex<HashMap<String, AudioAnalysis>>,
+    /// Handle to the agent sidecar process (Node.js).
+    pub agent_sidecar: Mutex<Option<tokio::process::Child>>,
+    /// Port the agent sidecar is listening on (0 = not running).
+    pub agent_port: AtomicU16,
+    /// Session ID for agent conversation continuity.
+    pub agent_session_id: Mutex<Option<String>>,
 }
 
 impl AppState {

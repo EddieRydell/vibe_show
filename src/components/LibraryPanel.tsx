@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Maximize2, Plus, Trash2 } from "lucide-react";
+import { cmd } from "../commands";
 import type { Color, ColorGradient, ColorStop, Curve, CurvePoint } from "../types";
 import { GradientEditor } from "./controls/GradientEditor";
 import { CurveEditor } from "./controls/CurveEditor";
 import { ScriptEditorDialog } from "./ScriptEditorDialog";
+import { CurveEditorDialog } from "./CurveEditorDialog";
+import { GradientEditorDialog } from "./GradientEditorDialog";
 
 interface Props {
   onClose: () => void;
@@ -164,13 +166,15 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
   const [expandedGradient, setExpandedGradient] = useState<string | null>(null);
   const [expandedCurve, setExpandedCurve] = useState<string | null>(null);
   const [scriptEditor, setScriptEditor] = useState<{ name: string | null; source: string } | null>(null);
+  const [curveDialog, setCurveDialog] = useState<{ name: string; points: CurvePoint[] } | null>(null);
+  const [gradientDialog, setGradientDialog] = useState<{ name: string; stops: ColorStop[] } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const [g, c, s] = await Promise.all([
-        invoke<[string, ColorGradient][]>("list_library_gradients"),
-        invoke<[string, Curve][]>("list_library_curves"),
-        invoke<string[]>("list_scripts"),
+        cmd.listLibraryGradients(),
+        cmd.listLibraryCurves(),
+        cmd.listScripts(),
       ]);
       setGradients(g);
       setCurves(c);
@@ -196,7 +200,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
       ],
     };
     try {
-      await invoke("set_library_gradient", { name, gradient });
+      await cmd.setLibraryGradient(name, gradient.stops);
       onLibraryChange();
       refresh();
       setExpandedGradient(name);
@@ -207,7 +211,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const deleteGradient = useCallback(async (name: string) => {
     try {
-      await invoke("delete_library_gradient", { name });
+      await cmd.deleteLibraryGradient(name);
       onLibraryChange();
       refresh();
       if (expandedGradient === name) setExpandedGradient(null);
@@ -218,7 +222,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const renameGradient = useCallback(async (oldName: string, newName: string) => {
     try {
-      await invoke("rename_library_gradient", { oldName, newName });
+      await cmd.renameLibraryGradient(oldName, newName);
       onLibraryChange();
       refresh();
       if (expandedGradient === oldName) setExpandedGradient(newName);
@@ -229,7 +233,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const updateGradient = useCallback(async (name: string, stops: ColorStop[]) => {
     try {
-      await invoke("set_library_gradient", { name, gradient: { stops } });
+      await cmd.setLibraryGradient(name, stops);
       onLibraryChange();
       refresh();
     } catch (e) {
@@ -251,7 +255,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
       ],
     };
     try {
-      await invoke("set_library_curve", { name, curve });
+      await cmd.setLibraryCurve(name, curve.points);
       onLibraryChange();
       refresh();
       setExpandedCurve(name);
@@ -262,7 +266,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const deleteCurve = useCallback(async (name: string) => {
     try {
-      await invoke("delete_library_curve", { name });
+      await cmd.deleteLibraryCurve(name);
       onLibraryChange();
       refresh();
       if (expandedCurve === name) setExpandedCurve(null);
@@ -273,7 +277,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const renameCurve = useCallback(async (oldName: string, newName: string) => {
     try {
-      await invoke("rename_library_curve", { oldName, newName });
+      await cmd.renameLibraryCurve(oldName, newName);
       onLibraryChange();
       refresh();
       if (expandedCurve === oldName) setExpandedCurve(newName);
@@ -284,7 +288,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const updateCurve = useCallback(async (name: string, points: CurvePoint[]) => {
     try {
-      await invoke("set_library_curve", { name, curve: { points } });
+      await cmd.setLibraryCurve(name, points);
       onLibraryChange();
       refresh();
     } catch (e) {
@@ -300,7 +304,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const openScript = useCallback(async (name: string) => {
     try {
-      const source = await invoke<string | null>("get_script_source", { name });
+      const source = await cmd.getScriptSource(name);
       setScriptEditor({ name, source: source ?? "" });
     } catch (e) {
       console.error("[VibeLights] Get script source failed:", e);
@@ -309,7 +313,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const deleteScript = useCallback(async (name: string) => {
     try {
-      await invoke("delete_script", { name });
+      await cmd.deleteScript(name);
       onLibraryChange();
       refresh();
     } catch (e) {
@@ -346,6 +350,13 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
                   >
                     {expandedGradient === name ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
                     <EditableName value={name} onRename={(n) => renameGradient(name, n)} />
+                  </button>
+                  <button
+                    className="text-text-2 hover:text-primary shrink-0 p-0.5"
+                    onClick={() => setGradientDialog({ name, stops: gradient.stops })}
+                    title="Expand editor"
+                  >
+                    <Maximize2 size={10} />
                   </button>
                   <button
                     className="text-text-2 hover:text-error shrink-0 p-0.5"
@@ -389,6 +400,13 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
                     <EditableName value={name} onRename={(n) => renameCurve(name, n)} />
                   </button>
                   <span className="text-text-2 text-[9px]">{curve.points.length} pts</span>
+                  <button
+                    className="text-text-2 hover:text-primary shrink-0 p-0.5"
+                    onClick={() => setCurveDialog({ name, points: curve.points })}
+                    title="Expand editor"
+                  >
+                    <Maximize2 size={10} />
+                  </button>
                   <button
                     className="text-text-2 hover:text-error shrink-0 p-0.5"
                     onClick={() => deleteCurve(name)}
@@ -447,6 +465,32 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
             refresh();
           }}
           onCancel={() => setScriptEditor(null)}
+        />
+      )}
+
+      {/* Curve Editor Dialog */}
+      {curveDialog && (
+        <CurveEditorDialog
+          initialValue={curveDialog.points}
+          onApply={(pts) => {
+            updateCurve(curveDialog.name, pts);
+            setCurveDialog(null);
+          }}
+          onCancel={() => setCurveDialog(null)}
+        />
+      )}
+
+      {/* Gradient Editor Dialog */}
+      {gradientDialog && (
+        <GradientEditorDialog
+          initialValue={gradientDialog.stops}
+          minStops={2}
+          maxStops={16}
+          onApply={(stops) => {
+            updateGradient(gradientDialog.name, stops);
+            setGradientDialog(null);
+          }}
+          onCancel={() => setGradientDialog(null)}
         />
       )}
     </>

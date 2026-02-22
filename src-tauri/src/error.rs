@@ -23,6 +23,7 @@ pub enum AppError {
     PythonError { message: String },
     AnalysisError { message: String },
     ModelNotInstalled { model: String },
+    AgentError { message: String },
 }
 
 impl fmt::Display for AppError {
@@ -48,6 +49,7 @@ impl fmt::Display for AppError {
             AppError::ModelNotInstalled { model } => {
                 write!(f, "Required model not installed: {model}")
             }
+            AppError::AgentError { message } => write!(f, "Agent error: {message}"),
         }
     }
 }

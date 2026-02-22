@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EffectBlock } from "./EffectBlock";
 import type { AudioAnalysis, BlendMode, InteractionMode, PlaybackInfo, Show, Track } from "../types";
+import { effectKindLabel } from "../types";
 import type { WaveformData } from "../hooks/useAudio";
 
 interface TimelineProps {
@@ -174,7 +175,7 @@ function computeStackedLayoutFast(
         startSec: effect.time_range.start,
         durationSec: effect.time_range.end - effect.time_range.start,
         blendMode: effect.blend_mode,
-        kind: effect.kind,
+        kind: effectKindLabel(effect.kind),
         lane: 0,
       });
     }

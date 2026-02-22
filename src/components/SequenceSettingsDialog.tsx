@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import type { MediaFile, Sequence } from "../types";
+import { cmd } from "../commands";
 
 interface Props {
   sequence: Sequence;
@@ -20,13 +21,13 @@ export function SequenceSettingsDialog({ sequence, sequenceIndex, onSaved, onCan
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    invoke<MediaFile[]>("list_media").then(setMediaFiles).catch(console.error);
+    cmd.listMedia().then(setMediaFiles).catch(console.error);
   }, []);
 
   const handleMatchAudio = useCallback(() => {
     if (!audioFile) return;
     // Use a temporary Audio element to detect duration
-    invoke<string>("resolve_media_path", { filename: audioFile })
+    cmd.resolveMediaPath(audioFile)
       .then((path) => {
         const url = convertFileSrc(path);
         const tmp = new Audio(url);
@@ -46,8 +47,7 @@ export function SequenceSettingsDialog({ sequence, sequenceIndex, onSaved, onCan
 
     setSaving(true);
     try {
-      await invoke("update_sequence_settings", {
-        sequenceIndex,
+      await cmd.updateSequenceSettings({
         name: name.trim(),
         audioFile: audioFile !== sequence.audio_file ? audioFile : undefined,
         duration: dur !== sequence.duration ? dur : undefined,

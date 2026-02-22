@@ -113,9 +113,10 @@ impl<'a> Lexer<'a> {
                     {
                         self.pos += 1;
                     }
-                    // Only emit newline if last token wasn't already a newline or opening brace
+                    // Suppress newline after tokens that indicate a continuation:
+                    // operators, comma, opening delimiters, and prior newlines.
                     if let Some(last) = self.tokens.last() {
-                        if !matches!(last.token, Token::Newline | Token::LBrace) {
+                        if !Self::continues_expression(&last.token) {
                             self.push(Token::Newline, start, self.pos);
                         }
                     }
@@ -250,6 +251,33 @@ impl<'a> Lexer<'a> {
             token,
             span: Span::new(start, end),
         });
+    }
+
+    /// Returns true if a newline after this token should be suppressed,
+    /// because the token indicates an expression continues on the next line.
+    fn continues_expression(token: &Token) -> bool {
+        matches!(
+            token,
+            Token::Plus
+                | Token::Minus
+                | Token::Star
+                | Token::Slash
+                | Token::Percent
+                | Token::Lt
+                | Token::Gt
+                | Token::Le
+                | Token::Ge
+                | Token::EqEq
+                | Token::Ne
+                | Token::And
+                | Token::Or
+                | Token::Pipe
+                | Token::Eq
+                | Token::Comma
+                | Token::LParen
+                | Token::LBrace
+                | Token::Newline
+        )
     }
 
     fn skip_whitespace_and_comments(&mut self) {
@@ -502,6 +530,34 @@ mod tests {
             Token::Newline,
             Token::RBrace,
             Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn no_newline_after_operator() {
+        let tokens = tok("1 +\n2");
+        assert_eq!(tokens, vec![
+            Token::Int(1), Token::Plus, Token::Int(2), Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn no_newline_after_comma() {
+        let tokens = tok("rgb(1.0,\n0.0,\n0.0)");
+        assert_eq!(tokens, vec![
+            Token::Ident("rgb".into()), Token::LParen,
+            Token::Float(1.0), Token::Comma,
+            Token::Float(0.0), Token::Comma,
+            Token::Float(0.0), Token::RParen,
+            Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn no_newline_after_comparison() {
+        let tokens = tok("x >=\ny");
+        assert_eq!(tokens, vec![
+            Token::Ident("x".into()), Token::Ge, Token::Ident("y".into()), Token::Eof,
         ]);
     }
 }
