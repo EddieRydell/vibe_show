@@ -337,7 +337,7 @@ export function SettingsScreen({ onBack }: Props) {
             <div className="mt-3 flex items-center gap-2">
               <button
                 onClick={handleSaveLlmConfig}
-                disabled={!apiKey || apiKey === "********"}
+                disabled={chatMode !== "Agent" && (!apiKey || apiKey === "********")}
                 className={`rounded border px-3 py-1.5 text-xs transition-colors ${
                   keySaved
                     ? "border-green-500/30 bg-green-500/10 text-green-400"

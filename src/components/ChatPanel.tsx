@@ -56,9 +56,19 @@ export function ChatPanel({ open, onClose, onRefresh }: ChatPanelProps) {
 
     listen<boolean>("chat:complete", () => {
       setSending(false);
-      setStreaming("");
+      // Capture streamed text as a message before clearing
+      setStreaming((prev) => {
+        if (prev.trim()) {
+          setMessages((msgs) => [...msgs, { role: "assistant", text: prev }]);
+        }
+        return "";
+      });
       // Refresh messages from backend (Basic mode only — Agent mode doesn't persist history)
-      cmd.getChatHistory().then((entries) => setMessages(entries as ChatEntry[])).catch(() => {});
+      cmd.getChatHistory().then((entries) => {
+        if (entries && entries.length > 0) {
+          setMessages(entries as ChatEntry[]);
+        }
+      }).catch(() => {});
       onRefresh();
     }).then((unlisten) => unlisteners.push(unlisten));
 
@@ -218,8 +228,8 @@ export function ChatPanel({ open, onClose, onRefresh }: ChatPanelProps) {
                 handleSend();
               }
             }}
-            placeholder={hasApiKey ? "Ask AI to edit your show..." : "API key required"}
-            disabled={!hasApiKey || sending}
+            placeholder={hasApiKey || chatMode === "Agent" ? "Ask AI to edit your show..." : "API key required"}
+            disabled={(!hasApiKey && chatMode !== "Agent") || sending}
             className="border-border bg-bg text-text placeholder:text-text-2 flex-1 rounded border px-2 py-1.5 text-xs outline-none focus:border-primary disabled:opacity-50"
           />
           {sending ? (
@@ -232,7 +242,7 @@ export function ChatPanel({ open, onClose, onRefresh }: ChatPanelProps) {
           ) : (
             <button
               onClick={handleSend}
-              disabled={!hasApiKey || !input.trim()}
+              disabled={(!hasApiKey && chatMode !== "Agent") || !input.trim()}
               className="bg-primary text-white rounded px-2 py-1.5 transition-colors hover:opacity-90 disabled:opacity-50"
             >
               <Send size={12} />

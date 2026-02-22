@@ -1,8 +1,14 @@
 node_modules/
 dist/
 src-tauri/target/
+src-tauri/gen/
 *.exe
 *.msi
 *.nsis
 .DS_Store
 PLAN.md
+__pycache__/
+*.pyc
+*.pyo
+.env
+.credentials
