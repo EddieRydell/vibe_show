@@ -30,7 +30,7 @@ export function ColorInput({ label, value, onChange }: ColorInputProps) {
         <span className="text-text-2 font-mono text-[10px]">{hex}</span>
         <div className="relative">
           <div
-            className="border-border h-6 w-6 rounded border"
+            className="border-border size-6  rounded border"
             style={{ backgroundColor: hex }}
           />
           <input

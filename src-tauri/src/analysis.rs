@@ -1,25 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tauri::AppHandle;
 
 use crate::error::AppError;
 use crate::model::analysis::{AnalysisFeatures, AudioAnalysis};
 use crate::progress::emit_progress;
-
-// ── Path helpers ──────────────────────────────────────────────────
-
-/// Path where analysis results are cached alongside the media file.
-/// e.g., `media/song.mp3` → `media/song.mp3.analysis.json`
-pub fn analysis_path(media_dir: &Path, filename: &str) -> PathBuf {
-    media_dir.join(format!("{filename}.analysis.json"))
-}
-
-/// Directory where Demucs stems are stored for a given media file.
-/// e.g., `media/stems/song-mp3/`
-pub fn stems_dir(media_dir: &Path, filename: &str) -> PathBuf {
-    let slug = filename.replace('.', "-");
-    media_dir.join("stems").join(slug)
-}
 
 // ── Disk I/O ──────────────────────────────────────────────────────
 
@@ -31,12 +16,12 @@ pub fn load_analysis(path: &Path) -> Result<AudioAnalysis, AppError> {
     })
 }
 
-/// Save analysis results to disk as JSON.
+/// Save analysis results to disk as JSON (atomic write).
 pub fn save_analysis(path: &Path, analysis: &AudioAnalysis) -> Result<(), AppError> {
     let data = serde_json::to_string_pretty(analysis).map_err(|e| AppError::AnalysisError {
         message: format!("Failed to serialize analysis: {e}"),
     })?;
-    std::fs::write(path, data)?;
+    crate::project::atomic_write(path, data.as_bytes())?;
     Ok(())
 }
 

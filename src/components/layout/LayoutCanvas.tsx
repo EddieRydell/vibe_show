@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FixtureDef, FixtureLayout, Position2D } from "../../types";
+import { cssMouseOffset } from "../../utils/cssZoom";
 
 // Distinct fixture identity colors for the editor
 const FIXTURE_COLORS = [
@@ -161,9 +162,10 @@ export function LayoutCanvas({
   );
 
   const getCanvasCoords = (e: React.MouseEvent) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return { cx: 0, cy: 0 };
-    return { cx: e.clientX - rect.left, cy: e.clientY - rect.top };
+    const canvas = canvasRef.current;
+    if (!canvas) return { cx: 0, cy: 0 };
+    const { x, y } = cssMouseOffset(e, canvas);
+    return { cx: x, cy: y };
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -211,7 +213,7 @@ export function LayoutCanvas({
   };
 
   return (
-    <div ref={containerRef} className="h-full w-full">
+    <div ref={containerRef} className="size-full ">
       <canvas
         ref={canvasRef}
         style={{ width: size.width, height: size.height, cursor: dragging ? "grabbing" : "default" }}

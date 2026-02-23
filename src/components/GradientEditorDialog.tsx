@@ -52,7 +52,6 @@ export function GradientEditorDialog({
             minStops={minStops}
             maxStops={maxStops}
             onChange={setValue}
-            width={560}
             height={48}
             expanded
           />

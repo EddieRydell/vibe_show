@@ -10,6 +10,7 @@ import { ScriptScreen } from "./screens/ScriptScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { useProgress } from "./hooks/useProgress";
 import { ProgressOverlay } from "./components/ProgressOverlay";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AppShellContext } from "./components/ScreenShell";
 import { ChatPanel } from "./components/ChatPanel";
 
@@ -27,6 +28,15 @@ export default function App() {
         setScreen({ kind: "first_launch" });
       }
     });
+  }, []);
+
+  // Catch unhandled promise rejections to prevent silent failures
+  useEffect(() => {
+    const handler = (event: PromiseRejectionEvent) => {
+      console.error("[VibeLights] Unhandled promise rejection:", event.reason);
+    };
+    window.addEventListener("unhandledrejection", handler);
+    return () => window.removeEventListener("unhandledrejection", handler);
   }, []);
 
   const handleFirstLaunchComplete = useCallback(() => {
@@ -140,17 +150,19 @@ export default function App() {
   }
 
   return (
-    <AppShellContext.Provider value={shellContext}>
-      <div className="flex h-full">
-        <div className="min-w-0 flex-1">{content}</div>
-        <ChatPanel
-          open={chatOpen}
-          onClose={toggleChat}
-          onRefresh={() => refreshRef.current?.()}
-          sequenceKey={sequenceKey}
-        />
-      </div>
-      <ProgressOverlay operations={progressOps} />
-    </AppShellContext.Provider>
+    <ErrorBoundary>
+      <AppShellContext.Provider value={shellContext}>
+        <div className="flex h-full">
+          <div className="min-w-0 flex-1">{content}</div>
+          <ChatPanel
+            open={chatOpen}
+            onClose={toggleChat}
+            onRefresh={() => refreshRef.current?.()}
+            sequenceKey={sequenceKey}
+          />
+        </div>
+        <ProgressOverlay operations={progressOps} />
+      </AppShellContext.Provider>
+    </ErrorBoundary>
   );
 }

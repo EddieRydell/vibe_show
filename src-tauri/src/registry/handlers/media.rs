@@ -50,9 +50,10 @@ pub fn resolve_media_path(
     state: &Arc<AppState>,
     p: NameParams,
 ) -> Result<CommandOutput, AppError> {
+    profile::validate_filename(&p.name).map_err(AppError::from)?;
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
     let profile_slug = state.require_profile()?;
-    let path = profile::media_dir(&data_dir, &profile_slug).join(&p.name);
+    let path = crate::paths::media_dir(&data_dir, &profile_slug).join(&p.name);
     if !path.exists() {
         return Err(AppError::NotFound {
             what: format!("Media file: {}", p.name),

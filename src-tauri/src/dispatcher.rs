@@ -153,6 +153,28 @@ impl EditCommand {
         }
     }
 
+    /// Key for coalescing consecutive identical edits into a single undo entry.
+    /// When two consecutive commands return the same `Some(key)`, they share one
+    /// undo snapshot (the one captured before the first command in the run).
+    fn coalesce_key(&self) -> Option<String> {
+        match self {
+            EditCommand::UpdateEffectParam {
+                sequence_index,
+                track_index,
+                effect_index,
+                key,
+                ..
+            } => Some(format!("param:{sequence_index}:{track_index}:{effect_index}:{key:?}")),
+            EditCommand::UpdateEffectTimeRange {
+                sequence_index,
+                track_index,
+                effect_index,
+                ..
+            } => Some(format!("time:{sequence_index}:{track_index}:{effect_index}")),
+            _ => None,
+        }
+    }
+
     /// The sequence index this command operates on.
     fn sequence_index(&self) -> usize {
         match self {
@@ -204,6 +226,9 @@ struct UndoEntry {
     description: String,
     sequence_index: usize,
     snapshot: Sequence,
+    /// When set, consecutive commands with the same coalesce key reuse this
+    /// entry's snapshot instead of pushing a new one.
+    coalesce_key: Option<String>,
 }
 
 const MAX_UNDO_LEVELS: usize = 50;
@@ -225,6 +250,10 @@ impl CommandDispatcher {
 
     /// Execute an edit command against the show. Returns the command result.
     /// Snapshots the target sequence before mutation for undo.
+    ///
+    /// Consecutive commands with the same coalesce key (e.g. repeated param
+    /// tweaks on the same effect) share one undo entry so a single Ctrl+Z
+    /// reverts the whole run of micro-edits.
     pub fn execute(
         &mut self,
         show: &mut crate::model::Show,
@@ -232,32 +261,60 @@ impl CommandDispatcher {
     ) -> Result<CommandResult, AppError> {
         let seq_idx = cmd.sequence_index();
         let description = cmd.description();
+        let new_coalesce_key = cmd.coalesce_key();
 
-        // Snapshot the sequence before mutation
-        let snapshot = show
-            .sequences
-            .get(seq_idx)
-            .ok_or(AppError::InvalidIndex {
-                what: "sequence".into(),
-                index: seq_idx,
-            })?
-            .clone();
+        // Check if we can coalesce with the previous undo entry.
+        let coalesced = if let Some(ref new_key) = new_coalesce_key {
+            self.undo_stack
+                .last()
+                .and_then(|top| top.coalesce_key.as_ref())
+                .is_some_and(|top_key| top_key == new_key)
+        } else {
+            false
+        };
 
-        // Execute the command
-        let result = self.apply(show, cmd)?;
+        if !coalesced {
+            // Snapshot the sequence before mutation
+            let snapshot = show
+                .sequences
+                .get(seq_idx)
+                .ok_or(AppError::InvalidIndex {
+                    what: "sequence".into(),
+                    index: seq_idx,
+                })?
+                .clone();
 
-        // Push undo entry and clear redo stack
-        self.undo_stack.push(UndoEntry {
-            description,
-            sequence_index: seq_idx,
-            snapshot,
-        });
-        if self.undo_stack.len() > MAX_UNDO_LEVELS {
-            self.undo_stack.remove(0);
+            // Execute the command
+            let result = self.apply(show, cmd)?;
+
+            // Push undo entry and clear redo stack
+            self.undo_stack.push(UndoEntry {
+                description,
+                sequence_index: seq_idx,
+                snapshot,
+                coalesce_key: new_coalesce_key,
+            });
+            if self.undo_stack.len() > MAX_UNDO_LEVELS {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+
+            Ok(result)
+        } else {
+            // Coalescing: apply the command but keep the existing undo entry's
+            // snapshot (which captures the state before the first edit in this run).
+            let result = self.apply(show, cmd)?;
+
+            // Update the description to reflect the latest edit.
+            if let Some(top) = self.undo_stack.last_mut() {
+                top.description = description;
+            }
+
+            // Still clear redo — the coalesced edit invalidates any redo history.
+            self.redo_stack.clear();
+
+            Ok(result)
         }
-        self.redo_stack.clear();
-
-        Ok(result)
     }
 
     /// Undo the last command. Returns the description of what was undone.
@@ -286,6 +343,7 @@ impl CommandDispatcher {
             description: entry.description,
             sequence_index: entry.sequence_index,
             snapshot: current,
+            coalesce_key: None,
         });
 
         Ok(description)
@@ -317,6 +375,7 @@ impl CommandDispatcher {
             description: entry.description,
             sequence_index: entry.sequence_index,
             snapshot: current,
+            coalesce_key: None,
         });
 
         Ok(description)

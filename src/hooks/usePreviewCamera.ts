@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { getEffectiveZoom } from "../utils/cssZoom";
 
 export interface CameraState {
   panX: number;
@@ -22,9 +23,11 @@ export function usePreviewCamera() {
 
   const onWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
-    const rect = e.currentTarget.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const el = e.currentTarget as HTMLElement;
+    const rect = el.getBoundingClientRect();
+    const zoom = getEffectiveZoom(el);
+    const mouseX = (e.clientX - rect.left) / zoom;
+    const mouseY = (e.clientY - rect.top) / zoom;
 
     setCamera((prev) => {
       const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
@@ -50,8 +53,10 @@ export function usePreviewCamera() {
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     if (!draggingRef.current) return;
-    const dx = e.clientX - lastPosRef.current.x;
-    const dy = e.clientY - lastPosRef.current.y;
+    const el = e.currentTarget as HTMLElement;
+    const zoom = getEffectiveZoom(el);
+    const dx = (e.clientX - lastPosRef.current.x) / zoom;
+    const dy = (e.clientY - lastPosRef.current.y) / zoom;
     lastPosRef.current = { x: e.clientX, y: e.clientY };
 
     setCamera((prev) => ({

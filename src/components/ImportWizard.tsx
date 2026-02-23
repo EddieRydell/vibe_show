@@ -155,17 +155,35 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
     [discovery],
   );
 
+  const handleCancelImport = useCallback(async () => {
+    await cmd.cancelOperation("import");
+    setError("Import was cancelled");
+    setStep("review");
+  }, []);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Escape" && step !== "importing") onCancel();
+      if (e.key === "Escape") {
+        if (step === "importing") {
+          handleCancelImport();
+        } else if (step !== "done") {
+          onCancel();
+        }
+      }
     },
-    [step, onCancel],
+    [step, onCancel, handleCancelImport],
   );
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onKeyDown={handleKeyDown}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          if (step === "importing") handleCancelImport();
+          else if (step !== "done") onCancel();
+        }
+      }}
     >
       <div className="bg-surface border-border flex max-h-[80vh] w-[600px] flex-col rounded-lg border shadow-xl">
         {/* Header */}
@@ -231,7 +249,7 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
             />
           )}
 
-          {step === "importing" && <StepImporting progress={progressOps.get("import")} />}
+          {step === "importing" && <StepImporting progress={progressOps.get("import")?.event} />}
 
           {step === "done" && result && <StepDone result={result} />}
         </div>
@@ -261,6 +279,14 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
                 Import
               </button>
             </>
+          )}
+          {step === "importing" && (
+            <button
+              onClick={handleCancelImport}
+              className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-4 py-1.5 text-xs transition-colors"
+            >
+              Cancel Import
+            </button>
           )}
           {step === "done" && result && (
             <button
@@ -583,7 +609,7 @@ function StepImporting({ progress }: { progress?: ProgressEvent | undefined }) {
 
   return (
     <div className="flex flex-col items-center gap-4 py-8">
-      <div className="border-primary h-8 w-8 animate-spin rounded-full border-2 border-t-transparent" />
+      <div className="border-primary size-8  animate-spin rounded-full border-2 border-t-transparent" />
       <p className="text-text text-sm">{progress?.phase ?? "Importing..."}</p>
       {progress?.detail && (
         <p className="text-text-2 text-xs">{progress.detail}</p>

@@ -1,5 +1,7 @@
+use std::ffi::OsString;
 use std::fmt;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use serde::Serialize;
@@ -107,10 +109,46 @@ pub(crate) fn slugify(name: &str) -> String {
     }
 }
 
+/// Atomically write bytes to a file using write-to-temp-then-rename.
+///
+/// 1. Writes data to a `.tmp` sibling file
+/// 2. Calls `fsync` to flush to disk
+/// 3. Renames the existing file to `.bak` (best-effort)
+/// 4. Renames the `.tmp` file to the target path
+///
+/// This prevents data corruption from power loss or crashes mid-write.
+pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), ProjectError> {
+    // Build sibling paths: foo.json → foo.json.tmp, foo.json.bak
+    let file_name = path.file_name().unwrap_or_default();
+
+    let mut tmp_name = OsString::from(file_name);
+    tmp_name.push(".tmp");
+    let tmp_path = path.with_file_name(&tmp_name);
+
+    let mut bak_name = OsString::from(file_name);
+    bak_name.push(".bak");
+    let bak_path = path.with_file_name(&bak_name);
+
+    // Write to temporary file + fsync
+    let mut file = fs::File::create(&tmp_path)?;
+    file.write_all(data)?;
+    file.sync_all()?;
+    drop(file);
+
+    // Backup existing file (best-effort — ignore errors)
+    if path.exists() {
+        let _ = fs::rename(path, &bak_path);
+    }
+
+    // Rename temp to target
+    fs::rename(&tmp_path, path)?;
+
+    Ok(())
+}
+
 pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), ProjectError> {
     let json = serde_json::to_string_pretty(value)?;
-    fs::write(path, json)?;
-    Ok(())
+    atomic_write(path, json.as_bytes())
 }
 
 pub(crate) fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, ProjectError> {
@@ -292,6 +330,7 @@ mod tests {
                 scripts: std::collections::HashMap::new(),
                 gradient_library: std::collections::HashMap::new(),
                 curve_library: std::collections::HashMap::new(),
+                motion_paths: std::collections::HashMap::new(),
             }],
             patches: vec![],
             controllers: vec![],
@@ -339,6 +378,7 @@ mod tests {
                 scripts: std::collections::HashMap::new(),
                 gradient_library: std::collections::HashMap::new(),
                 curve_library: std::collections::HashMap::new(),
+                motion_paths: std::collections::HashMap::new(),
             },
             Sequence {
                 name: "Alpha".into(),
@@ -349,6 +389,7 @@ mod tests {
                 scripts: std::collections::HashMap::new(),
                 gradient_library: std::collections::HashMap::new(),
                 curve_library: std::collections::HashMap::new(),
+                motion_paths: std::collections::HashMap::new(),
             },
         ];
 

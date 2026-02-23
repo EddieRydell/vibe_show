@@ -223,7 +223,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
   }, [conversations, refreshConversations]);
 
   return (
-    <div className={`border-border bg-surface flex h-full w-80 flex-shrink-0 flex-col border-l ${open ? "" : "hidden"}`}>
+    <div className={`border-border bg-surface flex h-full w-80 shrink-0 flex-col border-l ${open ? "" : "hidden"}`}>
       {/* Header */}
       <div className="border-border flex items-center justify-between border-b px-3 py-2">
         <div className="flex items-center gap-2">
@@ -265,7 +265,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
       {showHistory && chatMode === "Agent" && (
         <div className="border-border border-b overflow-y-auto max-h-48">
           {conversations.length === 0 ? (
-            <div className="text-text-2 px-3 py-3 text-center text-xs">No conversations yet</div>
+            <div className="text-text-2 p-3  text-center text-xs">No conversations yet</div>
           ) : (
             conversations.map((conv) => (
               <div
@@ -284,7 +284,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
                     e.stopPropagation();
                     handleDeleteConversation(conv.id);
                   }}
-                  className="text-text-2 hover:text-error flex-shrink-0 rounded p-0.5 transition-colors"
+                  className="text-text-2 hover:text-error shrink-0 rounded p-0.5 transition-colors"
                   title="Delete conversation"
                 >
                   <Trash2 size={11} />
@@ -349,9 +349,9 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
             {toolActivity.map((activity, i) => (
               <div key={i} className="text-text-2 flex items-center gap-1.5 text-[11px] py-0.5">
                 {activity.status === "running" ? (
-                  <Loader2 size={10} className="animate-spin flex-shrink-0" />
+                  <Loader2 size={10} className="animate-spin shrink-0" />
                 ) : (
-                  <Check size={10} className="flex-shrink-0" />
+                  <Check size={10} className="shrink-0" />
                 )}
                 <span className="font-mono">{activity.tool}</span>
                 {activity.status === "done" && activity.result && (

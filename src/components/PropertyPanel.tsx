@@ -7,6 +7,7 @@ import { GradientEditorDialog } from "./GradientEditorDialog";
 import { paramKeyStr, effectKindLabel } from "../types";
 import { parseEffectKey } from "../utils/effectKey";
 import { formatTimeDuration } from "../utils/formatTime";
+import { useShowVersion } from "../hooks/useShowVersion";
 import {
   FloatSlider,
   IntSlider,
@@ -158,6 +159,7 @@ export function PropertyPanel({
   sequenceIndex,
   onParamChange,
 }: PropertyPanelProps) {
+  const showVersion = useShowVersion();
   const [detail, setDetail] = useState<EffectDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -183,7 +185,7 @@ export function PropertyPanel({
       .catch(() => {});
   }, [selectedEffect]);
 
-  // Load effect detail when selection changes
+  // Load effect detail when selection changes or after undo/redo (refreshKey)
   useEffect(() => {
     currentKeyRef.current = selectedEffect;
     if (!selectedEffect) {
@@ -205,7 +207,7 @@ export function PropertyPanel({
       })
       .catch((e) => console.error("[VibeLights] Failed to get effect detail:", e))
       .finally(() => setLoading(false));
-  }, [selectedEffect, sequenceIndex]);
+  }, [selectedEffect, sequenceIndex, showVersion]);
 
   const updateParam = useCallback(
     (key: string, value: ParamValue) => {

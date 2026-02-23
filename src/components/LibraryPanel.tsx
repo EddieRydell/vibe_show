@@ -7,6 +7,7 @@ import { CurveEditor } from "./controls/CurveEditor";
 import { ScriptEditorDialog } from "./ScriptEditorDialog";
 import { CurveEditorDialog } from "./CurveEditorDialog";
 import { GradientEditorDialog } from "./GradientEditorDialog";
+import { useShowVersion } from "../hooks/useShowVersion";
 
 interface Props {
   onClose: () => void;
@@ -160,6 +161,7 @@ function EditableName({
 // ── Main LibraryPanel ────────────────────────────────────────────
 
 export function LibraryPanel({ onClose, onLibraryChange }: Props) {
+  const showVersion = useShowVersion();
   const [gradients, setGradients] = useState<[string, ColorGradient][]>([]);
   const [curves, setCurves] = useState<[string, Curve][]>([]);
   const [scripts, setScripts] = useState<string[]>([]);
@@ -184,7 +186,8 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  // Re-fetch when the panel mounts or after any show mutation (including undo/redo)
+  useEffect(() => { refresh(); }, [refresh, showVersion]);
 
   // ── Gradient actions ─────────────────────────────────────────
 

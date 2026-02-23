@@ -314,7 +314,7 @@ impl ChatManager {
         self.history.clear();
     }
 
-    /// Save chat history to a JSON file.
+    /// Save chat history to a JSON file (atomic write).
     pub fn save_to_file(&self, path: &Path) {
         if self.history.is_empty() {
             // Remove stale file if chat is empty
@@ -322,7 +322,7 @@ impl ChatManager {
             return;
         }
         if let Ok(json) = serde_json::to_string_pretty(&self.history) {
-            let _ = std::fs::write(path, json);
+            let _ = crate::project::atomic_write(path, json.as_bytes());
         }
     }
 
@@ -519,21 +519,16 @@ impl ChatManager {
 
 // ── Chat persistence helpers ─────────────────────────────────────
 
-/// Compute the chat file path: {app_config_dir}/chat.json (global, not per-profile)
-fn chat_file_path(state: &AppState) -> std::path::PathBuf {
-    state.app_config_dir.join("chat.json")
-}
-
 /// Save the current chat history to disk (best-effort, non-blocking).
 pub fn save_chat_history(state: &Arc<AppState>) {
-    let path = chat_file_path(state);
+    let path = crate::paths::chat_file_path(&state.app_config_dir);
     let chat = state.chat.lock();
     chat.save_to_file(&path);
 }
 
 /// Load chat history from disk (global).
 pub fn load_chat_history(state: &Arc<AppState>) {
-    let path = chat_file_path(state);
+    let path = crate::paths::chat_file_path(&state.app_config_dir);
     let mut chat = state.chat.lock();
     chat.load_from_file(&path);
 }
@@ -569,10 +564,6 @@ pub struct ConversationSummary {
 
 const MAX_CONVERSATIONS: usize = 20;
 
-/// Compute the agent chats file path: {app_config_dir}/agent-chats.json (global, not per-profile)
-fn agent_chats_file_path(state: &AppState) -> std::path::PathBuf {
-    state.app_config_dir.join("agent-chats.json")
-}
 
 fn iso_now() -> String {
     // Use a simple ISO 8601 timestamp
@@ -621,7 +612,7 @@ fn load_active_from_chats(state: &AppState, chats: &AgentChatsData) {
 
 /// Load agent chats from disk.
 pub fn load_agent_chats(state: &Arc<AppState>) {
-    let path = agent_chats_file_path(state);
+    let path = crate::paths::agent_chats_file_path(&state.app_config_dir);
 
     if path.exists() {
         if let Ok(data) = std::fs::read_to_string(&path) {
@@ -641,7 +632,7 @@ pub fn load_agent_chats(state: &Arc<AppState>) {
 
 /// Save agent chats to disk. Syncs current in-memory state into the active conversation first.
 pub fn save_agent_chats(state: &Arc<AppState>) {
-    let path = agent_chats_file_path(state);
+    let path = crate::paths::agent_chats_file_path(&state.app_config_dir);
 
     let mut chats = state.agent_chats.lock().clone();
     sync_active_to_chats(state, &mut chats);
@@ -671,7 +662,7 @@ pub fn save_agent_chats(state: &Arc<AppState>) {
     }
 
     if let Ok(json) = serde_json::to_string_pretty(&chats) {
-        let _ = std::fs::write(&path, json);
+        let _ = crate::project::atomic_write(&path, json.as_bytes());
     }
 }
 
@@ -736,7 +727,7 @@ pub fn switch_agent_conversation(state: &Arc<AppState>, id: &str) -> Result<(), 
     // Persist
     let chats_clone = chats.clone();
     drop(chats);
-    let path = agent_chats_file_path(state);
+    let path = crate::paths::agent_chats_file_path(&state.app_config_dir);
     if let Ok(json) = serde_json::to_string_pretty(&chats_clone) {
         let _ = std::fs::write(&path, json);
     }
@@ -760,7 +751,7 @@ pub fn delete_agent_conversation(state: &Arc<AppState>, id: &str) -> Result<(), 
     let chats_clone = chats.clone();
     drop(chats);
 
-    let path = agent_chats_file_path(state);
+    let path = crate::paths::agent_chats_file_path(&state.app_config_dir);
     if chats_clone.conversations.is_empty() {
         let _ = std::fs::remove_file(&path);
     } else if let Ok(json) = serde_json::to_string_pretty(&chats_clone) {
@@ -797,6 +788,6 @@ pub fn clear_agent_chat(state: &Arc<AppState>) {
     *state.agent_session_id.lock() = None;
     state.agent_display_messages.lock().clear();
     *state.agent_chats.lock() = AgentChatsData::default();
-    let path = agent_chats_file_path(state);
+    let path = crate::paths::agent_chats_file_path(&state.app_config_dir);
     let _ = std::fs::remove_file(&path);
 }

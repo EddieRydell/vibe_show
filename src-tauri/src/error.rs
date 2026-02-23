@@ -24,6 +24,7 @@ pub enum AppError {
     AnalysisError { message: String },
     ModelNotInstalled { model: String },
     AgentError { message: String },
+    Cancelled { operation: String },
 }
 
 impl fmt::Display for AppError {
@@ -50,6 +51,7 @@ impl fmt::Display for AppError {
                 write!(f, "Required model not installed: {model}")
             }
             AppError::AgentError { message } => write!(f, "Agent error: {message}"),
+            AppError::Cancelled { operation } => write!(f, "Operation cancelled: {operation}"),
         }
     }
 }

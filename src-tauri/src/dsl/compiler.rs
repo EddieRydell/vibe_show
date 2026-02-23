@@ -146,10 +146,40 @@ pub enum Op {
     EvalCurve(u16),
     /// Push Color from a color param
     LoadColor(u16),
+    /// Pop float t → push Vec2 from motion path param
+    EvalPath(u16),
+    /// Push Vec2 from motion path param evaluated at abs_t
+    EvalPathAtT(u16),
 
-    // Hash
+    // Hash / Random
     /// Pop a, b → push float
     Hash,
+    /// Pop a, b, c → push float (3-arg deterministic hash)
+    Hash3,
+    /// Pop x → push float (convenience: hash(x, 0.0))
+    Random,
+    /// Pop min, max, x → push float in [min, max]
+    RandomRange,
+
+    // Easing functions (1-arg)
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+    EaseInCubic,
+    EaseOutCubic,
+    EaseInOutCubic,
+
+    // Noise functions
+    /// Pop x → push float [-1, 1]
+    Noise1,
+    /// Pop x, y → push float [-1, 1]
+    Noise2,
+    /// Pop x, y, z → push float [-1, 1]
+    Noise3,
+    /// Pop x, y, octaves → push float (fractal Brownian motion)
+    Fbm,
+    /// Pop x, y → push float [0, 1] (Worley/cellular noise)
+    Worley2,
 
     // Enum/Flags
     /// Pop int → compare with variant index → push bool
@@ -173,6 +203,7 @@ pub enum Op {
     PushPixels,
     PushPos,
     PushPos2d,
+    PushAbsT,
 
     /// Halt execution, top of stack is the return color.
     Return,
@@ -191,9 +222,7 @@ pub fn compile(typed: &TypedScript) -> Result<CompiledScript, CompileError> {
     }
 
     // Compile body
-    for stmt in &typed.body {
-        compiler.compile_stmt(stmt)?;
-    }
+    compiler.compile_block(&typed.body)?;
 
     compiler.emit(Op::Return);
 
@@ -236,33 +265,39 @@ impl Compiler {
         self.ops.push(op);
     }
 
-    fn emit_const(&mut self, value: f64) {
-        let idx = self.add_constant(value);
+    fn emit_const(&mut self, value: f64) -> Result<(), CompileError> {
+        let idx = self.add_constant(value)?;
         self.emit(Op::PushConst(idx));
+        Ok(())
     }
 
-    fn add_constant(&mut self, value: f64) -> u16 {
+    fn add_constant(&mut self, value: f64) -> Result<u16, CompileError> {
         // Check if constant already exists (exact bit equality)
         for (i, &c) in self.constants.iter().enumerate() {
             if c.to_bits() == value.to_bits() {
-                return i as u16;
+                return Ok(i as u16);
             }
         }
-        let idx = self.constants.len() as u16;
+        let idx = u16::try_from(self.constants.len()).map_err(|_| {
+            CompileError::compiler("Too many constants (max 65535)", Span::new(0, 0))
+        })?;
         self.constants.push(value);
-        idx
+        Ok(idx)
     }
 
     fn current_offset(&self) -> usize {
         self.ops.len()
     }
 
-    fn patch_jump(&mut self, idx: usize) {
-        let target = self.ops.len() as u16;
+    fn patch_jump(&mut self, idx: usize) -> Result<(), CompileError> {
+        let target = u16::try_from(self.ops.len()).map_err(|_| {
+            CompileError::compiler("Bytecode too large (max 65535 ops)", Span::new(0, 0))
+        })?;
         match &mut self.ops[idx] {
             Op::JumpIfFalse(ref mut dest) | Op::Jump(ref mut dest) => *dest = target,
             _ => {}
         }
+        Ok(())
     }
 
     fn compile_stmt(&mut self, stmt: &TypedStmt) -> Result<(), CompileError> {
@@ -271,7 +306,9 @@ impl Compiler {
                 self.compile_expr(value)?;
                 let idx = *local_index;
                 if idx >= self.local_count {
-                    self.local_count = idx + 1;
+                    self.local_count = idx.checked_add(1).ok_or_else(|| {
+                        CompileError::compiler("Too many local variables (max 65535)", Span::new(0, 0))
+                    })?;
                 }
                 self.emit(Op::StoreLocal(idx));
                 Ok(())
@@ -283,21 +320,37 @@ impl Compiler {
         }
     }
 
+    /// Compile a block of statements, emitting `Pop` after intermediate expression
+    /// statements to keep the stack clean. Only the last statement's value remains.
+    fn compile_block(&mut self, stmts: &[TypedStmt]) -> Result<(), CompileError> {
+        for (i, stmt) in stmts.iter().enumerate() {
+            // Pop the value left by a previous expression statement (non-last).
+            // `let` statements don't leave values on the stack (StoreLocal pops).
+            if i > 0 {
+                if let TypedStmtKind::Expr(_) = &stmts[i - 1].kind {
+                    self.emit(Op::Pop);
+                }
+            }
+            self.compile_stmt(stmt)?;
+        }
+        Ok(())
+    }
+
     fn compile_expr(&mut self, expr: &TypedExpr) -> Result<(), CompileError> {
         match &expr.kind {
             TypedExprKind::FloatLit(v) => {
-                self.emit_const(*v);
+                self.emit_const(*v)?;
             }
             TypedExprKind::IntLit(v) => {
-                self.emit_const(f64::from(*v));
+                self.emit_const(f64::from(*v))?;
             }
             TypedExprKind::BoolLit(v) => {
-                self.emit_const(if *v { 1.0 } else { 0.0 });
+                self.emit_const(if *v { 1.0 } else { 0.0 })?;
             }
             TypedExprKind::ColorLit { r, g, b } => {
-                self.emit_const(f64::from(*r) / 255.0);
-                self.emit_const(f64::from(*g) / 255.0);
-                self.emit_const(f64::from(*b) / 255.0);
+                self.emit_const(f64::from(*r) / 255.0)?;
+                self.emit_const(f64::from(*g) / 255.0)?;
+                self.emit_const(f64::from(*b) / 255.0)?;
                 self.emit(Op::Rgb);
             }
             TypedExprKind::LoadLocal(idx) => {
@@ -316,12 +369,13 @@ impl Compiler {
                     BuiltinVar::Pixels => Op::PushPixels,
                     BuiltinVar::Pos => Op::PushPos,
                     BuiltinVar::Pos2d => Op::PushPos2d,
+                    BuiltinVar::AbsT => Op::PushAbsT,
                     BuiltinVar::Pi => {
-                        self.emit_const(std::f64::consts::PI);
+                        self.emit_const(std::f64::consts::PI)?;
                         return Ok(());
                     }
                     BuiltinVar::Tau => {
-                        self.emit_const(std::f64::consts::TAU);
+                        self.emit_const(std::f64::consts::TAU)?;
                         return Ok(());
                     }
                 });
@@ -335,6 +389,7 @@ impl Compiler {
                     BinOp::Mul => Op::Mul,
                     BinOp::Div => Op::Div,
                     BinOp::Mod => Op::Mod,
+                    BinOp::Pow => Op::Pow,
                     BinOp::Lt => Op::Lt,
                     BinOp::Gt => Op::Gt,
                     BinOp::Le => Op::Le,
@@ -372,6 +427,13 @@ impl Compiler {
                 self.compile_expr(arg)?;
                 self.emit(Op::EvalCurve(*param_index));
             }
+            TypedExprKind::EvalPath { param_index, arg } => {
+                self.compile_expr(arg)?;
+                self.emit(Op::EvalPath(*param_index));
+            }
+            TypedExprKind::EvalPathAtT { param_index } => {
+                self.emit(Op::EvalPathAtT(*param_index));
+            }
             TypedExprKind::ColorScale { color, factor } => {
                 self.compile_expr(color)?;
                 self.compile_expr(factor)?;
@@ -405,30 +467,18 @@ impl Compiler {
                 self.emit(Op::JumpIfFalse(0)); // placeholder
 
                 // Compile then branch
-                for (i, stmt) in then_body.iter().enumerate() {
-                    // For non-last statements that are expressions, pop the value
-                    if i > 0 {
-                        if let TypedStmtKind::Expr(_) = &then_body[i - 1].kind {
-                            // Previous was an expr stmt in the middle — but
-                            // actually let stmts don't push values, expr stmts do.
-                            // We only want to pop intermediate expr results.
-                        }
-                    }
-                    self.compile_stmt(stmt)?;
-                }
+                self.compile_block(then_body)?;
 
                 if let Some(else_stmts) = else_body {
                     let jump_end = self.current_offset();
                     self.emit(Op::Jump(0)); // placeholder
-                    self.patch_jump(jump_else);
+                    self.patch_jump(jump_else)?;
 
                     // Compile else branch
-                    for stmt in else_stmts {
-                        self.compile_stmt(stmt)?;
-                    }
-                    self.patch_jump(jump_end);
+                    self.compile_block(else_stmts)?;
+                    self.patch_jump(jump_end)?;
                 } else {
-                    self.patch_jump(jump_else);
+                    self.patch_jump(jump_else)?;
                 }
             }
             TypedExprKind::EnumEq { param_index, variant_index } => {

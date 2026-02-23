@@ -129,7 +129,7 @@ export function HouseTree({
           ) : (
             <ChevronRight size={14} className="text-text-2 shrink-0" />
           )}
-          <span className="bg-accent/20 text-accent rounded px-1.5 py-0.5 text-[9px] font-mono">GP</span>
+          <span className="bg-primary/20 text-primary rounded px-1.5 py-0.5 text-[9px] font-mono">GP</span>
           <span className="text-text flex-1 truncate text-sm font-medium">{group.name}</span>
           <span className="text-text-2 text-[10px]">
             {group.members.length} member{group.members.length !== 1 ? "s" : ""}

@@ -235,20 +235,20 @@ function SequencesTab({
           No sequences yet. Create one to start sequencing.
         </p>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="border-border divide-border divide-y rounded border">
           {sequences.map((s) => (
             <div
               key={s.slug}
               onClick={() => onOpenSequence(s.slug)}
-              className="border-border bg-surface hover:border-primary group cursor-pointer rounded-lg border p-4 transition-colors"
+              className="hover:bg-surface-2 group flex cursor-pointer items-center justify-between px-4 py-2.5 transition-colors"
             >
-              <h4 className="text-text text-sm font-medium">{s.name}</h4>
+              <span className="text-text text-sm font-medium">{s.name}</span>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   handleDelete(s.slug, s.name);
                 }}
-                className="text-text-2 hover:text-error mt-2 text-[10px] opacity-0 transition-all group-hover:opacity-100"
+                className="text-text-2 hover:text-error text-[10px] opacity-0 transition-all group-hover:opacity-100"
               >
                 Delete
               </button>
@@ -711,26 +711,17 @@ function EffectsTab({ setError, onOpenScript }: { setError: (e: string | null) =
       {/* Built-in effects */}
       <section>
         <h3 className="text-text mb-4 text-sm font-medium">Built-in Effects</h3>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="border-border divide-border divide-y rounded border">
           {effects.map((fx) => (
             <div
               key={fx.name}
-              className="border-border bg-surface rounded-lg border p-4"
+              className="flex items-center justify-between px-4 py-2.5"
             >
-              <h4 className="text-text mb-2 text-sm font-medium">{fx.name}</h4>
+              <span className="text-text text-sm font-medium">{fx.name}</span>
               {fx.schema.length > 0 && (
-                <div className="text-text-2 space-y-1 text-xs">
-                  {fx.schema.map((param) => (
-                    <div key={String(param.key)} className="flex justify-between">
-                      <span>{param.label}</span>
-                      <span className="text-text-2">
-                        {typeof param.param_type === "string"
-                          ? param.param_type
-                          : Object.keys(param.param_type)[0]}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                <span className="text-text-2 text-xs">
+                  {fx.schema.length} param{fx.schema.length !== 1 ? "s" : ""}
+                </span>
               )}
             </div>
           ))}
@@ -762,24 +753,26 @@ function EffectsTab({ setError, onOpenScript }: { setError: (e: string | null) =
             No custom scripts yet. Create one to define custom effects.
           </p>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="border-border divide-border divide-y rounded border">
             {scripts.map(([name, source]) => (
               <div
                 key={name}
                 onClick={() => onOpenScript(name)}
-                className="border-border bg-surface hover:border-primary group cursor-pointer rounded-lg border p-4 transition-colors"
+                className="hover:bg-surface-2 group flex cursor-pointer items-center justify-between px-4 py-2.5 transition-colors"
               >
-                <h4 className="text-text text-sm font-medium">{name}</h4>
-                <span className="text-text-2 text-xs">{source.split("\n").length} lines</span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeleteTarget(name);
-                  }}
-                  className="text-text-2 hover:text-error ml-2 text-[10px] opacity-0 transition-all group-hover:opacity-100"
-                >
-                  Delete
-                </button>
+                <span className="text-text text-sm font-medium">{name}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-text-2 text-xs">{source.split("\n").length} lines</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget(name);
+                    }}
+                    className="text-text-2 hover:text-error text-[10px] opacity-0 transition-all group-hover:opacity-100"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -891,21 +884,15 @@ function GradientsTab({ setError }: { setError: (e: string | null) => void }) {
           No gradients yet. Create one to use in your effects.
         </p>
       ) : (
-        <div className="space-y-3">
+        <div className="border-border divide-border divide-y rounded border">
           {gradients.map(([name, gradient]) => (
-            <div
-              key={name}
-              className="border-border bg-surface rounded-lg border"
-            >
-              {/* Card header */}
+            <div key={name}>
               <div
-                className="flex cursor-pointer items-center gap-3 px-4 py-3"
+                className="hover:bg-surface-2 group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors"
                 onClick={() => setExpandedName(expandedName === name ? null : name)}
               >
-                {/* Gradient preview bar */}
-                <GradientPreview stops={gradient.stops} className="h-4 w-20 rounded" />
+                <GradientPreview stops={gradient.stops} className="h-3 w-16 rounded-sm" />
 
-                {/* Name (double-click to rename) */}
                 {renamingName === name ? (
                   <input
                     type="text"
@@ -946,7 +933,6 @@ function GradientsTab({ setError }: { setError: (e: string | null) => void }) {
                 </button>
               </div>
 
-              {/* Expanded editor */}
               {expandedName === name && (
                 <div className="border-border border-t px-4 py-3">
                   <GradientEditor
@@ -1082,18 +1068,13 @@ function CurvesTab({ setError }: { setError: (e: string | null) => void }) {
           No curves yet. Create one to use in your effects.
         </p>
       ) : (
-        <div className="space-y-3">
+        <div className="border-border divide-border divide-y rounded border">
           {curves.map(([name, curve]) => (
-            <div
-              key={name}
-              className="border-border bg-surface rounded-lg border"
-            >
-              {/* Card header */}
+            <div key={name}>
               <div
-                className="flex cursor-pointer items-center gap-3 px-4 py-3"
+                className="hover:bg-surface-2 group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors"
                 onClick={() => setExpandedName(expandedName === name ? null : name)}
               >
-                {/* Name (double-click to rename) */}
                 {renamingName === name ? (
                   <input
                     type="text"
@@ -1134,7 +1115,6 @@ function CurvesTab({ setError }: { setError: (e: string | null) => void }) {
                 </button>
               </div>
 
-              {/* Expanded editor */}
               {expandedName === name && (
                 <div className="border-border border-t px-4 py-3">
                   <CurveEditor

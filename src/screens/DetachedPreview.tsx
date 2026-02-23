@@ -226,7 +226,7 @@ export function DetachedPreview() {
         className="flex-1 overflow-hidden"
         {...cameraHandlers}
       >
-        <canvas ref={canvasRef} className="block h-full w-full" />
+        <canvas ref={canvasRef} className="block size-full " />
       </div>
     </div>
   );

@@ -3,4 +3,4 @@
 /**
  * Describes the type and constraints for an effect parameter, used to drive UI generation.
  */
-export type ParamType = { "Float": { min: number, max: number, step: number, } } | { "Int": { min: number, max: number, } } | "Bool" | "Color" | { "ColorList": { min_colors: number, max_colors: number, } } | "Curve" | { "ColorGradient": { min_stops: number, max_stops: number, } } | { "ColorMode": { options: Array<string>, } } | { "WipeDirection": { options: Array<string>, } } | { "Text": { options: Array<string>, } } | { "Enum": { options: Array<string>, } } | { "Flags": { options: Array<string>, } };
+export type ParamType = { "Float": { min: number, max: number, step: number, } } | { "Int": { min: number, max: number, } } | "Bool" | "Color" | { "ColorList": { min_colors: number, max_colors: number, } } | "Curve" | { "ColorGradient": { min_stops: number, max_stops: number, } } | { "ColorMode": { options: Array<string>, } } | { "WipeDirection": { options: Array<string>, } } | { "Text": { options: Array<string>, } } | { "Enum": { options: Array<string>, } } | { "Flags": { options: Array<string>, } } | "Path";

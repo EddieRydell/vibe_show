@@ -8,6 +8,7 @@ use super::color::Color;
 use super::color_gradient::ColorGradient;
 use super::curve::Curve;
 use super::fixture::EffectTarget;
+use super::motion_path::MotionPath;
 
 /// A time range within a sequence. Start must be < end, both in seconds.
 /// Constructed via `TimeRange::new` which enforces this invariant.
@@ -263,6 +264,8 @@ pub enum ParamValue {
     GradientRef(String),
     /// Reference to a curve in the sequence's curve_library by name.
     CurveRef(String),
+    /// Reference to a motion path in the sequence's motion_paths by name.
+    PathRef(String),
 }
 
 impl ParamValue {
@@ -367,6 +370,13 @@ impl ParamValue {
             _ => None,
         }
     }
+
+    pub fn as_path_ref(&self) -> Option<&str> {
+        match self {
+            ParamValue::PathRef(v) => Some(v),
+            _ => None,
+        }
+    }
 }
 
 /// Describes the type and constraints for an effect parameter, used to drive UI generation.
@@ -387,6 +397,8 @@ pub enum ParamType {
     Enum { options: Vec<String> },
     /// DSL-defined flags: multi-select (checkboxes in UI).
     Flags { options: Vec<String> },
+    /// Motion path: dropdown of sequence motion paths.
+    Path,
 }
 
 /// Schema entry for one effect parameter: key, label, type constraints, and default value.
@@ -506,7 +518,7 @@ impl EffectParams {
 
     /// Returns true if any parameter value is a library reference.
     pub fn has_refs(&self) -> bool {
-        self.0.values().any(|v| matches!(v, ParamValue::GradientRef(_) | ParamValue::CurveRef(_)))
+        self.0.values().any(|v| matches!(v, ParamValue::GradientRef(_) | ParamValue::CurveRef(_) | ParamValue::PathRef(_)))
     }
 
     /// Clone the params, resolving any `GradientRef` / `CurveRef` into inline values.
@@ -616,6 +628,9 @@ pub struct Sequence {
     /// Reusable curves. Key = library item name.
     #[serde(default)]
     pub curve_library: HashMap<String, Curve>,
+    /// Named motion paths. Key = path name.
+    #[serde(default)]
+    pub motion_paths: HashMap<String, MotionPath>,
 }
 
 impl Sequence {
@@ -705,6 +720,7 @@ impl fmt::Display for ParamValue {
             Self::FlagSet(flags) => write!(f, "[{}]", flags.join(", ")),
             Self::GradientRef(name) => write!(f, "GradientRef(\"{name}\")"),
             Self::CurveRef(name) => write!(f, "CurveRef(\"{name}\")"),
+            Self::PathRef(name) => write!(f, "PathRef(\"{name}\")"),
         }
     }
 }

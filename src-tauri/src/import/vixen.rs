@@ -1246,17 +1246,27 @@ impl VixenImporter {
 
     /// Parse a .tim sequence file.
     ///
+    /// An optional `progress_cb` receives a fraction (0.0–1.0) based on bytes
+    /// read, allowing callers to report granular progress during large files.
+    ///
     /// # Errors
     ///
     /// Returns `ImportError` on I/O or XML parsing failures.
     #[allow(clippy::too_many_lines)]
-    pub fn parse_sequence(&mut self, path: &Path) -> Result<(), ImportError> {
+    pub fn parse_sequence(
+        &mut self,
+        path: &Path,
+        progress_cb: Option<&dyn Fn(f64)>,
+    ) -> Result<(), ImportError> {
+        #[allow(clippy::cast_precision_loss)]
+        let file_size = std::fs::metadata(path)?.len().max(1) as f64;
         let file = File::open(path)?;
         let reader = BufReader::with_capacity(64 * 1024, file);
         let mut xml = Reader::from_reader(reader);
         xml.config_mut().trim_text(true);
 
         let mut buf = Vec::with_capacity(4096);
+        let mut event_count = 0u64;
 
         let seq_name = path
             .file_stem()
@@ -1336,6 +1346,16 @@ impl VixenImporter {
         let mut depth = 0u32;
 
         loop {
+            // Report sub-progress based on bytes parsed
+            event_count += 1;
+            if let Some(cb) = &progress_cb {
+                if event_count.is_multiple_of(5000) {
+                    #[allow(clippy::cast_precision_loss)]
+                    let pos = xml.buffer_position() as f64;
+                    cb((pos / file_size).min(1.0));
+                }
+            }
+
             match xml.read_event_into(&mut buf) {
                 Ok(Event::Eof) => break,
                 Ok(Event::Start(ref e)) => {
@@ -1990,6 +2010,7 @@ impl VixenImporter {
             scripts: std::collections::HashMap::new(),
             gradient_library: std::collections::HashMap::new(),
             curve_library: std::collections::HashMap::new(),
+            motion_paths: std::collections::HashMap::new(),
         });
 
         Ok(())
@@ -2533,7 +2554,7 @@ mod tests {
 
         let mut importer = VixenImporter::new();
         importer.parse_system_config(config_path).unwrap();
-        importer.parse_sequence(seq_path).unwrap();
+        importer.parse_sequence(seq_path, None).unwrap();
 
         let sequences = importer.into_sequences();
         assert!(!sequences.is_empty(), "Should have at least one sequence");
@@ -2617,7 +2638,7 @@ mod tests {
                         eprintln!("Found Chase in: {}", path.display());
                         let mut imp2 = VixenImporter::new();
                         imp2.parse_system_config(config_path).unwrap();
-                        imp2.parse_sequence(&path).unwrap();
+                        imp2.parse_sequence(&path, None).unwrap();
                         let seqs = imp2.into_sequences();
                         for seq in &seqs {
                             for track in &seq.tracks {
@@ -2641,7 +2662,7 @@ mod tests {
             return;
         }
 
-        importer.parse_sequence(&seq_path).unwrap();
+        importer.parse_sequence(&seq_path, None).unwrap();
         let sequences = importer.into_sequences();
 
         let mut chase_count = 0usize;
@@ -2721,7 +2742,7 @@ mod tests {
 
         let mut importer = VixenImporter::new();
         importer.parse_system_config(config_path).unwrap();
-        importer.parse_sequence(seq_path).unwrap();
+        importer.parse_sequence(seq_path, None).unwrap();
         let show = importer.into_show();
 
         // Build fixture name map
@@ -2912,7 +2933,7 @@ mod tests {
 
         let mut importer = VixenImporter::new();
         importer.parse_system_config(config_path).unwrap();
-        importer.parse_sequence(seq_path).unwrap();
+        importer.parse_sequence(seq_path, None).unwrap();
 
         let show = importer.into_show();
         let seq = &show.sequences[0];
@@ -2987,7 +3008,7 @@ mod tests {
 
         let mut importer = VixenImporter::new();
         importer.parse_system_config(config_path).unwrap();
-        importer.parse_sequence(seq_path).unwrap();
+        importer.parse_sequence(seq_path, None).unwrap();
 
         let show = importer.into_show();
         let seq = &show.sequences[0];
@@ -3045,7 +3066,7 @@ mod tests {
 
         let mut importer = VixenImporter::new();
         importer.parse_system_config(config_path).unwrap();
-        importer.parse_sequence(seq_path).unwrap();
+        importer.parse_sequence(seq_path, None).unwrap();
 
         let sequences = importer.into_sequences();
         assert!(!sequences.is_empty());
@@ -3112,7 +3133,7 @@ mod tests {
 
         let mut importer = VixenImporter::new();
         importer.parse_system_config(config_path).unwrap();
-        importer.parse_sequence(seq_path).unwrap();
+        importer.parse_sequence(seq_path, None).unwrap();
         let show = importer.into_show();
         let seq = &show.sequences[0];
 

@@ -128,7 +128,7 @@ export function useEffectEditing(
         await cmd.updateEffectTimeRange(toTrackIndex, newEffectIndex, newStart, newEnd);
 
         commitChange();
-        setSelectedEffects(new Set([`${toTrackIndex}-${newEffectIndex}`]));
+        setSelectedEffects(new Set([makeEffectKey(toTrackIndex, newEffectIndex)]));
       }
     },
     [show, playback, commitChange, setSelectedEffects],

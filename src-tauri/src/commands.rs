@@ -23,7 +23,7 @@ use crate::model::{AnalysisFeatures, AudioAnalysis, PythonEnvStatus, Show};
 use crate::profile::{self, Profile};
 use crate::progress::emit_progress;
 use crate::python;
-use crate::state::{self, AppState};
+use crate::state::{self, check_cancelled, AppState};
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -60,42 +60,56 @@ pub async fn open_sequence(
     let state_arc = (*state).clone();
     let app = app_handle.clone();
 
-    let assembled = tokio::task::spawn_blocking(move || {
-        emit_progress(&app, "open_sequence", "Loading profile...", 0.1, None);
-        let profile_data =
-            profile::load_profile(&data_dir, &profile_slug).map_err(AppError::from)?;
+    let result = tokio::time::timeout(
+        tokio::time::Duration::from_secs(30),
+        tokio::task::spawn_blocking(move || {
+            emit_progress(&app, "open_sequence", "Loading profile...", 0.1, None);
+            let profile_data =
+                profile::load_profile(&data_dir, &profile_slug).map_err(AppError::from)?;
 
-        emit_progress(&app, "open_sequence", "Loading sequence...", 0.4, None);
-        let sequence =
-            profile::load_sequence(&data_dir, &profile_slug, &slug).map_err(AppError::from)?;
+            emit_progress(&app, "open_sequence", "Loading sequence...", 0.4, None);
+            let sequence =
+                profile::load_sequence(&data_dir, &profile_slug, &slug).map_err(AppError::from)?;
 
-        emit_progress(&app, "open_sequence", "Assembling show...", 0.7, None);
-        let assembled = profile::assemble_show(&profile_data, &sequence);
+            emit_progress(&app, "open_sequence", "Assembling show...", 0.7, None);
+            let assembled = profile::assemble_show(&profile_data, &sequence);
 
-        *state_arc.show.lock() = assembled.clone();
-        state_arc.dispatcher.lock().clear();
+            *state_arc.show.lock() = assembled.clone();
+            state_arc.dispatcher.lock().clear();
 
-        state_arc.with_playback_mut(|playback| {
-            playback.playing = false;
-            playback.current_time = 0.0;
-            playback.sequence_index = 0;
-            playback.region = None;
-            playback.looping = false;
-        });
+            state_arc.with_playback_mut(|playback| {
+                playback.playing = false;
+                playback.current_time = 0.0;
+                playback.sequence_index = 0;
+                playback.region = None;
+                playback.looping = false;
+            });
 
-        *state_arc.current_sequence.lock() = Some(slug);
+            *state_arc.current_sequence.lock() = Some(slug);
 
-        // Recompile all DSL scripts from the loaded show
-        recompile_all_scripts(&state_arc);
+            // Recompile all DSL scripts from the loaded show
+            recompile_all_scripts(&state_arc);
 
-        emit_progress(&app, "open_sequence", "Ready", 1.0, None);
+            emit_progress(&app, "open_sequence", "Ready", 1.0, None);
 
-        Ok::<Show, AppError>(assembled)
-    })
-    .await
-    .map_err(|e| AppError::ApiError { message: e.to_string() })??;
+            Ok::<Show, AppError>(assembled)
+        }),
+    )
+    .await;
 
-    Ok(assembled)
+    match result {
+        Ok(join_result) => {
+            let assembled = join_result
+                .map_err(|e| AppError::ApiError { message: e.to_string() })??;
+            Ok(assembled)
+        }
+        Err(_elapsed) => {
+            emit_progress(&app_handle, "open_sequence", "Timed out", 1.0, None);
+            Err(AppError::ApiError {
+                message: "Opening sequence timed out after 30 seconds".into(),
+            })
+        }
+    }
 }
 
 /// Execute a full Vixen import based on user-selected configuration from the wizard.
@@ -108,180 +122,212 @@ pub async fn execute_vixen_import(
 ) -> Result<VixenImportResult, AppError> {
     let data_dir = get_data_dir(&state)?;
     let app = app_handle.clone();
+    let cancel_flag = state.cancellation.register("import");
+    let state_arc = (*state).clone();
 
-    tokio::task::spawn_blocking(move || {
-        let vixen_path = std::path::Path::new(&config.vixen_dir);
-        let config_path = vixen_path.join("SystemData").join("SystemConfig.xml");
+    let result = tokio::time::timeout(
+        tokio::time::Duration::from_secs(600),
+        tokio::task::spawn_blocking(move || {
+            let vixen_path = std::path::Path::new(&config.vixen_dir);
+            let config_path = vixen_path.join("SystemData").join("SystemConfig.xml");
 
-        // Phase 1: Parse SystemConfig
-        emit_progress(&app, "import", "Parsing system config...", 0.05, None);
-        let mut importer = crate::import::vixen::VixenImporter::new();
-        importer
-            .parse_system_config(&config_path)
-            .map_err(|e| AppError::ImportError { message: e.to_string() })?;
+            // Phase 1: Parse SystemConfig
+            emit_progress(&app, "import", "Parsing system config...", 0.05, None);
+            check_cancelled(&cancel_flag, "import")?;
+            let mut importer = crate::import::vixen::VixenImporter::new();
+            importer
+                .parse_system_config(&config_path)
+                .map_err(|e| AppError::ImportError { message: e.to_string() })?;
 
-        // Phase 2: Parse preview layout if requested
-        let layout_items = if config.import_layout {
-            emit_progress(&app, "import", "Parsing layout...", 0.1, None);
-            let override_path = config
-                .preview_file_override
-                .as_deref()
-                .map(std::path::Path::new);
-            match importer.parse_preview(vixen_path, override_path) {
-                Ok(layouts) => layouts,
-                Err(e) => {
-                    eprintln!("[VibeLights] Preview import warning: {e}");
+            // Phase 2: Parse preview layout if requested
+            check_cancelled(&cancel_flag, "import")?;
+            let layout_items = if config.import_layout {
+                emit_progress(&app, "import", "Parsing layout...", 0.1, None);
+                let override_path = config
+                    .preview_file_override
+                    .as_deref()
+                    .map(std::path::Path::new);
+                match importer.parse_preview(vixen_path, override_path) {
+                    Ok(layouts) => layouts,
+                    Err(e) => {
+                        eprintln!("[VibeLights] Preview import warning: {e}");
+                        Vec::new()
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+
+            // Phase 3: Parse selected sequences
+            check_cancelled(&cancel_flag, "import")?;
+            let total_seqs = config.sequence_paths.len();
+            let mut sequences_imported = 0usize;
+            for (i, seq_path) in config.sequence_paths.iter().enumerate() {
+                check_cancelled(&cancel_flag, "import")?;
+                #[allow(clippy::cast_precision_loss)]
+                let base_progress = 0.15 + 0.45 * (i as f64 / total_seqs.max(1) as f64);
+                #[allow(clippy::cast_precision_loss)]
+                let next_progress = 0.15 + 0.45 * ((i + 1) as f64 / total_seqs.max(1) as f64);
+                let detail = format!("Sequence {} of {}", i + 1, total_seqs);
+                emit_progress(
+                    &app,
+                    "import",
+                    "Parsing sequences...",
+                    base_progress,
+                    Some(&detail),
+                );
+                let progress_cb = |frac: f64| {
+                    let p = base_progress + (next_progress - base_progress) * frac;
+                    emit_progress(&app, "import", "Parsing sequences...", p, Some(&detail));
+                };
+                match importer.parse_sequence(std::path::Path::new(seq_path), Some(&progress_cb)) {
+                    Ok(()) => sequences_imported += 1,
+                    Err(e) => {
+                        eprintln!("[VibeLights] Sequence import warning: {e}");
+                    }
+                }
+            }
+
+            let guid_map = importer.guid_map().clone();
+            let warnings: Vec<String> = importer.warnings().to_vec();
+            let show = importer.into_show();
+
+            let fixtures_imported = show.fixtures.len();
+            let groups_imported = show.groups.len();
+            let controllers_imported = if config.import_controllers {
+                show.controllers.len()
+            } else {
+                0
+            };
+            let layout_items_imported = layout_items.len();
+
+            // Phase 4: Save profile
+            check_cancelled(&cancel_flag, "import")?;
+            emit_progress(&app, "import", "Saving profile...", 0.65, None);
+            let profile_name = if config.profile_name.trim().is_empty() {
+                "Vixen Import".to_string()
+            } else {
+                config.profile_name.trim().to_string()
+            };
+            let summary =
+                profile::create_profile(&data_dir, &profile_name).map_err(AppError::from)?;
+
+            let layout = if layout_items.is_empty() {
+                show.layout.clone()
+            } else {
+                crate::model::show::Layout {
+                    fixtures: layout_items,
+                }
+            };
+
+            let prof = Profile {
+                name: profile_name,
+                slug: summary.slug.clone(),
+                fixtures: show.fixtures.clone(),
+                groups: show.groups.clone(),
+                controllers: if config.import_controllers {
+                    show.controllers.clone()
+                } else {
                     Vec::new()
-                }
-            }
-        } else {
-            Vec::new()
-        };
+                },
+                patches: if config.import_controllers {
+                    show.patches.clone()
+                } else {
+                    Vec::new()
+                },
+                layout,
+            };
+            profile::save_profile(&data_dir, &summary.slug, &prof).map_err(AppError::from)?;
 
-        // Phase 3: Parse selected sequences
-        let total_seqs = config.sequence_paths.len();
-        let mut sequences_imported = 0usize;
-        for (i, seq_path) in config.sequence_paths.iter().enumerate() {
-            #[allow(clippy::cast_precision_loss)]
-            let progress = 0.15 + 0.45 * (i as f64 / total_seqs.max(1) as f64);
-            emit_progress(
-                &app,
-                "import",
-                "Parsing sequences...",
-                progress,
-                Some(&format!("Sequence {} of {}", i + 1, total_seqs)),
-            );
-            match importer.parse_sequence(std::path::Path::new(seq_path)) {
-                Ok(()) => sequences_imported += 1,
-                Err(e) => {
-                    eprintln!("[VibeLights] Sequence import warning: {e}");
-                }
-            }
-        }
+            profile::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map)
+                .map_err(AppError::from)?;
 
-        let guid_map = importer.guid_map().clone();
-        let warnings: Vec<String> = importer.warnings().to_vec();
-        let show = importer.into_show();
-
-        let fixtures_imported = show.fixtures.len();
-        let groups_imported = show.groups.len();
-        let controllers_imported = if config.import_controllers {
-            show.controllers.len()
-        } else {
-            0
-        };
-        let layout_items_imported = layout_items.len();
-
-        // Phase 4: Save profile
-        emit_progress(&app, "import", "Saving profile...", 0.65, None);
-        let profile_name = if config.profile_name.trim().is_empty() {
-            "Vixen Import".to_string()
-        } else {
-            config.profile_name.trim().to_string()
-        };
-        let summary =
-            profile::create_profile(&data_dir, &profile_name).map_err(AppError::from)?;
-
-        let layout = if layout_items.is_empty() {
-            show.layout.clone()
-        } else {
-            crate::model::show::Layout {
-                fixtures: layout_items,
-            }
-        };
-
-        let prof = Profile {
-            name: profile_name,
-            slug: summary.slug.clone(),
-            fixtures: show.fixtures.clone(),
-            groups: show.groups.clone(),
-            controllers: if config.import_controllers {
-                show.controllers.clone()
-            } else {
-                Vec::new()
-            },
-            patches: if config.import_controllers {
-                show.patches.clone()
-            } else {
-                Vec::new()
-            },
-            layout,
-        };
-        profile::save_profile(&data_dir, &summary.slug, &prof).map_err(AppError::from)?;
-
-        profile::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map)
-            .map_err(AppError::from)?;
-
-        // Phase 5: Copy media (before saving sequences so audio_file can be remapped)
-        let mut media_imported = 0usize;
-        if !config.media_filenames.is_empty() {
-            emit_progress(&app, "import", "Copying media files...", 0.70, None);
-            for media_filename in &config.media_filenames {
-                let source = vixen_path.join("Media").join(media_filename);
-                if source.exists() {
-                    match profile::import_media(&data_dir, &summary.slug, &source) {
-                        Ok(_) => media_imported += 1,
-                        Err(e) => {
-                            eprintln!("[VibeLights] Media import warning: {e}");
+            // Phase 5: Copy media (before saving sequences so audio_file can be remapped)
+            check_cancelled(&cancel_flag, "import")?;
+            let mut media_imported = 0usize;
+            if !config.media_filenames.is_empty() {
+                emit_progress(&app, "import", "Copying media files...", 0.70, None);
+                for media_filename in &config.media_filenames {
+                    check_cancelled(&cancel_flag, "import")?;
+                    let source = vixen_path.join("Media").join(media_filename);
+                    if source.exists() {
+                        match profile::import_media(&data_dir, &summary.slug, &source) {
+                            Ok(_) => media_imported += 1,
+                            Err(e) => {
+                                eprintln!("[VibeLights] Media import warning: {e}");
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Phase 6: Save sequences (remap audio_file to local media filename)
-        emit_progress(&app, "import", "Saving sequences...", 0.75, None);
-        for (i, seq) in show.sequences.iter().enumerate() {
-            #[allow(clippy::cast_precision_loss)]
-            let progress = 0.75 + 0.15 * (i as f64 / show.sequences.len().max(1) as f64);
-            emit_progress(
-                &app,
-                "import",
-                "Saving sequences...",
-                progress,
-                Some(&format!("Sequence {} of {}", i + 1, show.sequences.len())),
-            );
-            let mut seq = seq.clone();
-            // Remap audio_file: extract the filename from the Vixen path and check
-            // if it matches one of the imported media files.
-            if let Some(ref audio_path) = seq.audio_file {
-                let audio_basename = std::path::Path::new(audio_path)
-                    .file_name()
-                    .map(|f| f.to_string_lossy().to_string());
-                if let Some(ref basename) = audio_basename {
-                    if config.media_filenames.iter().any(|m| m == basename) {
-                        seq.audio_file = Some(basename.clone());
-                    } else {
-                        // Media wasn't selected for import — clear the path since it
-                        // points to the original Vixen location which may not exist.
-                        seq.audio_file = None;
+            // Phase 6: Save sequences (remap audio_file to local media filename)
+            check_cancelled(&cancel_flag, "import")?;
+            emit_progress(&app, "import", "Saving sequences...", 0.75, None);
+            for (i, seq) in show.sequences.iter().enumerate() {
+                check_cancelled(&cancel_flag, "import")?;
+                #[allow(clippy::cast_precision_loss)]
+                let progress = 0.75 + 0.15 * (i as f64 / show.sequences.len().max(1) as f64);
+                emit_progress(
+                    &app,
+                    "import",
+                    "Saving sequences...",
+                    progress,
+                    Some(&format!("Sequence {} of {}", i + 1, show.sequences.len())),
+                );
+                let mut seq = seq.clone();
+                // Remap audio_file: extract the filename from the Vixen path and check
+                // if it matches one of the imported media files.
+                if let Some(ref audio_path) = seq.audio_file {
+                    let audio_basename = std::path::Path::new(audio_path)
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string());
+                    if let Some(ref basename) = audio_basename {
+                        if config.media_filenames.iter().any(|m| m == basename) {
+                            seq.audio_file = Some(basename.clone());
+                        } else {
+                            // Media wasn't selected for import — clear the path since it
+                            // points to the original Vixen location which may not exist.
+                            seq.audio_file = None;
+                        }
                     }
                 }
+                if let Err(e) = profile::create_sequence(&data_dir, &summary.slug, &seq.name) {
+                    eprintln!("[VibeLights] Failed to create sequence entry: {e}");
+                }
+                let seq_slug = crate::project::slugify(&seq.name);
+                profile::save_sequence(&data_dir, &summary.slug, &seq_slug, &seq)
+                    .map_err(AppError::from)?;
             }
-            if let Err(e) = profile::create_sequence(&data_dir, &summary.slug, &seq.name) {
-                eprintln!("[VibeLights] Failed to create sequence entry: {e}");
-            }
-            let seq_slug = crate::project::slugify(&seq.name);
-            profile::save_sequence(&data_dir, &summary.slug, &seq_slug, &seq)
-                .map_err(AppError::from)?;
+
+            // Done
+            emit_progress(&app, "import", "Import complete", 1.0, None);
+
+            Ok(VixenImportResult {
+                profile_slug: summary.slug,
+                fixtures_imported,
+                groups_imported,
+                controllers_imported,
+                layout_items_imported,
+                sequences_imported,
+                media_imported,
+                warnings,
+            })
+        }),
+    )
+    .await;
+
+    state_arc.cancellation.unregister("import");
+
+    match result {
+        Ok(join_result) => join_result.map_err(|e| AppError::ApiError { message: e.to_string() })?,
+        Err(_elapsed) => {
+            emit_progress(&app_handle, "import", "Import timed out", 1.0, None);
+            Err(AppError::ImportError {
+                message: "Import timed out after 10 minutes".into(),
+            })
         }
-
-        // Done
-        emit_progress(&app, "import", "Import complete", 1.0, None);
-
-        Ok(VixenImportResult {
-            profile_slug: summary.slug,
-            fixtures_imported,
-            groups_imported,
-            controllers_imported,
-            layout_items_imported,
-            sequences_imported,
-            media_imported,
-            warnings,
-        })
-    })
-    .await
-    .map_err(|e| AppError::ApiError { message: e.to_string() })?
+    }
 }
 
 /// Run audio analysis on the current sequence's audio file.
@@ -304,9 +350,14 @@ pub async fn analyze_audio(
             message: "No audio file in current sequence".into(),
         })?;
 
+    // Validate audio filename to prevent path traversal
+    profile::validate_filename(&audio_file).map_err(|_| AppError::ValidationError {
+        message: format!("Invalid audio filename: {audio_file}"),
+    })?;
+
     let data_dir = state::get_data_dir(&state).map_err(|_| AppError::NoSettings)?;
     let profile_slug = state.require_profile()?;
-    let media_dir = profile::media_dir(&data_dir, &profile_slug);
+    let media_dir = crate::paths::media_dir(&data_dir, &profile_slug);
     let audio_path = media_dir.join(&audio_file);
 
     if !audio_path.exists() {
@@ -335,24 +386,36 @@ pub async fn analyze_audio(
     // Ensure sidecar is running
     let port = python::ensure_sidecar(&state_arc, &app_handle).await?;
 
-    // Run the analysis
-    let output_dir = analysis::stems_dir(&media_dir, &audio_file);
-    let models = python::models_dir(&state_arc.app_config_dir);
+    // Register cancel flag
+    let cancel_flag = state_arc.cancellation.register("analysis");
 
-    let result = analysis::run_analysis(
-        &app_handle,
-        port,
-        &audio_path,
-        &output_dir,
-        &features,
-        &models,
-        use_gpu,
-    )
-    .await?;
+    // Run the analysis, racing against cancellation
+    let output_dir = crate::paths::stems_dir(&media_dir, &audio_file);
+    let models = crate::paths::models_dir(&state_arc.app_config_dir);
+
+    let analysis_result = tokio::select! {
+        result = analysis::run_analysis(
+            &app_handle,
+            port,
+            &audio_path,
+            &output_dir,
+            &features,
+            &models,
+            use_gpu,
+        ) => {
+            state_arc.cancellation.unregister("analysis");
+            result?
+        }
+        () = state::wait_for_cancel(&cancel_flag) => {
+            state_arc.cancellation.unregister("analysis");
+            emit_progress(&app_handle, "analysis", "Cancelled", 1.0, None);
+            return Err(AppError::Cancelled { operation: "analysis".into() });
+        }
+    };
 
     // Save to disk cache
-    let cache_path = analysis::analysis_path(&media_dir, &audio_file);
-    if let Err(e) = analysis::save_analysis(&cache_path, &result) {
+    let cache_path = crate::paths::analysis_path(&media_dir, &audio_file);
+    if let Err(e) = analysis::save_analysis(&cache_path, &analysis_result) {
         eprintln!("[VibeLights] Failed to save analysis cache: {e}");
     }
 
@@ -360,9 +423,9 @@ pub async fn analyze_audio(
     state_arc
         .analysis_cache
         .lock()
-        .insert(audio_file, result.clone());
+        .insert(audio_file, analysis_result.clone());
 
-    Ok(result)
+    Ok(analysis_result)
 }
 
 // ── Python environment commands ───────────────────────────────────
@@ -384,7 +447,25 @@ pub async fn setup_python_env(
     app_handle: tauri::AppHandle,
 ) -> Result<(), AppError> {
     let state_arc = (*state).clone();
-    python::bootstrap_python(&app_handle, &state_arc.app_config_dir).await
+    let cancel_flag = state_arc.cancellation.register("python_setup");
+
+    let result = tokio::time::timeout(
+        tokio::time::Duration::from_secs(900),
+        python::bootstrap_python(&app_handle, &state_arc.app_config_dir, &cancel_flag),
+    )
+    .await;
+
+    state_arc.cancellation.unregister("python_setup");
+
+    match result {
+        Ok(inner) => inner,
+        Err(_elapsed) => {
+            emit_progress(&app_handle, "python_setup", "Setup timed out", 1.0, None);
+            Err(AppError::PythonError {
+                message: "Python setup timed out after 15 minutes".into(),
+            })
+        }
+    }
 }
 
 /// Start the Python analysis sidecar. Returns the port it's listening on.
@@ -413,6 +494,18 @@ pub async fn stop_python_sidecar(
     }
     state_arc.python_port.store(0, Ordering::Relaxed);
     Ok(())
+}
+
+// ── Cancellation ─────────────────────────────────────────────────
+
+/// Cancel a long-running operation by name (e.g. "import", "analysis", "python_setup").
+#[allow(clippy::unused_async)] // async required by Tauri for State<'_> references
+#[tauri::command]
+pub async fn cancel_operation(
+    state: State<'_, Arc<AppState>>,
+    operation: String,
+) -> Result<bool, AppError> {
+    Ok(state.cancellation.cancel(&operation))
 }
 
 // ── Binary / hot-path commands ───────────────────────────────────
@@ -594,12 +687,14 @@ pub fn preview_script(
         crate::effects::script::evaluate_pixels_batch(
             compiled,
             t,
+            0.0,
             &mut frame,
             0,
             pixel_count,
             &params,
             crate::model::timeline::BlendMode::Override,
             1.0,
+            None,
             None,
         );
         for (row, color) in frame.iter().enumerate() {
@@ -635,12 +730,14 @@ pub fn preview_script_frame(
     crate::effects::script::evaluate_pixels_batch(
         compiled,
         t,
+        0.0,
         &mut frame,
         0,
         pixel_count,
         &params,
         crate::model::timeline::BlendMode::Override,
         1.0,
+        None,
         None,
     );
 
@@ -931,6 +1028,7 @@ pub fn dsl_param_to_model(
             default,
         ),
         Dsl::Curve => (Model::Curve, default),
+        Dsl::Path => (Model::Path, None),
         Dsl::Named(type_name) => {
             // Check enums first, then flags
             for e in &compiled.enums {

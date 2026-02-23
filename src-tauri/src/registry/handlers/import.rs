@@ -25,7 +25,7 @@ pub fn import_vixen(
         })?;
     for seq_path in &p.sequence_paths {
         importer
-            .parse_sequence(std::path::Path::new(seq_path))
+            .parse_sequence(std::path::Path::new(seq_path), None)
             .map_err(|e| AppError::ImportError {
                 message: e.to_string(),
             })?;
@@ -141,7 +141,7 @@ pub fn import_vixen_sequence(
     );
 
     importer
-        .parse_sequence(std::path::Path::new(&p.tim_path))
+        .parse_sequence(std::path::Path::new(&p.tim_path), None)
         .map_err(|e| AppError::ImportError {
             message: e.to_string(),
         })?;

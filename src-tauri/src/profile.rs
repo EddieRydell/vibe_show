@@ -98,17 +98,11 @@ pub struct LibrariesFile {
 
 // ── Profile operations ─────────────────────────────────────────────
 
-fn profiles_dir(data_dir: &Path) -> std::path::PathBuf {
-    data_dir.join("profiles")
-}
-
-fn profile_dir(data_dir: &Path, slug: &str) -> std::path::PathBuf {
-    profiles_dir(data_dir).join(slug)
-}
+use crate::paths;
 
 /// Load profile-level libraries (gradients, curves, scripts).
 pub fn load_libraries(data_dir: &Path, slug: &str) -> Result<LibrariesFile, ProjectError> {
-    let path = profile_dir(data_dir, slug).join("libraries.json");
+    let path = paths::profile_dir(data_dir, slug).join(paths::LIBRARIES_FILE);
     if !path.exists() {
         return Ok(LibrariesFile::default());
     }
@@ -121,13 +115,13 @@ pub fn save_libraries(
     slug: &str,
     libs: &LibrariesFile,
 ) -> Result<(), ProjectError> {
-    let dir = profile_dir(data_dir, slug);
-    write_json(&dir.join("libraries.json"), libs)
+    let dir = paths::profile_dir(data_dir, slug);
+    write_json(&dir.join(paths::LIBRARIES_FILE), libs)
 }
 
 /// List all profiles in the data directory.
 pub fn list_profiles(data_dir: &Path) -> Result<Vec<ProfileSummary>, ProjectError> {
-    let dir = profiles_dir(data_dir);
+    let dir = paths::profiles_dir(data_dir);
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -140,7 +134,7 @@ pub fn list_profiles(data_dir: &Path) -> Result<Vec<ProfileSummary>, ProjectErro
     entries.sort_by_key(std::fs::DirEntry::file_name);
 
     for entry in entries {
-        let meta_path = entry.path().join("profile.json");
+        let meta_path = entry.path().join(paths::PROFILE_FILE);
         if !meta_path.exists() {
             continue;
         }
@@ -155,11 +149,11 @@ pub fn list_profiles(data_dir: &Path) -> Result<Vec<ProfileSummary>, ProjectErro
             .to_string();
 
         // Count fixtures
-        let fixture_count = read_json::<FixturesFile>(&entry.path().join("fixtures.json"))
+        let fixture_count = read_json::<FixturesFile>(&entry.path().join(paths::FIXTURES_FILE))
             .map_or(0, |f| f.fixtures.len());
 
         // Count sequences
-        let seq_dir = entry.path().join("sequences");
+        let seq_dir = entry.path().join(paths::SEQUENCES_DIR);
         let sequence_count = if seq_dir.exists() {
             fs::read_dir(&seq_dir)
                 .map_or(0, |rd| {
@@ -186,7 +180,7 @@ pub fn list_profiles(data_dir: &Path) -> Result<Vec<ProfileSummary>, ProjectErro
 /// Create a new empty profile.
 pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, ProjectError> {
     let slug = slugify(name);
-    let dir = profile_dir(data_dir, &slug);
+    let dir = paths::profile_dir(data_dir, &slug);
 
     if dir.exists() {
         return Err(ProjectError::InvalidProject(format!(
@@ -195,13 +189,13 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
     }
 
     fs::create_dir_all(&dir)?;
-    fs::create_dir_all(dir.join("sequences"))?;
-    fs::create_dir_all(dir.join("media"))?;
+    fs::create_dir_all(dir.join(paths::SEQUENCES_DIR))?;
+    fs::create_dir_all(dir.join(paths::MEDIA_DIR))?;
 
     let now = chrono_now();
 
     write_json(
-        &dir.join("profile.json"),
+        &dir.join(paths::PROFILE_FILE),
         &ProfileMeta {
             version: PROFILE_VERSION,
             name: name.to_string(),
@@ -210,7 +204,7 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
     )?;
 
     write_json(
-        &dir.join("fixtures.json"),
+        &dir.join(paths::FIXTURES_FILE),
         &FixturesFile {
             fixtures: Vec::new(),
             groups: Vec::new(),
@@ -219,7 +213,7 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
     )?;
 
     write_json(
-        &dir.join("setup.json"),
+        &dir.join(paths::SETUP_FILE),
         &SetupFile {
             controllers: Vec::new(),
             patches: Vec::new(),
@@ -227,13 +221,13 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
     )?;
 
     write_json(
-        &dir.join("layout.json"),
+        &dir.join(paths::LAYOUT_FILE),
         &Layout {
             fixtures: Vec::new(),
         },
     )?;
 
-    write_json(&dir.join("libraries.json"), &LibrariesFile::default())?;
+    write_json(&dir.join(paths::LIBRARIES_FILE), &LibrariesFile::default())?;
 
     Ok(ProfileSummary {
         name: name.to_string(),
@@ -246,17 +240,17 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
 
 /// Load full profile data.
 pub fn load_profile(data_dir: &Path, slug: &str) -> Result<Profile, ProjectError> {
-    let dir = profile_dir(data_dir, slug);
+    let dir = paths::profile_dir(data_dir, slug);
     if !dir.exists() {
         return Err(ProjectError::InvalidProject(format!(
             "Profile '{slug}' not found"
         )));
     }
 
-    let meta: ProfileMeta = read_json(&dir.join("profile.json"))?;
-    let fixtures_file: FixturesFile = read_json(&dir.join("fixtures.json"))?;
-    let setup_file: SetupFile = read_json(&dir.join("setup.json"))?;
-    let layout: Layout = read_json(&dir.join("layout.json"))?;
+    let meta: ProfileMeta = read_json(&dir.join(paths::PROFILE_FILE))?;
+    let fixtures_file: FixturesFile = read_json(&dir.join(paths::FIXTURES_FILE))?;
+    let setup_file: SetupFile = read_json(&dir.join(paths::SETUP_FILE))?;
+    let layout: Layout = read_json(&dir.join(paths::LAYOUT_FILE))?;
 
     Ok(Profile {
         name: meta.name,
@@ -271,15 +265,15 @@ pub fn load_profile(data_dir: &Path, slug: &str) -> Result<Profile, ProjectError
 
 /// Save profile house data (fixtures, groups, controllers, patches, layout).
 pub fn save_profile(data_dir: &Path, slug: &str, profile: &Profile) -> Result<(), ProjectError> {
-    let dir = profile_dir(data_dir, slug);
+    let dir = paths::profile_dir(data_dir, slug);
 
     // Preserve existing vixen_guid_map if present
-    let existing_map = read_json::<FixturesFile>(&dir.join("fixtures.json"))
+    let existing_map = read_json::<FixturesFile>(&dir.join(paths::FIXTURES_FILE))
         .map(|f| f.vixen_guid_map)
         .unwrap_or_default();
 
     write_json(
-        &dir.join("fixtures.json"),
+        &dir.join(paths::FIXTURES_FILE),
         &FixturesFile {
             fixtures: profile.fixtures.clone(),
             groups: profile.groups.clone(),
@@ -288,21 +282,21 @@ pub fn save_profile(data_dir: &Path, slug: &str, profile: &Profile) -> Result<()
     )?;
 
     write_json(
-        &dir.join("setup.json"),
+        &dir.join(paths::SETUP_FILE),
         &SetupFile {
             controllers: profile.controllers.clone(),
             patches: profile.patches.clone(),
         },
     )?;
 
-    write_json(&dir.join("layout.json"), &profile.layout)?;
+    write_json(&dir.join(paths::LAYOUT_FILE), &profile.layout)?;
 
     Ok(())
 }
 
 /// Delete a profile and all its data.
 pub fn delete_profile(data_dir: &Path, slug: &str) -> Result<(), ProjectError> {
-    let dir = profile_dir(data_dir, slug);
+    let dir = paths::profile_dir(data_dir, slug);
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
     }
@@ -311,16 +305,12 @@ pub fn delete_profile(data_dir: &Path, slug: &str) -> Result<(), ProjectError> {
 
 // ── Sequence operations ────────────────────────────────────────────
 
-fn sequences_dir(data_dir: &Path, profile_slug: &str) -> std::path::PathBuf {
-    profile_dir(data_dir, profile_slug).join("sequences")
-}
-
 /// List all sequences in a profile.
 pub fn list_sequences(
     data_dir: &Path,
     profile_slug: &str,
 ) -> Result<Vec<SequenceSummary>, ProjectError> {
-    let dir = sequences_dir(data_dir, profile_slug);
+    let dir = paths::sequences_dir(data_dir, profile_slug);
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -359,7 +349,7 @@ pub fn create_sequence(
     name: &str,
 ) -> Result<SequenceSummary, ProjectError> {
     let slug = slugify(name);
-    let dir = sequences_dir(data_dir, profile_slug);
+    let dir = paths::sequences_dir(data_dir, profile_slug);
     fs::create_dir_all(&dir)?;
 
     let path = dir.join(format!("{slug}.json"));
@@ -378,6 +368,7 @@ pub fn create_sequence(
         scripts: std::collections::HashMap::new(),
         gradient_library: std::collections::HashMap::new(),
         curve_library: std::collections::HashMap::new(),
+        motion_paths: std::collections::HashMap::new(),
     };
     write_json(&path, &seq)?;
 
@@ -393,7 +384,7 @@ pub fn load_sequence(
     profile_slug: &str,
     seq_slug: &str,
 ) -> Result<Sequence, ProjectError> {
-    let path = sequences_dir(data_dir, profile_slug).join(format!("{seq_slug}.json"));
+    let path = paths::sequences_dir(data_dir, profile_slug).join(format!("{seq_slug}.json"));
     if !path.exists() {
         return Err(ProjectError::InvalidProject(format!(
             "Sequence '{seq_slug}' not found"
@@ -409,7 +400,7 @@ pub fn save_sequence(
     seq_slug: &str,
     sequence: &Sequence,
 ) -> Result<(), ProjectError> {
-    let dir = sequences_dir(data_dir, profile_slug);
+    let dir = paths::sequences_dir(data_dir, profile_slug);
     fs::create_dir_all(&dir)?;
     write_json(&dir.join(format!("{seq_slug}.json")), sequence)
 }
@@ -420,7 +411,7 @@ pub fn delete_sequence(
     profile_slug: &str,
     seq_slug: &str,
 ) -> Result<(), ProjectError> {
-    let path = sequences_dir(data_dir, profile_slug).join(format!("{seq_slug}.json"));
+    let path = paths::sequences_dir(data_dir, profile_slug).join(format!("{seq_slug}.json"));
     if path.exists() {
         fs::remove_file(&path)?;
     }
@@ -431,7 +422,7 @@ pub fn delete_sequence(
 
 pub const MEDIA_EXTENSIONS: &[&str] = &["mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"];
 
-fn validate_filename(name: &str) -> Result<(), ProjectError> {
+pub fn validate_filename(name: &str) -> Result<(), ProjectError> {
     if name.is_empty()
         || name.contains('/')
         || name.contains('\\')
@@ -445,16 +436,12 @@ fn validate_filename(name: &str) -> Result<(), ProjectError> {
     Ok(())
 }
 
-pub fn media_dir(data_dir: &Path, profile_slug: &str) -> std::path::PathBuf {
-    profile_dir(data_dir, profile_slug).join("media")
-}
-
 /// List audio files in a profile's media directory.
 pub fn list_media(
     data_dir: &Path,
     profile_slug: &str,
 ) -> Result<Vec<MediaFile>, ProjectError> {
-    let dir = media_dir(data_dir, profile_slug);
+    let dir = paths::media_dir(data_dir, profile_slug);
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -494,7 +481,7 @@ pub fn import_media(
     profile_slug: &str,
     source_path: &Path,
 ) -> Result<MediaFile, ProjectError> {
-    let dir = media_dir(data_dir, profile_slug);
+    let dir = paths::media_dir(data_dir, profile_slug);
     fs::create_dir_all(&dir)?;
 
     let filename = source_path
@@ -521,7 +508,7 @@ pub fn delete_media(
     filename: &str,
 ) -> Result<(), ProjectError> {
     validate_filename(filename)?;
-    let path = media_dir(data_dir, profile_slug).join(filename);
+    let path = paths::media_dir(data_dir, profile_slug).join(filename);
     if path.exists() {
         fs::remove_file(&path)?;
     }
@@ -553,8 +540,8 @@ pub fn save_vixen_guid_map(
     profile_slug: &str,
     guid_map: &std::collections::HashMap<String, u32>,
 ) -> Result<(), ProjectError> {
-    let dir = profile_dir(data_dir, profile_slug);
-    let path = dir.join("fixtures.json");
+    let dir = paths::profile_dir(data_dir, profile_slug);
+    let path = dir.join(paths::FIXTURES_FILE);
     let mut file: FixturesFile = read_json(&path)?;
     file.vixen_guid_map.clone_from(guid_map);
     write_json(&path, &file)
@@ -565,8 +552,8 @@ pub fn load_vixen_guid_map(
     data_dir: &Path,
     profile_slug: &str,
 ) -> Result<std::collections::HashMap<String, u32>, ProjectError> {
-    let dir = profile_dir(data_dir, profile_slug);
-    let file: FixturesFile = read_json(&dir.join("fixtures.json"))?;
+    let dir = paths::profile_dir(data_dir, profile_slug);
+    let file: FixturesFile = read_json(&dir.join(paths::FIXTURES_FILE))?;
     Ok(file.vixen_guid_map)
 }
 
@@ -771,6 +758,7 @@ mod tests {
             scripts: std::collections::HashMap::new(),
             gradient_library: std::collections::HashMap::new(),
             curve_library: std::collections::HashMap::new(),
+            motion_paths: std::collections::HashMap::new(),
         };
         let show = assemble_show(&profile, &sequence);
         assert_eq!(show.name, "Xmas");

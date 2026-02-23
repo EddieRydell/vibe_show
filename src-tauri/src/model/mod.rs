@@ -2,7 +2,9 @@ pub mod analysis;
 pub mod color;
 pub mod color_gradient;
 pub mod curve;
+pub mod easing;
 pub mod fixture;
+pub mod motion_path;
 pub mod show;
 pub mod timeline;
 
@@ -10,6 +12,8 @@ pub mod timeline;
 pub use color::Color;
 pub use color_gradient::{ColorGradient, ColorStop};
 pub use curve::{Curve, CurvePoint};
+pub use easing::EasingFunction;
+pub use motion_path::{LoopMode, MotionPath, Waypoint};
 pub use fixture::{
     BulbShape, ChannelOrder, Controller, ControllerId, EffectTarget, FixtureDef, FixtureGroup,
     FixtureId, GroupId, GroupMember, OutputMapping, Patch, PixelType,

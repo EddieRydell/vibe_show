@@ -140,7 +140,7 @@ export function ScriptEditorDialog({
               value={source}
               onChange={(e) => setSource(e.target.value)}
               spellCheck={false}
-              className="border-border bg-bg text-text focus:border-primary h-[300px] w-full resize-y rounded border p-3 font-mono text-xs leading-relaxed outline-none"
+              className="border-border bg-bg text-text focus:border-primary h-[300px] w-full resize-y rounded border p-3 font-mono text-xs/relaxed  outline-none"
               placeholder="// Write your effect script here..."
             />
           </label>

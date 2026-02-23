@@ -4,6 +4,7 @@ import type { AudioAnalysis, BlendMode, InteractionMode, PlaybackInfo, Show, Tra
 import { effectKindLabel } from "../types";
 import type { WaveformData } from "../hooks/useAudio";
 import { makeEffectKey } from "../utils/effectKey";
+import { getEffectiveZoom } from "../utils/cssZoom";
 
 interface TimelineProps {
   show: Show | null;
@@ -418,7 +419,8 @@ export function Timeline({
       const container = scrollContainerRef.current;
       if (!container) return 0;
       const rect = container.getBoundingClientRect();
-      const x = clientX - rect.left + container.scrollLeft;
+      const zoom = getEffectiveZoom(container);
+      const x = (clientX - rect.left) / zoom + container.scrollLeft;
       return Math.max(0, Math.min(x / pxPerSec, duration));
     },
     [pxPerSec, duration],
@@ -430,8 +432,9 @@ export function Timeline({
       const container = scrollContainerRef.current;
       if (!container || rowOffsets.length === 0) return null;
       const rect = container.getBoundingClientRect();
+      const zoom = getEffectiveZoom(container);
       const waveH = waveform ? WAVEFORM_LANE_HEIGHT : 0;
-      const y = clientY - rect.top - RULER_HEIGHT - waveH + container.scrollTop;
+      const y = (clientY - rect.top) / zoom - RULER_HEIGHT - waveH + container.scrollTop;
       for (const row of rowOffsets) {
         if (y >= row.top && y < row.bottom) return row.fixtureId;
       }
@@ -689,7 +692,9 @@ export function Timeline({
 
       if (ds.type === "resize") {
         const pps = pxPerSecRef.current;
-        const deltaPx = e.clientX - ds.startClientX;
+        const container = scrollContainerRef.current;
+        const zoom = container ? getEffectiveZoom(container) : 1;
+        const deltaPx = (e.clientX - ds.startClientX) / zoom;
         const deltaSec = deltaPx / pps;
         let newStart = ds.originalStart;
         let newEnd = ds.originalEnd;
@@ -705,7 +710,9 @@ export function Timeline({
         setDragPreview({ key: ds.key, start: newStart, end: newEnd });
       } else if (ds.type === "move") {
         const pps = pxPerSecRef.current;
-        const deltaPx = e.clientX - ds.startClientX;
+        const container = scrollContainerRef.current;
+        const zoom = container ? getEffectiveZoom(container) : 1;
+        const deltaPx = (e.clientX - ds.startClientX) / zoom;
         const deltaSec = deltaPx / pps;
         const totalDelta =
           Math.abs(e.clientX - ds.startClientX) + Math.abs(e.clientY - ds.startClientY);
@@ -770,7 +777,9 @@ export function Timeline({
 
       if (ds.type === "resize") {
         const pps = pxPerSecRef.current;
-        const deltaPx = e.clientX - ds.startClientX;
+        const container = scrollContainerRef.current;
+        const zoom = container ? getEffectiveZoom(container) : 1;
+        const deltaPx = (e.clientX - ds.startClientX) / zoom;
         const deltaSec = deltaPx / pps;
         let newStart = ds.originalStart;
         let newEnd = ds.originalEnd;
@@ -805,7 +814,9 @@ export function Timeline({
           }
         } else if (onMoveEffect) {
           const pps = pxPerSecRef.current;
-          const deltaSec = (e.clientX - ds.startClientX) / pps;
+          const container = scrollContainerRef.current;
+          const zoom = container ? getEffectiveZoom(container) : 1;
+          const deltaSec = (e.clientX - ds.startClientX) / zoom / pps;
           const dur = ds.originalEnd - ds.originalStart;
           let newStart = ds.originalStart + deltaSec;
           newStart = Math.max(0, Math.min(newStart, duration - dur));
@@ -1079,7 +1090,7 @@ export function Timeline({
                 {/* Region highlight on ruler */}
                 {displayRegion && (
                   <div
-                    className="absolute inset-y-0 z-[5]"
+                    className="absolute inset-y-0 z-5"
                     style={{
                       left: displayRegion[0] * pxPerSec,
                       width: (displayRegion[1] - displayRegion[0]) * pxPerSec,
@@ -1119,7 +1130,7 @@ export function Timeline({
                 {/* Region highlight on waveform */}
                 {displayRegion && (
                   <div
-                    className="pointer-events-none absolute inset-y-0 z-[5]"
+                    className="pointer-events-none absolute inset-y-0 z-5"
                     style={{
                       left: displayRegion[0] * pxPerSec,
                       width: (displayRegion[1] - displayRegion[0]) * pxPerSec,
@@ -1131,7 +1142,7 @@ export function Timeline({
                 {analysis?.structure?.sections.map((section, i) => (
                   <div
                     key={`section-${i}`}
-                    className="pointer-events-none absolute inset-y-0 z-[3] border-l"
+                    className="pointer-events-none absolute inset-y-0 z-3 border-l"
                     style={{
                       left: section.start * pxPerSec,
                       width: (section.end - section.start) * pxPerSec,
@@ -1153,7 +1164,7 @@ export function Timeline({
                   return (
                     <div
                       key={`beat-${i}`}
-                      className="pointer-events-none absolute inset-y-0 z-[4]"
+                      className="pointer-events-none absolute inset-y-0 z-4"
                       style={{
                         left: beat * pxPerSec,
                         width: isDownbeat ? 1.5 : 0.5,
@@ -1217,7 +1228,6 @@ export function Timeline({
                     {row.effects.map((placed) => {
                       const isSelected = selectedEffects.has(placed.key);
                       const isHovered = hoveredEffect === placed.key;
-                      const compact = row.laneCount > 2;
                       const laneHeight = BASE_LANE_HEIGHT - LANE_GAP;
                       const top = ROW_PADDING + placed.lane * BASE_LANE_HEIGHT;
 
@@ -1251,7 +1261,7 @@ export function Timeline({
                         <div
                           key={placed.key}
                           data-effect-key={placed.key}
-                          className="absolute overflow-hidden transition-[box-shadow] duration-75"
+                          className="absolute overflow-hidden transition-shadow duration-75"
                           style={{
                             left: displayStart * pxPerSec,
                             width: displayDuration * pxPerSec,
@@ -1321,9 +1331,6 @@ export function Timeline({
                             sequenceIndex={playback?.sequence_index ?? 0}
                             trackIndex={placed.trackIndex}
                             effectIndex={placed.effectIndex}
-                            effectKind={placed.kind}
-                            blendMode={placed.blendMode}
-                            compact={compact}
                             refreshKey={refreshKey}
                           />
 
@@ -1363,7 +1370,7 @@ export function Timeline({
               {/* Region overlay on track area */}
               {displayRegion && (
                 <div
-                  className="pointer-events-none absolute inset-y-0 z-[2]"
+                  className="pointer-events-none absolute inset-y-0 z-2"
                   style={{
                     left: displayRegion[0] * pxPerSec,
                     width: (displayRegion[1] - displayRegion[0]) * pxPerSec,

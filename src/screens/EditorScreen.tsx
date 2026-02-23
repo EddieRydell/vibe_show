@@ -19,6 +19,7 @@ import { useAudio } from "../hooks/useAudio";
 import { useAnalysis } from "../hooks/useAnalysis";
 import { useKeyboard } from "../hooks/useKeyboard";
 import { useProgress } from "../hooks/useProgress";
+import { ShowVersionContext } from "../hooks/useShowVersion";
 import { deduplicateEffectKeys, makeEffectKey } from "../utils/effectKey";
 import type { EffectKind, InteractionMode } from "../types";
 
@@ -410,7 +411,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
         await cmd.updateEffectTimeRange(toTrackIndex, newEffectIndex, newStart, newEnd);
 
         commitChange();
-        setSelectedEffects(new Set([`${toTrackIndex}-${newEffectIndex}`]));
+        setSelectedEffects(new Set([makeEffectKey(toTrackIndex, newEffectIndex)]));
       }
     },
     [show, playback, commitChange],
@@ -497,12 +498,13 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
   const singleSelected = selectedEffects.size === 1 ? [...selectedEffects][0] : null;
 
   if (loading) {
-    const loadProgress = progressOps.get("open_sequence");
+    const loadTracked = progressOps.get("open_sequence");
+    const loadProgress = loadTracked?.event;
     const pct = loadProgress && loadProgress.progress >= 0 ? Math.round(loadProgress.progress * 100) : 0;
     const indeterminate = !loadProgress || loadProgress.progress < 0;
     return (
       <div className="bg-bg flex h-full flex-col items-center justify-center gap-3">
-        <div className="border-primary h-6 w-6 animate-spin rounded-full border-2 border-t-transparent" />
+        <div className="border-primary size-6  animate-spin rounded-full border-2 border-t-transparent" />
         <p className="text-text-2 text-sm">{loadProgress?.phase ?? "Loading sequence..."}</p>
         <div className="bg-border/30 h-1.5 w-48 overflow-hidden rounded-full">
           {indeterminate ? (
@@ -571,6 +573,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
   );
 
   return (
+    <ShowVersionContext.Provider value={refreshKey}>
     <ScreenShell
       title={show?.name ?? "Untitled"}
       onBack={handleBack}
@@ -684,5 +687,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
         />
       )}
     </ScreenShell>
+    </ShowVersionContext.Provider>
   );
 }

@@ -1,8 +1,9 @@
 use crate::dsl::compiler::CompiledScript;
-use crate::dsl::vm::{self, VmContext};
+use crate::dsl::vm::{self, VmBuffers, VmContext};
 use crate::model::color::Color;
 use crate::model::color_gradient::ColorGradient;
 use crate::model::curve::Curve;
+use crate::model::motion_path::MotionPath;
 use crate::model::timeline::{BlendMode, EffectParams, ParamKey, ParamValue};
 use crate::model::show::Position2D;
 
@@ -12,10 +13,11 @@ use crate::dsl::ast;
 ///
 /// This mirrors the signature of native `evaluate_pixels_batch` functions.
 /// `positions` is provided for spatial scripts (`@spatial true`).
-#[allow(clippy::cast_precision_loss, clippy::too_many_arguments, clippy::indexing_slicing)]
+#[allow(clippy::cast_precision_loss, clippy::too_many_arguments, clippy::indexing_slicing, clippy::implicit_hasher)]
 pub fn evaluate_pixels_batch(
     script: &CompiledScript,
     t: f64,
+    abs_t: f64,
     dest: &mut [Color],
     global_offset: usize,
     total_pixels: usize,
@@ -23,6 +25,7 @@ pub fn evaluate_pixels_batch(
     blend_mode: BlendMode,
     opacity: f64,
     positions: Option<&[Position2D]>,
+    motion_paths: Option<&std::collections::HashMap<String, MotionPath>>,
 ) {
     // Build runtime param arrays from EffectParams.
     // Each compiled param maps to a slot by index.
@@ -31,6 +34,7 @@ pub fn evaluate_pixels_batch(
     let mut gradients_owned: Vec<Option<ColorGradient>> = vec![None; param_count];
     let mut curves_owned: Vec<Option<Curve>> = vec![None; param_count];
     let mut colors: Vec<Option<Color>> = vec![None; param_count];
+    let mut paths_resolved: Vec<Option<&MotionPath>> = vec![None; param_count];
 
     for (i, cp) in script.params.iter().enumerate() {
         let key = ParamKey::Custom(cp.name.clone());
@@ -52,7 +56,19 @@ pub fn evaluate_pixels_batch(
                         param_values[i] = resolve_flag_set(script, type_name, flags);
                     }
                 }
-                _ => {}
+                ParamValue::PathRef(name) => {
+                    if let Some(lib) = motion_paths {
+                        paths_resolved[i] = lib.get(name.as_str());
+                    }
+                }
+                // These ParamValue types are not used by DSL scripts.
+                // Listed explicitly so new variants trigger a compiler warning.
+                ParamValue::ColorList(_)
+                | ParamValue::Text(_)
+                | ParamValue::ColorMode(_)
+                | ParamValue::WipeDirection(_)
+                | ParamValue::GradientRef(_)
+                | ParamValue::CurveRef(_) => {}
             }
         }
     }
@@ -66,6 +82,9 @@ pub fn evaluate_pixels_batch(
         .iter()
         .map(|c| c.as_ref())
         .collect();
+
+    // Reuse a single VmBuffers across all pixels to avoid per-pixel heap allocations.
+    let mut vm_buffers = VmBuffers::new();
 
     for (local_idx, pixel) in dest.iter_mut().enumerate() {
         let global_idx = global_offset + local_idx;
@@ -85,13 +104,15 @@ pub fn evaluate_pixels_batch(
             pixels: total_pixels,
             pos,
             pos2d,
+            abs_t,
             param_values: &param_values,
             gradients: &gradient_refs,
             curves: &curve_refs,
             colors: &colors,
+            paths: &paths_resolved,
         };
 
-        let mut color = vm::execute(script, &ctx);
+        let mut color = vm::execute_reuse(script, &ctx, &mut vm_buffers);
         if opacity < 1.0 {
             color = color.scale(opacity);
         }

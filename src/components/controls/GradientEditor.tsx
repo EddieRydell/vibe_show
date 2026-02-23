@@ -1,7 +1,8 @@
 import { useRef, useCallback, useEffect, useState } from "react";
+import { cssMouseOffset, getEffectiveZoom } from "../../utils/cssZoom";
 import type { Color, ColorStop } from "../../types";
-import { ColorInput } from "./ColorInput";
 import { GRADIENT_PRESETS } from "../../constants";
+import { ColorPicker } from "./ColorPicker";
 
 interface GradientEditorProps {
   label: string;
@@ -9,7 +10,6 @@ interface GradientEditorProps {
   minStops: number;
   maxStops: number;
   onChange: (value: ColorStop[]) => void;
-  width?: number;
   height?: number;
   expanded?: boolean;
 }
@@ -20,6 +20,20 @@ function sortByPosition(stops: ColorStop[]): ColorStop[] {
 
 function colorToCSS(c: Color): string {
   return `rgb(${c.r},${c.g},${c.b})`;
+}
+
+function colorToHex(c: Color): string {
+  const r = c.r.toString(16).padStart(2, "0");
+  const g = c.g.toString(16).padStart(2, "0");
+  const b = c.b.toString(16).padStart(2, "0");
+  return `#${r}${g}${b}`;
+}
+
+function hexToColor(hex: string): Color {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return { r, g, b, a: 255 };
 }
 
 function lerpColor(a: Color, b: Color, t: number): Color {
@@ -54,23 +68,50 @@ function sampleGradientAt(stops: ColorStop[], pos: number): Color {
 
 const MARKER_H = 10;
 
+type TaggedStop = ColorStop & { _id: number };
+
 export function GradientEditor({
   label,
   value,
   minStops,
   maxStops,
   onChange,
-  width: barW = 220,
   height: barH = 24,
   expanded = false,
 }: GradientEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [selectedStop, setSelectedStop] = useState<number | null>(null);
-  const [draggingStop, setDraggingStop] = useState<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [barW, setBarW] = useState(220);
+  /** Tagged copy of stops, only populated during a drag */
+  const taggedRef = useRef<TaggedStop[]>([]);
+  const dragIdRef = useRef<number | null>(null);
+  const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
+  const [hoveredStop, setHoveredStop] = useState<number | null>(null);
+  const [colorPickerStop, setColorPickerStop] = useState<number | null>(null);
+  const [colorPickerPos, setColorPickerPos] = useState({ x: 0, y: 0 });
+  /** Canvas-space cursor position for tooltip placement */
+  const [cursorPos, setCursorPos] = useState<{ cx: number; cy: number } | null>(
+    null,
+  );
+  const [hover, setHover] = useState<{ pos: number } | null>(null);
+
   const canAdd = value.length < maxStops;
   const canRemove = value.length > minStops;
-
   const totalH = barH + MARKER_H;
+
+  // Measure container width
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const w = Math.floor(entry.contentRect.width);
+        if (w > 0) setBarW(w);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const drawGradient = useCallback(() => {
     const ctx = canvasRef.current?.getContext("2d");
@@ -101,8 +142,6 @@ export function GradientEditor({
     // Draw stop markers (triangles below bar)
     for (let i = 0; i < sorted.length; i++) {
       const x = sorted[i].position * (barW - 1);
-      const isSelected = selectedStop === i;
-      const isDragging = draggingStop === i;
 
       ctx.beginPath();
       ctx.moveTo(x, barH);
@@ -110,115 +149,140 @@ export function GradientEditor({
       ctx.lineTo(x + 5, barH + MARKER_H);
       ctx.closePath();
 
-      if (isSelected || isDragging) {
-        ctx.fillStyle = "#60a5fa";
-        ctx.strokeStyle = "#fff";
-      } else {
-        ctx.fillStyle = colorToCSS(sorted[i].color);
-        ctx.strokeStyle = "#fff";
-      }
+      ctx.fillStyle = colorToCSS(sorted[i].color);
       ctx.fill();
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
     }
-  }, [value, barW, barH, totalH, selectedStop, draggingStop]);
+
+    // Hover tooltip following cursor (expanded mode)
+    if (expanded && hover && cursorPos) {
+      const stopLabel =
+        hoveredStop !== null ? ` [stop ${hoveredStop + 1}]` : "";
+      const text = `${Math.round(hover.pos * 100)}%${stopLabel}`;
+      ctx.font = "10px monospace";
+      const tw = ctx.measureText(text).width;
+      const boxW = tw + 8;
+      const boxH = 16;
+      let tx = cursorPos.cx + 12;
+      let ty = cursorPos.cy - 20;
+      if (tx + boxW > barW) tx = cursorPos.cx - boxW - 4;
+      if (ty < 0) ty = cursorPos.cy + 12;
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(tx, ty, boxW, boxH);
+      ctx.fillStyle = "#e5e7eb";
+      ctx.textAlign = "left";
+      ctx.fillText(text, tx + 4, ty + 11);
+    }
+  }, [value, barW, barH, totalH, draggingIdx, hoveredStop, expanded, hover, cursorPos]);
 
   useEffect(() => {
     drawGradient();
   }, [drawGradient]);
 
   const getMousePos = (e: React.MouseEvent) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return { cx: 0, cy: 0 };
-    return { cx: e.clientX - rect.left, cy: e.clientY - rect.top };
+    const canvas = canvasRef.current;
+    if (!canvas) return { cx: 0, cy: 0 };
+    const { x, y } = cssMouseOffset(e, canvas);
+    return { cx: x, cy: y };
   };
 
-  const hitTestMarker = useCallback(
+  // Hit-test: covers both the bar area and the marker triangles below
+  const getStopAt = useCallback(
     (cx: number, cy: number): number | null => {
-      if (cy < barH - 2) return null;
+      if (cy < 0 || cy > totalH) return null;
       const sorted = sortByPosition(value);
       for (let i = 0; i < sorted.length; i++) {
         const mx = sorted[i].position * (barW - 1);
-        if (Math.abs(cx - mx) < 8 && cy >= barH - 2) return i;
+        if (Math.abs(cx - mx) < 8) return i;
       }
       return null;
     },
-    [value, barW, barH],
+    [value, barW, totalH],
   );
 
   const onMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
     const { cx, cy } = getMousePos(e);
-    const hit = hitTestMarker(cx, cy);
+    const sorted = sortByPosition(value);
+    const hit = getStopAt(cx, cy);
     if (hit !== null) {
-      setSelectedStop(hit);
-      setDraggingStop(hit);
-    } else if (cy < barH && canAdd) {
-      // Click on gradient bar = add a new stop
+      // Tag all stops with stable IDs; track the hit stop's ID
+      taggedRef.current = sorted.map((s, i) => ({ ...s, _id: i }));
+      dragIdRef.current = hit;
+      setDraggingIdx(hit);
+    } else if (canAdd) {
       const pos = Math.max(0, Math.min(1, cx / (barW - 1)));
       const color = sampleGradientAt(value, pos);
-      const newStops = sortByPosition([...value, { position: pos, color }]);
-      onChange(newStops);
-      const newIdx = newStops.findIndex((s) => s.position === pos);
-      setSelectedStop(newIdx >= 0 ? newIdx : null);
+      onChange(sortByPosition([...sorted, { position: pos, color }]));
     }
   };
 
   const onMouseMove = (e: React.MouseEvent) => {
-    if (draggingStop === null) return;
-    const { cx } = getMousePos(e);
-    const pos = Math.max(0, Math.min(1, cx / (barW - 1)));
-    const sorted = sortByPosition(value);
-    const next = sorted.map((s, i) =>
-      i === draggingStop ? { ...s, position: pos } : s,
-    );
-    const resorted = sortByPosition(next);
-    onChange(resorted);
-    const newIdx = resorted.findIndex(
-      (s) => Math.abs(s.position - pos) < 0.001,
-    );
-    if (newIdx >= 0) {
-      setDraggingStop(newIdx);
-      setSelectedStop(newIdx);
+    const { cx, cy } = getMousePos(e);
+    if (expanded) {
+      const pos = Math.max(0, Math.min(1, cx / (barW - 1)));
+      setHover({ pos });
+      setCursorPos({ cx, cy });
     }
+    if (dragIdRef.current === null) {
+      setHoveredStop(getStopAt(cx, cy));
+      return;
+    }
+    const pos = Math.max(0, Math.min(1, cx / (barW - 1)));
+    const id = dragIdRef.current;
+    // Update the dragged stop in our tagged array
+    taggedRef.current = taggedRef.current.map((s) =>
+      s._id === id ? { ...s, position: pos } : s,
+    );
+    const sorted = [...taggedRef.current].sort(
+      (a, b) => a.position - b.position,
+    );
+    setDraggingIdx(sorted.findIndex((s) => s._id === id));
+    onChange(sorted.map(({ position, color }) => ({ position, color })));
   };
 
   const onMouseUp = () => {
-    setDraggingStop(null);
+    dragIdRef.current = null;
+    taggedRef.current = [];
+    setDraggingIdx(null);
+  };
+
+  const onMouseLeave = () => {
+    dragIdRef.current = null;
+    taggedRef.current = [];
+    setDraggingIdx(null);
+    setHoveredStop(null);
+    setHover(null);
+    setCursorPos(null);
   };
 
   const onDoubleClick = (e: React.MouseEvent) => {
-    if (!canRemove) return;
     const { cx, cy } = getMousePos(e);
-    const hit = hitTestMarker(cx, cy);
+    const hit = getStopAt(cx, cy);
     if (hit !== null) {
-      const sorted = sortByPosition(value);
-      onChange(sorted.filter((_, i) => i !== hit));
-      setSelectedStop(null);
+      setColorPickerStop(hit);
+      const canvas = canvasRef.current;
+      const rect = canvas?.getBoundingClientRect();
+      if (canvas && rect) {
+        const zoom = getEffectiveZoom(canvas);
+        const mx = sortByPosition(value)[hit].position * (barW - 1);
+        setColorPickerPos({
+          x: rect.left + mx * zoom - 90,
+          y: rect.bottom + 8,
+        });
+      }
     }
   };
 
-  const updateSelectedColor = (color: Color) => {
-    if (selectedStop === null) return;
-    const sorted = sortByPosition(value);
-    const next = sorted.map((s, i) =>
-      i === selectedStop ? { ...s, color } : s,
-    );
-    onChange(next);
-  };
-
-  const updateSelectedPosition = (pos: number) => {
-    if (selectedStop === null) return;
-    const clamped = Math.max(0, Math.min(1, pos));
-    const sorted = sortByPosition(value);
-    const next = sorted.map((s, i) =>
-      i === selectedStop ? { ...s, position: clamped } : s,
-    );
-    const resorted = sortByPosition(next);
-    onChange(resorted);
-    const newIdx = resorted.findIndex(
-      (s) => Math.abs(s.position - clamped) < 0.001,
-    );
-    if (newIdx >= 0) setSelectedStop(newIdx);
+  const onContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!canRemove) return;
+    const { cx, cy } = getMousePos(e);
+    const hit = getStopAt(cx, cy);
+    if (hit !== null) {
+      if (colorPickerStop === hit) setColorPickerStop(null);
+      const sorted = sortByPosition(value);
+      onChange(sorted.filter((_, i) => i !== hit));
+    }
   };
 
   const evenSpacing = () => {
@@ -232,90 +296,135 @@ export function GradientEditor({
     onChange(next);
   };
 
+  const updateStopColor = (index: number, color: Color) => {
+    const sorted = sortByPosition(value);
+    onChange(sorted.map((s, i) => (i === index ? { ...s, color } : s)));
+  };
+
+  const cursor =
+    draggingIdx !== null
+      ? "grabbing"
+      : hoveredStop !== null
+        ? "grab"
+        : "crosshair";
+
   const sorted = sortByPosition(value);
-  const selectedStopData =
-    selectedStop !== null ? sorted[selectedStop] : null;
 
   return (
     <div className="flex flex-col gap-1.5">
       {label && (
-        <div className="flex items-center justify-between">
-          <label className="text-text-2 text-[11px]">{label}</label>
-          {canAdd && !expanded && (
-            <button
-              type="button"
-              className="border-border bg-surface-2 text-text-2 hover:bg-bg rounded border px-1.5 py-0.5 text-[10px]"
-              onClick={() => {
-                const newStop: ColorStop = {
-                  position: 0.5,
-                  color: { r: 255, g: 255, b: 255, a: 255 },
-                };
-                onChange(sortByPosition([...value, newStop]));
-              }}
-            >
-              + Stop
-            </button>
-          )}
-        </div>
+        <label className="text-text-2 text-[11px]">{label}</label>
       )}
 
-      {/* Gradient bar + markers */}
-      <canvas
-        ref={canvasRef}
-        width={barW}
-        height={totalH}
-        className="cursor-pointer rounded"
-        style={{ width: barW, height: totalH }}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUp}
-        onMouseLeave={onMouseUp}
-        onDoubleClick={onDoubleClick}
-      />
+      {/* Gradient bar + markers — responsive container */}
+      <div ref={containerRef} className="w-full">
+        <canvas
+          ref={canvasRef}
+          width={barW}
+          height={totalH}
+          className="w-full rounded"
+          style={{ height: totalH, cursor }}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseLeave}
+          onDoubleClick={onDoubleClick}
+          onContextMenu={onContextMenu}
+        />
+      </div>
 
-      {/* Expanded mode controls */}
-      {expanded ? (
+      {/* Color picker for double-click editing */}
+      {colorPickerStop !== null && sorted[colorPickerStop] && (
+        <ColorPicker
+          color={sorted[colorPickerStop].color}
+          onChange={(c) => updateStopColor(colorPickerStop, c)}
+          onClose={() => setColorPickerStop(null)}
+          initialPos={colorPickerPos}
+        />
+      )}
+
+      {/* Expanded mode: stop table + action buttons + presets */}
+      {expanded && (
         <div className="flex flex-col gap-2">
-          {/* Selected stop detail */}
-          {selectedStopData && (
-            <div className="border-border bg-surface-2 flex items-center gap-2 rounded border p-2">
-              <span className="text-text-2 text-[10px]">
-                Stop {(selectedStop ?? 0) + 1}:
-              </span>
-              <input
-                type="number"
-                className="border-border bg-bg text-text w-16 rounded border px-1 py-0.5 text-[10px]"
-                value={Math.round(selectedStopData.position * 100)}
-                min={0}
-                max={100}
-                step={1}
-                onChange={(e) => {
-                  const v = parseFloat(e.target.value);
-                  if (!isNaN(v)) updateSelectedPosition(v / 100);
-                }}
-              />
-              <span className="text-text-2 text-[10px]">%</span>
-              <div className="flex-1">
-                <ColorInput
-                  label=""
-                  value={selectedStopData.color}
-                  onChange={updateSelectedColor}
-                />
-              </div>
-              {canRemove && (
-                <button
-                  type="button"
-                  className="text-text-2 hover:text-error text-[10px]"
-                  onClick={() => {
-                    onChange(sorted.filter((_, i) => i !== selectedStop));
-                    setSelectedStop(null);
-                  }}
-                >
-                  x
-                </button>
-              )}
-            </div>
-          )}
+          {/* Stop table */}
+          <div className="border-border mt-1 max-h-40 overflow-y-auto rounded border">
+            <table className="w-full text-[10px]">
+              <thead>
+                <tr className="bg-surface-2 text-text-2">
+                  <th className="px-2 py-0.5 text-left font-medium">#</th>
+                  <th className="px-2 py-0.5 text-left font-medium">Pos</th>
+                  <th className="px-2 py-0.5 text-left font-medium">Color</th>
+                  <th className="px-2 py-0.5 text-right font-medium" />
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((stop, i) => (
+                  <tr
+                    key={i}
+                    className={`border-border border-t${hoveredStop === i ? " bg-surface-2" : ""}`}
+                    onMouseEnter={() => setHoveredStop(i)}
+                    onMouseLeave={() => setHoveredStop(null)}
+                  >
+                    <td className="text-text-2 px-2 py-0.5">{i + 1}</td>
+                    <td className="px-1 py-0.5">
+                      <input
+                        type="number"
+                        className="border-border bg-bg text-text w-14 rounded border px-1 py-0.5 text-[10px]"
+                        value={Math.round(stop.position * 100)}
+                        min={0}
+                        max={100}
+                        step={1}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value);
+                          if (!isNaN(v)) {
+                            const clamped = Math.max(0, Math.min(1, v / 100));
+                            const next = sorted.map((s, j) =>
+                              j === i ? { ...s, position: clamped } : s,
+                            );
+                            onChange(sortByPosition(next));
+                          }
+                        }}
+                      />
+                    </td>
+                    <td className="px-1 py-0.5">
+                      <div className="flex items-center gap-1">
+                        <div className="relative">
+                          <div
+                            className="border-border size-5 rounded border"
+                            style={{ backgroundColor: colorToHex(stop.color) }}
+                          />
+                          <input
+                            type="color"
+                            className="absolute inset-0 cursor-pointer opacity-0"
+                            value={colorToHex(stop.color)}
+                            onChange={(e) =>
+                              updateStopColor(i, hexToColor(e.target.value))
+                            }
+                          />
+                        </div>
+                        <span className="text-text-2 font-mono text-[9px]">
+                          {colorToHex(stop.color)}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-1 py-0.5 text-right">
+                      {canRemove && (
+                        <button
+                          type="button"
+                          className="text-text-2 hover:text-error text-[9px]"
+                          onClick={() =>
+                            onChange(sorted.filter((_, j) => j !== i))
+                          }
+                        >
+                          &times;
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           {/* Action buttons */}
           <div className="flex gap-1">
@@ -350,65 +459,12 @@ export function GradientEditor({
                 key={preset.name}
                 type="button"
                 className="border-border bg-surface-2 text-text-2 hover:bg-bg hover:text-text rounded border px-1.5 py-0.5 text-[9px]"
-                onClick={() => {
-                  onChange(preset.stops);
-                  setSelectedStop(null);
-                }}
+                onClick={() => onChange(preset.stops)}
               >
                 {preset.name}
               </button>
             ))}
           </div>
-        </div>
-      ) : (
-        /* Compact stop list */
-        <div className="flex max-h-32 flex-col gap-1 overflow-y-auto">
-          {sorted.map((stop, i) => (
-            <div key={i} className="flex items-center gap-1">
-              <input
-                type="range"
-                className="accent-primary h-1 w-14 cursor-pointer"
-                value={stop.position}
-                min={0}
-                max={1}
-                step={0.01}
-                onChange={(e) => {
-                  const v = parseFloat(e.target.value);
-                  if (!isNaN(v)) {
-                    const pos = Math.min(1, Math.max(0, v));
-                    const next = value.map((s, j) =>
-                      j === i ? { ...s, position: pos } : s,
-                    );
-                    onChange(sortByPosition(next));
-                  }
-                }}
-              />
-              <span className="text-text-2 w-7 text-center font-mono text-[9px]">
-                {(stop.position * 100).toFixed(0)}%
-              </span>
-              <div className="flex-1">
-                <ColorInput
-                  label=""
-                  value={stop.color}
-                  onChange={(c) => {
-                    const next = value.map((s, j) =>
-                      j === i ? { ...s, color: c } : s,
-                    );
-                    onChange(next);
-                  }}
-                />
-              </div>
-              {canRemove && (
-                <button
-                  type="button"
-                  className="text-text-2 hover:text-error text-[10px]"
-                  onClick={() => onChange(value.filter((_, j) => j !== i))}
-                >
-                  x
-                </button>
-              )}
-            </div>
-          ))}
         </div>
       )}
     </div>

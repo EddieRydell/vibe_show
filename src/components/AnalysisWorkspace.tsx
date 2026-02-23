@@ -397,7 +397,7 @@ export function AnalysisWorkspace({
           <div style={{ width: contentWidth, minWidth: "100%" }}>
             {/* Ruler */}
             <div
-              className="border-border bg-bg/95 sticky top-0 z-[var(--z-sticky)] cursor-pointer border-b backdrop-blur-sm"
+              className="border-border bg-bg/95 sticky top-0 z-(--z-sticky) cursor-pointer border-b backdrop-blur-sm"
               style={{ height: RULER_HEIGHT }}
               onClick={handleRulerClick}
             >
@@ -440,7 +440,7 @@ export function AnalysisWorkspace({
               {analysis?.structure?.sections.map((section, i) => (
                 <div
                   key={`section-${i}`}
-                  className="pointer-events-none absolute inset-y-0 z-[3] border-l"
+                  className="pointer-events-none absolute inset-y-0 z-3 border-l"
                   style={{
                     left: section.start * pxPerSec,
                     width: (section.end - section.start) * pxPerSec,
@@ -480,7 +480,7 @@ export function AnalysisWorkspace({
                 return (
                   <div
                     key={`ai-beat-${i}`}
-                    className="pointer-events-none absolute inset-y-0 z-[2]"
+                    className="pointer-events-none absolute inset-y-0 z-2"
                     style={{
                       left: beat * pxPerSec,
                       width: isDownbeat ? 1.5 : 0.5,
@@ -503,7 +503,7 @@ export function AnalysisWorkspace({
                   <div
                     key={beat.id}
                     data-beat-id={beat.id}
-                    className="absolute inset-y-0 z-[5]"
+                    className="absolute inset-y-0 z-5"
                     style={{
                       left: displayTime * pxPerSec - BEAT_HIT_WIDTH / 2,
                       width: BEAT_HIT_WIDTH,

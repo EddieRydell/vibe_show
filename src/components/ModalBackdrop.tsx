@@ -37,7 +37,7 @@ export function ModalBackdrop({ children, onClose, className }: ModalBackdropPro
   return (
     <Portal>
       <div
-        className={`fixed inset-0 z-[var(--z-modal-backdrop)] flex items-center justify-center bg-black/50 ${className ?? ""}`}
+        className={`fixed inset-0 z-(--z-modal-backdrop) flex items-center justify-center bg-black/50 ${className ?? ""}`}
         onMouseDown={handleBackdropMouseDown}
       >
         {children}

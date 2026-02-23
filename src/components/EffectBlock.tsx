@@ -1,41 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { BlendMode, EffectThumbnail } from "../types";
+import type { EffectThumbnail } from "../types";
 
 interface EffectBlockProps {
   sequenceIndex: number;
   trackIndex: number;
   effectIndex: number;
-  effectKind: string;
-  blendMode: BlendMode;
-  compact?: boolean;
   refreshKey?: number;
 }
 
 const THUMBNAIL_TIME_SAMPLES = 120;
 const THUMBNAIL_PIXEL_ROWS = 16;
 
-const BLEND_LABELS: Record<BlendMode, string> = {
-  Override: "OVR",
-  Add: "ADD",
-  Multiply: "MUL",
-  Max: "MAX",
-  Alpha: "ALP",
-  Subtract: "SUB",
-  Min: "MIN",
-  Average: "AVG",
-  Screen: "SCR",
-  Mask: "MSK",
-  IntensityOverlay: "INT",
-};
-
 export function EffectBlock({
   sequenceIndex,
   trackIndex,
   effectIndex,
-  effectKind,
-  blendMode,
-  compact,
   refreshKey,
 }: EffectBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -93,28 +73,15 @@ export function EffectBlock({
   }, [isVisible, sequenceIndex, trackIndex, effectIndex, refreshKey]);
 
   return (
-    <div ref={containerRef} className="relative flex h-full w-full items-end overflow-hidden">
+    <div ref={containerRef} className="relative size-full overflow-hidden">
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 h-full w-full"
+        className="absolute inset-0 size-full"
         style={{
           imageRendering: "pixelated",
           opacity: loaded ? 1 : 0,
         }}
       />
-      {/* Labels overlay */}
-      <div className="relative z-10 flex w-full items-center justify-between px-1 pb-0.5">
-        <span
-          className={`truncate font-semibold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] ${compact ? "text-[8px]" : "text-[9px]"}`}
-        >
-          {effectKind}
-        </span>
-        {!compact && blendMode !== "Override" && (
-          <span className="shrink-0 rounded-sm bg-black/50 px-1 text-[8px] font-medium text-white/70">
-            {BLEND_LABELS[blendMode]}
-          </span>
-        )}
-      </div>
     </div>
   );
 }

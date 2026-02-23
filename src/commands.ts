@@ -296,6 +296,10 @@ export const cmd = {
   getScriptParams: (name: string) =>
     execData<ScriptParamInfo[]>("GetScriptParams", { name }),
 
+  // ── Cancellation ────────────────────────────────────────
+  cancelOperation: (operation: string) =>
+    invoke<boolean>("cancel_operation", { operation }),
+
   // ── Analysis ────────────────────────────────────────────
   getAnalysis: () => execData<AudioAnalysis | null>("GetAnalysis"),
 

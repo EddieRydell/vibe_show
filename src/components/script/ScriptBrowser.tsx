@@ -65,7 +65,7 @@ export function ScriptBrowser({
   );
 
   return (
-    <div className="border-border flex h-full w-[200px] flex-shrink-0 flex-col border-r">
+    <div className="border-border flex h-full w-[200px] shrink-0 flex-col border-r">
       <div className="border-border flex items-center justify-between border-b px-3 py-2">
         <span className="text-text-2 text-[10px] font-medium uppercase tracking-wide">
           Scripts

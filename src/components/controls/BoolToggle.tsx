@@ -14,7 +14,7 @@ export function BoolToggle({ label, value, onChange }: BoolToggleProps) {
         onClick={() => onChange(!value)}
       >
         <span
-          className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${value ? "translate-x-4" : ""}`}
+          className={`absolute top-0.5 left-0.5 size-4  rounded-full bg-white transition-transform ${value ? "translate-x-4" : ""}`}
         />
       </button>
     </div>

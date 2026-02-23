@@ -272,6 +272,7 @@ async fn run_serve(
         agent_session_id: Mutex::new(None),
         agent_display_messages: Mutex::new(Vec::new()),
         agent_chats: Mutex::new(vibe_lights::chat::AgentChatsData::default()),
+        cancellation: vibe_lights::state::CancellationRegistry::new(),
     });
 
     // Load global chat history
@@ -324,7 +325,13 @@ async fn run_serve(
     // Determine port
     let bind_port = if port == 0 {
         // Use OS-assigned port — start server, then print
-        let actual_port = api::start_api_server(state.clone()).await;
+        let actual_port = match api::start_api_server(state.clone()).await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[VibeLights] Failed to start API server: {e}");
+                std::process::exit(1);
+            }
+        };
         state.api_port.store(actual_port, Ordering::Relaxed);
         actual_port
     } else {
@@ -333,7 +340,7 @@ async fn run_serve(
     };
 
     // Write port file
-    let port_file = app_config_dir.join(".vibelights-port");
+    let port_file = app_config_dir.join(vibe_lights::paths::PORT_FILE);
     let _ = std::fs::write(&port_file, bind_port.to_string());
 
     eprintln!("[VibeLights] API server: http://127.0.0.1:{bind_port}");
@@ -342,7 +349,10 @@ async fn run_serve(
     if port != 0 {
         // If a specific port was requested, we need to start the server
         // on that port and block until it exits.
-        api::start_api_server_on_port(state, port).await;
+        if let Err(e) = api::start_api_server_on_port(state, port).await {
+            eprintln!("[VibeLights] API server error: {e}");
+            std::process::exit(1);
+        }
     } else {
         // Server is already running via start_api_server (spawned).
         // Block until Ctrl+C.
@@ -480,7 +490,7 @@ fn discover_port(cli_port: Option<u16>) -> u16 {
 
     // Try .vibelights-port in config dir
     let config_dir = dirs_config_dir();
-    let port_file = config_dir.join(".vibelights-port");
+    let port_file = config_dir.join(vibe_lights::paths::PORT_FILE);
     if let Ok(contents) = std::fs::read_to_string(&port_file) {
         if let Ok(p) = contents.trim().parse::<u16>() {
             return p;
@@ -507,7 +517,7 @@ fn dirs_config_dir() -> PathBuf {
         std::env::var("XDG_CONFIG_HOME")
             .map_or_else(|_| dirs_home().join(".config"), PathBuf::from)
     };
-    base.join("com.vibelights.app")
+    base.join(vibe_lights::paths::APP_ID)
 }
 
 fn dirs_home() -> PathBuf {

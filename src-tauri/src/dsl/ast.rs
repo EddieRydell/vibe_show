@@ -77,6 +77,8 @@ pub enum ParamType {
     Color,
     Gradient,
     Curve,
+    /// Motion path (callable or bare ident).
+    Path,
     /// Named user type (enum or flags).
     Named(String),
 }
@@ -172,6 +174,12 @@ pub enum ExprKind {
         then_body: Vec<Stmt>,
         else_body: Option<Vec<Stmt>>,
     },
+    /// Switch expression: `switch expr { case Pat => body, default => body }`
+    Switch {
+        scrutinee: Box<Expr>,
+        cases: Vec<(Expr, Vec<Stmt>)>,
+        default: Option<Vec<Stmt>>,
+    },
     /// Enum variant access: `ColorMode.Static`
     EnumAccess {
         enum_name: String,
@@ -198,6 +206,7 @@ pub enum BinOp {
     Mul,
     Div,
     Mod,
+    Pow,
     Lt,
     Gt,
     Le,

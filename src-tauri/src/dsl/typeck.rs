@@ -82,6 +82,15 @@ pub enum TypedExprKind {
         param_index: u16,
         arg: Box<TypedExpr>,
     },
+    /// Evaluate a motion path param at explicit time → Vec2.
+    EvalPath {
+        param_index: u16,
+        arg: Box<TypedExpr>,
+    },
+    /// Evaluate a motion path param at abs_t (implicit) → Vec2.
+    EvalPathAtT {
+        param_index: u16,
+    },
     /// color.scale(f)
     ColorScale {
         color: Box<TypedExpr>,
@@ -304,7 +313,7 @@ impl TypeContext {
                 }
 
                 let result_ty = match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow => {
                         if typed_left.ty != TypeName::Float && typed_left.ty != TypeName::Int {
                             return Err(CompileError::type_error(
                                 format!("Arithmetic on non-numeric type {:?}", typed_left.ty),
@@ -417,6 +426,23 @@ impl TypeContext {
                                     arg: Box::new(arg),
                                 },
                                 ty: TypeName::Float,
+                                span: expr.span,
+                            });
+                        }
+                        ParamType::Path => {
+                            if args.len() != 1 {
+                                return Err(CompileError::type_error(
+                                    "Path evaluation takes exactly 1 argument (time)",
+                                    expr.span,
+                                ));
+                            }
+                            let arg = self.check_expr(&args[0])?;
+                            return Ok(TypedExpr {
+                                kind: TypedExprKind::EvalPath {
+                                    param_index: param_idx,
+                                    arg: Box::new(arg),
+                                },
+                                ty: TypeName::Vec2,
                                 span: expr.span,
                             });
                         }
@@ -578,6 +604,86 @@ impl TypeContext {
                 })
             }
 
+            ExprKind::Switch { scrutinee, cases, default } => {
+                let typed_scrutinee = self.check_expr(scrutinee)?;
+                // Scrutinee must be comparable (int, float, or bool)
+                if !matches!(typed_scrutinee.ty, TypeName::Int | TypeName::Float | TypeName::Bool) {
+                    return Err(CompileError::type_error(
+                        format!("Switch scrutinee must be int, float, or bool, got {:?}", typed_scrutinee.ty),
+                        scrutinee.span,
+                    ));
+                }
+
+                // Require at least a default branch
+                if default.is_none() && cases.is_empty() {
+                    return Err(CompileError::type_error(
+                        "Switch expression must have at least one case or a default",
+                        expr.span,
+                    ));
+                }
+
+                // Type-check each case
+                let mut typed_cases = Vec::new();
+                let mut branch_type: Option<TypeName> = None;
+                for (pattern, body) in cases {
+                    let mut typed_pat = self.check_expr(pattern)?;
+                    // Auto-promote int to float if scrutinee is float
+                    if typed_scrutinee.ty == TypeName::Float && typed_pat.ty == TypeName::Int {
+                        typed_pat = Self::coerce_to_float(typed_pat);
+                    }
+                    let typed_body = self.check_block(body)?;
+                    if let Some(ty) = Self::block_result_type(&typed_body) {
+                        if let Some(ref expected) = branch_type {
+                            if ty != *expected {
+                                return Err(CompileError::type_error(
+                                    "All switch branches must have the same type",
+                                    expr.span,
+                                ));
+                            }
+                        } else {
+                            branch_type = Some(ty);
+                        }
+                    }
+                    typed_cases.push((typed_pat, typed_body));
+                }
+
+                // Type-check default branch
+                let typed_default = if let Some(def) = default {
+                    let typed_body = self.check_block(def)?;
+                    if let Some(ty) = Self::block_result_type(&typed_body) {
+                        if let Some(ref expected) = branch_type {
+                            if ty != *expected {
+                                return Err(CompileError::type_error(
+                                    "Default branch must match other case types",
+                                    expr.span,
+                                ));
+                            }
+                        } else {
+                            branch_type = Some(ty);
+                        }
+                    }
+                    Some(typed_body)
+                } else {
+                    None
+                };
+
+                let result_ty = branch_type.unwrap_or(TypeName::Bool);
+
+                // Desugar switch into chained if/else for the typed AST
+                // switch x { case A => body_a, case B => body_b, default => body_d }
+                // becomes: if x == A { body_a } else { if x == B { body_b } else { body_d } }
+                let scrutinee_for_compare = typed_scrutinee;
+                let typed_expr = Self::desugar_switch(
+                    scrutinee_for_compare,
+                    &typed_cases,
+                    typed_default.as_deref(),
+                    result_ty.clone(),
+                    expr.span,
+                );
+
+                Ok(typed_expr)
+            }
+
             ExprKind::EnumAccess { enum_name, variant } => {
                 // Look up the enum type and resolve variant to its index
                 let variants = self.enums.get(enum_name).ok_or_else(|| {
@@ -630,12 +736,19 @@ impl TypeContext {
                     ty: TypeName::Color,
                     span,
                 }),
+                // Path params as bare ident → evaluate at abs_t, return Vec2
+                ParamType::Path => Ok(TypedExpr {
+                    kind: TypedExprKind::EvalPathAtT { param_index: *idx },
+                    ty: TypeName::Vec2,
+                    span,
+                }),
                 _ => {
+                    #[allow(clippy::unreachable)]
                     let ty = match param_ty {
                         ParamType::Float(_) => TypeName::Float,
                         ParamType::Int(_) | ParamType::Named(_) => TypeName::Int,
                         ParamType::Bool => TypeName::Bool,
-                        ParamType::Color => TypeName::Color, // handled above
+                        ParamType::Color | ParamType::Path => unreachable!(), // handled above
                         ParamType::Gradient => TypeName::Gradient,
                         ParamType::Curve => TypeName::Curve,
                     };
@@ -684,6 +797,76 @@ impl TypeContext {
         stmts.last().and_then(|s| match &s.kind {
             TypedStmtKind::Expr(e) => Some(e.ty.clone()),
             TypedStmtKind::Let { .. } => None,
+        })
+    }
+
+    /// Desugar a type-checked switch into chained if/else expressions.
+    fn desugar_switch(
+        scrutinee: TypedExpr,
+        cases: &[(TypedExpr, Vec<TypedStmt>)],
+        default: Option<&[TypedStmt]>,
+        result_ty: TypeName,
+        span: Span,
+    ) -> TypedExpr {
+        // Build from the inside out: start with the default (or last case)
+        let mut result: Option<TypedExpr> = default.map(|body| {
+            // If the default is a single expression, use it directly
+            if body.len() == 1 {
+                if let TypedStmtKind::Expr(ref e) = body[0].kind {
+                    return e.clone();
+                }
+            }
+            // Wrap in always-true if block
+            TypedExpr {
+                kind: TypedExprKind::If {
+                    condition: Box::new(TypedExpr {
+                        kind: TypedExprKind::BoolLit(true),
+                        ty: TypeName::Bool,
+                        span,
+                    }),
+                    then_body: body.to_vec(),
+                    else_body: None,
+                },
+                ty: result_ty.clone(),
+                span,
+            }
+        });
+
+        // Build chained if/else from last case to first
+        for (pattern, body) in cases.iter().rev() {
+            // Generate: if scrutinee == pattern { body } else { previous }
+            let condition = TypedExpr {
+                kind: TypedExprKind::BinOp {
+                    op: BinOp::Eq,
+                    left: Box::new(scrutinee.clone()),
+                    right: Box::new(pattern.clone()),
+                },
+                ty: TypeName::Bool,
+                span,
+            };
+
+            let else_body = result.map(|prev| {
+                vec![TypedStmt {
+                    kind: TypedStmtKind::Expr(prev),
+                    span,
+                }]
+            });
+
+            result = Some(TypedExpr {
+                kind: TypedExprKind::If {
+                    condition: Box::new(condition),
+                    then_body: body.clone(),
+                    else_body,
+                },
+                ty: result_ty.clone(),
+                span,
+            });
+        }
+
+        result.unwrap_or(TypedExpr {
+            kind: TypedExprKind::BoolLit(false),
+            ty: TypeName::Bool,
+            span,
         })
     }
 
@@ -899,5 +1082,70 @@ mod tests {
     #[test]
     fn if_with_else_ok() {
         let _typed = check("if t > 0.5 {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 0.0, 1.0)\n}");
+    }
+
+    // ── Issue #72: Power operator ───────────────────────────────
+
+    #[test]
+    fn power_operator_typechecks() {
+        let _typed = check("let x = 2.0 ** 3.0\nrgb(x, 0.0, 0.0)");
+    }
+
+    #[test]
+    fn power_operator_int_promotion() {
+        let _typed = check("let x = 2 ** 3.0\nrgb(x, 0.0, 0.0)");
+    }
+
+    // ── Issue #73: Ternary operator ─────────────────────────────
+
+    #[test]
+    fn ternary_typechecks() {
+        let _typed = check("t > 0.5 ? rgb(1.0, 0.0, 0.0) : rgb(0.0, 0.0, 1.0)");
+    }
+
+    // ── Issue #70: Switch expression ────────────────────────────
+
+    #[test]
+    fn switch_enum_typechecks() {
+        let _typed = check("enum Mode { A, B }\nparam mode: Mode = A\nswitch mode {\ncase Mode.A => rgb(1.0, 0.0, 0.0)\ncase Mode.B => rgb(0.0, 1.0, 0.0)\ndefault => rgb(0.0, 0.0, 1.0)\n}");
+    }
+
+    #[test]
+    fn switch_mismatched_branches_error() {
+        let errors = check_err("enum Mode { A, B }\nparam mode: Mode = A\nswitch mode {\ncase Mode.A => rgb(1.0, 0.0, 0.0)\ndefault => 1.0\n}");
+        assert!(errors.iter().any(|e| e.message.contains("same type") || e.message.contains("match")),
+            "Should error on mismatched branch types, got: {:?}", errors);
+    }
+
+    // ── Issue #74: Easing builtins ──────────────────────────────
+
+    #[test]
+    fn easing_functions_typecheck() {
+        let _typed = check("let x = ease_in(t)\nrgb(x, x, x)");
+        let _typed = check("let x = ease_out(t)\nrgb(x, x, x)");
+        let _typed = check("let x = ease_in_out(t)\nrgb(x, x, x)");
+        let _typed = check("let x = ease_in_cubic(t)\nrgb(x, x, x)");
+        let _typed = check("let x = ease_out_cubic(t)\nrgb(x, x, x)");
+        let _typed = check("let x = ease_in_out_cubic(t)\nrgb(x, x, x)");
+    }
+
+    // ── Issue #77: Randomness builtins ──────────────────────────
+
+    #[test]
+    fn random_functions_typecheck() {
+        let _typed = check("let x = hash3(1.0, 2.0, 3.0)\nrgb(x, x, x)");
+        let _typed = check("let x = random(t)\nrgb(x, x, x)");
+        let _typed = check("let x = random_range(0.0, 1.0, t)\nrgb(x, x, x)");
+    }
+
+    // ── Issue #78: Noise builtins ───────────────────────────────
+
+    #[test]
+    fn noise_functions_typecheck() {
+        let _typed = check("let x = abs(noise(t * 5.0))\nrgb(x, x, x)");
+        let _typed = check("let x = abs(noise2(t, pos))\nrgb(x, x, x)");
+        let _typed = check("let x = abs(noise3(t, pos, 0.0))\nrgb(x, x, x)");
+        let _typed = check("let x = abs(fbm(t, pos, 4.0))\nrgb(x, x, x)");
+        let _typed = check("let x = worley2(t, pos)\nrgb(x, x, x)");
     }
 }

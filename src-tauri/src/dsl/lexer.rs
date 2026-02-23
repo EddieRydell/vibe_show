@@ -20,6 +20,9 @@ pub enum Token {
     Param,
     Enum,
     Flags,
+    Switch,
+    Case,
+    Default,
 
     // Type names
     FloatTy,
@@ -29,6 +32,7 @@ pub enum Token {
     Vec2Ty,
     GradientTy,
     CurveTy,
+    PathTy,
 
     // Punctuation
     LParen,
@@ -40,12 +44,12 @@ pub enum Token {
     Colon,
     Arrow,     // ->
     At,        // @
-    Hash,      // #
 
     // Operators
     Plus,
     Minus,
     Star,
+    StarStar,  // **
     Slash,
     Percent,
     Lt,
@@ -59,6 +63,8 @@ pub enum Token {
     Bang,      // !
     Pipe,      // |
     Eq,        // =
+    Question,  // ?
+    FatArrow,  // =>
 
     // Special
     Newline,
@@ -130,7 +136,15 @@ impl<'a> Lexer<'a> {
                 b':' => { self.pos += 1; self.push(Token::Colon, start, self.pos); }
                 b'@' => { self.pos += 1; self.push(Token::At, start, self.pos); }
                 b'+' => { self.pos += 1; self.push(Token::Plus, start, self.pos); }
-                b'*' => { self.pos += 1; self.push(Token::Star, start, self.pos); }
+                b'*' => {
+                    self.pos += 1;
+                    if self.peek() == Some(b'*') {
+                        self.pos += 1;
+                        self.push(Token::StarStar, start, self.pos);
+                    } else {
+                        self.push(Token::Star, start, self.pos);
+                    }
+                }
                 b'/' => { self.pos += 1; self.push(Token::Slash, start, self.pos); }
                 b'%' => { self.pos += 1; self.push(Token::Percent, start, self.pos); }
                 b'|' => {
@@ -186,6 +200,9 @@ impl<'a> Lexer<'a> {
                     if self.peek() == Some(b'=') {
                         self.pos += 1;
                         self.push(Token::EqEq, start, self.pos);
+                    } else if self.peek() == Some(b'>') {
+                        self.pos += 1;
+                        self.push(Token::FatArrow, start, self.pos);
                     } else {
                         self.push(Token::Eq, start, self.pos);
                     }
@@ -199,6 +216,7 @@ impl<'a> Lexer<'a> {
                         self.push(Token::Bang, start, self.pos);
                     }
                 }
+                b'?' => { self.pos += 1; self.push(Token::Question, start, self.pos); }
                 b'#' => {
                     self.pos += 1;
                     self.lex_color_hex(start);
@@ -273,6 +291,7 @@ impl<'a> Lexer<'a> {
             Token::Plus
                 | Token::Minus
                 | Token::Star
+                | Token::StarStar
                 | Token::Slash
                 | Token::Percent
                 | Token::Lt
@@ -285,6 +304,8 @@ impl<'a> Lexer<'a> {
                 | Token::Or
                 | Token::Pipe
                 | Token::Eq
+                | Token::Question
+                | Token::FatArrow
                 | Token::Comma
                 | Token::LParen
                 | Token::LBrace
@@ -301,6 +322,7 @@ impl<'a> Lexer<'a> {
             token,
             Token::Plus
                 | Token::Star
+                | Token::StarStar
                 | Token::Slash
                 | Token::Percent
                 | Token::Lt
@@ -313,6 +335,7 @@ impl<'a> Lexer<'a> {
                 | Token::Or
                 | Token::Pipe
                 | Token::Dot
+                | Token::Question
         )
     }
 
@@ -438,6 +461,9 @@ impl<'a> Lexer<'a> {
             "flags" => Token::Flags,
             "true" => Token::True,
             "false" => Token::False,
+            "switch" => Token::Switch,
+            "case" => Token::Case,
+            "default" => Token::Default,
             "float" => Token::FloatTy,
             "int" => Token::IntTy,
             "bool" => Token::BoolTy,
@@ -445,6 +471,7 @@ impl<'a> Lexer<'a> {
             "vec2" => Token::Vec2Ty,
             "gradient" => Token::GradientTy,
             "curve" => Token::CurveTy,
+            "path" => Token::PathTy,
             _ => Token::Ident(word.to_string()),
         };
         self.push(token, start, self.pos);
@@ -477,10 +504,10 @@ mod tests {
 
     #[test]
     fn type_keywords() {
-        let tokens = tok("float int bool color vec2 gradient curve");
+        let tokens = tok("float int bool color vec2 gradient curve path");
         assert_eq!(tokens, vec![
             Token::FloatTy, Token::IntTy, Token::BoolTy, Token::ColorTy,
-            Token::Vec2Ty, Token::GradientTy, Token::CurveTy, Token::Eof,
+            Token::Vec2Ty, Token::GradientTy, Token::CurveTy, Token::PathTy, Token::Eof,
         ]);
     }
 
@@ -630,6 +657,62 @@ mod tests {
             Token::Ident("mycolor".into()), Token::Dot,
             Token::Ident("scale".into()), Token::LParen,
             Token::Float(0.5), Token::RParen, Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn star_star_token() {
+        let tokens = tok("2.0 ** 3.0");
+        assert_eq!(tokens, vec![
+            Token::Float(2.0), Token::StarStar, Token::Float(3.0), Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn question_token() {
+        let tokens = tok("x ? y : z");
+        assert_eq!(tokens, vec![
+            Token::Ident("x".into()), Token::Question,
+            Token::Ident("y".into()), Token::Colon,
+            Token::Ident("z".into()), Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn fat_arrow_token() {
+        let tokens = tok("case A => x");
+        assert_eq!(tokens, vec![
+            Token::Case, Token::Ident("A".into()), Token::FatArrow,
+            Token::Ident("x".into()), Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn switch_case_default_keywords() {
+        let tokens = tok("switch case default");
+        assert_eq!(tokens, vec![
+            Token::Switch, Token::Case, Token::Default, Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn star_star_vs_star() {
+        // Ensure ** doesn't break * parsing
+        let tokens = tok("a * b ** c");
+        assert_eq!(tokens, vec![
+            Token::Ident("a".into()), Token::Star, Token::Ident("b".into()),
+            Token::StarStar, Token::Ident("c".into()), Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn fat_arrow_vs_eq() {
+        // Ensure => doesn't break = or == parsing
+        let tokens = tok("a = b == c => d");
+        assert_eq!(tokens, vec![
+            Token::Ident("a".into()), Token::Eq, Token::Ident("b".into()),
+            Token::EqEq, Token::Ident("c".into()), Token::FatArrow,
+            Token::Ident("d".into()), Token::Eof,
         ]);
     }
 }

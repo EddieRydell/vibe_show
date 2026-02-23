@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -86,6 +87,7 @@ pub fn evaluate(
     // Library references for ref resolution
     let gradient_lib = &sequence.gradient_library;
     let curve_lib = &sequence.curve_library;
+    let motion_path_lib = &sequence.motion_paths;
 
     // Phase 1A: Build fixture pixel count lookup (eliminates O(N) scans).
     let pixel_counts: HashMap<FixtureId, usize> = show
@@ -149,10 +151,11 @@ pub fn evaluate(
             let spatial = effects::needs_positions(&effect_instance.kind);
 
             // Resolve library references once per effect (outside per-fixture loop).
-            let resolved_params = if effect_instance.params.has_refs() {
-                effect_instance.params.resolve_refs(gradient_lib, curve_lib)
+            // Use Cow to avoid cloning when there are no refs to resolve.
+            let resolved_params: Cow<'_, _> = if effect_instance.params.has_refs() {
+                Cow::Owned(effect_instance.params.resolve_refs(gradient_lib, curve_lib))
             } else {
-                effect_instance.params.clone()
+                Cow::Borrowed(&effect_instance.params)
             };
 
             // Build flat position vector for spatial effects (e.g. Wipe).
@@ -231,6 +234,7 @@ pub fn evaluate(
                             effects::script::evaluate_pixels_batch(
                                 compiled,
                                 t_normalized,
+                                t,
                                 pixels,
                                 global_pixel_offset,
                                 total_pixels,
@@ -238,6 +242,7 @@ pub fn evaluate(
                                 effect_instance.blend_mode,
                                 effect_instance.opacity,
                                 fixture_positions,
+                                Some(motion_path_lib),
                             );
                         }
                     }
@@ -325,6 +330,7 @@ mod tests {
                 scripts: std::collections::HashMap::new(),
                 gradient_library: std::collections::HashMap::new(),
                 curve_library: std::collections::HashMap::new(),
+                motion_paths: std::collections::HashMap::new(),
             }],
             patches: vec![],
             controllers: vec![],

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { cmd } from "../commands";
 import type { PythonEnvStatus, ProgressEvent } from "../types";
 
 interface PythonSetupWizardProps {
@@ -58,11 +59,18 @@ export function PythonSetupWizard({
     }
   }, [onSetup]);
 
+  const handleCancelSetup = useCallback(async () => {
+    await cmd.cancelOperation("python_setup");
+  }, []);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Escape" && phase !== "install") onClose();
+      if (e.key === "Escape") {
+        if (phase === "install") handleCancelSetup();
+        else onClose();
+      }
     },
-    [onClose, phase],
+    [onClose, phase, handleCancelSetup],
   );
 
   return (
@@ -70,7 +78,10 @@ export function PythonSetupWizard({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onKeyDown={handleKeyDown}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget && phase !== "install") onClose();
+        if (e.target === e.currentTarget) {
+          if (phase === "install") handleCancelSetup();
+          else onClose();
+        }
       }}
     >
       <div className="bg-surface border-border w-[480px] rounded-lg border shadow-xl">
@@ -121,7 +132,7 @@ export function PythonSetupWizard({
                 />
               </div>
               <p className="text-text-2 text-xs">
-                {Math.round(progress * 100)}% — Do not close this window
+                {Math.round(progress * 100)}% — Press Escape or click Cancel to stop
               </p>
             </div>
           )}
@@ -161,6 +172,14 @@ export function PythonSetupWizard({
                 Install
               </button>
             </>
+          )}
+          {phase === "install" && (
+            <button
+              onClick={handleCancelSetup}
+              className="border-border bg-surface-2 text-text-2 hover:bg-bg rounded border px-3 py-1.5 text-xs transition-colors"
+            >
+              Cancel
+            </button>
           )}
           {(phase === "done" || phase === "error") && (
             <button

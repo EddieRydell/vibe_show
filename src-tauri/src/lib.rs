@@ -15,6 +15,7 @@ pub mod error;
 pub mod import;
 pub mod llm;
 pub mod model;
+pub mod paths;
 pub mod profile;
 #[cfg(feature = "tauri-app")]
 pub mod progress;

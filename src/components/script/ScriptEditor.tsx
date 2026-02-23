@@ -73,7 +73,7 @@ export function ScriptEditor({
           extensions={extensions}
           theme="dark"
           height="100%"
-          className="h-full text-xs [&_.cm-editor]:h-full [&_.cm-scroller]:!overflow-auto"
+          className="h-full text-xs [&_.cm-editor]:h-full [&_.cm-scroller]:overflow-auto!"
           basicSetup={{
             lineNumbers: true,
             foldGutter: false,

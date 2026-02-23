@@ -131,7 +131,7 @@ export function GroupEditor({ group, fixtures, groups, onSave, onCancel, nextId 
               ))}
 
               {availableGroups.length > 0 && (
-                <div className="border-border border-b border-t px-3 py-1.5">
+                <div className="border-border border-y  px-3 py-1.5">
                   <span className="text-text-2 text-[10px] font-medium uppercase tracking-wider">Groups</span>
                 </div>
               )}

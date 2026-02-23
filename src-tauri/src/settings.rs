@@ -123,33 +123,23 @@ impl AppSettings {
     }
 }
 
-/// Path to the settings file within the app config directory.
-pub fn settings_path(app_config_dir: &Path) -> PathBuf {
-    app_config_dir.join("settings.json")
-}
-
-/// Path to the credentials file (API key stored separately from settings).
-fn credentials_path(app_config_dir: &Path) -> PathBuf {
-    app_config_dir.join(".credentials")
-}
-
 /// Load the API key from the separate credentials file.
 pub fn load_api_key(app_config_dir: &Path) -> Option<String> {
-    let path = credentials_path(app_config_dir);
+    let path = crate::paths::credentials_path(app_config_dir);
     std::fs::read_to_string(path)
         .ok()
         .map(|k| k.trim().to_string())
         .filter(|k| !k.is_empty())
 }
 
-/// Save the API key to the separate credentials file.
+/// Save the API key to the separate credentials file (atomic write).
 pub fn save_api_key(app_config_dir: &Path, key: &str) -> Result<(), ProjectError> {
     std::fs::create_dir_all(app_config_dir)?;
-    let path = credentials_path(app_config_dir);
+    let path = crate::paths::credentials_path(app_config_dir);
     if key.is_empty() {
         let _ = std::fs::remove_file(&path);
     } else {
-        std::fs::write(&path, key)?;
+        crate::project::atomic_write(&path, key.as_bytes())?;
     }
     Ok(())
 }
@@ -159,7 +149,7 @@ pub fn save_api_key(app_config_dir: &Path, key: &str) -> Result<(), ProjectError
 /// Handles backward compat: if the old `claude_api_key` field is present, migrates
 /// it into `llm.api_key` with provider=Anthropic and saves it to the credentials file.
 pub fn load_settings(app_config_dir: &Path) -> Option<AppSettings> {
-    let path = settings_path(app_config_dir);
+    let path = crate::paths::settings_path(app_config_dir);
     if !path.exists() {
         return None;
     }
@@ -191,7 +181,7 @@ pub fn save_settings(
     settings: &AppSettings,
 ) -> Result<(), ProjectError> {
     std::fs::create_dir_all(app_config_dir)?;
-    write_json(&settings_path(app_config_dir), settings)
+    write_json(&crate::paths::settings_path(app_config_dir), settings)
 }
 
 #[cfg(test)]
@@ -228,7 +218,7 @@ mod tests {
             "data_dir": "/some/dir",
             "claude_api_key": "sk-ant-test-key"
         });
-        std::fs::write(settings_path(&dir), serde_json::to_string_pretty(&old_json).unwrap()).unwrap();
+        std::fs::write(crate::paths::settings_path(&dir), serde_json::to_string_pretty(&old_json).unwrap()).unwrap();
 
         let loaded = load_settings(&dir).expect("should load");
         // Key should be migrated into llm config

@@ -14,7 +14,7 @@ use vibe_lights::commands;
 use vibe_lights::dispatcher::CommandDispatcher;
 use vibe_lights::model::Show;
 use vibe_lights::settings;
-use vibe_lights::state::{AppState, PlaybackState};
+use vibe_lights::state::{AppState, CancellationRegistry, PlaybackState};
 
 #[allow(clippy::expect_used)] // app cannot start without config dir / Tauri runtime
 fn main() {
@@ -60,6 +60,7 @@ fn main() {
                 agent_session_id: Mutex::new(None),
                 agent_display_messages: Mutex::new(Vec::new()),
                 agent_chats: Mutex::new(vibe_lights::chat::AgentChatsData::default()),
+                cancellation: CancellationRegistry::new(),
             });
 
             // Load global chat history
@@ -71,14 +72,20 @@ fn main() {
             // Start the HTTP API server on a background task
             let api_state = state.clone();
             tauri::async_runtime::spawn(async move {
-                let port = api::start_api_server(api_state.clone()).await;
-                api_state.api_port.store(port, Ordering::Relaxed);
+                match api::start_api_server(api_state.clone()).await {
+                    Ok(port) => {
+                        api_state.api_port.store(port, Ordering::Relaxed);
 
-                // Write port file to app config dir for external tool discovery
-                let port_file = app_config_dir.join(".vibelights-port");
-                let _ = std::fs::write(&port_file, port.to_string());
+                        // Write port file to app config dir for external tool discovery
+                        let port_file = vibe_lights::paths::port_file_path(&app_config_dir);
+                        let _ = std::fs::write(&port_file, port.to_string());
 
-                eprintln!("[VibeLights] API server listening on http://127.0.0.1:{port}");
+                        eprintln!("[VibeLights] API server listening on http://127.0.0.1:{port}");
+                    }
+                    Err(e) => {
+                        eprintln!("[VibeLights] Failed to start API server: {e}");
+                    }
+                }
             });
 
             Ok(())
@@ -94,6 +101,7 @@ fn main() {
             commands::analyze_audio,
             commands::get_python_status,
             commands::setup_python_env,
+            commands::cancel_operation,
             commands::start_python_sidecar,
             commands::stop_python_sidecar,
             // Binary/hot-path commands

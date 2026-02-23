@@ -159,7 +159,7 @@ export function SettingsScreen({ onBack }: Props) {
                   }`}
                 >
                   <span
-                    className="h-3 w-3 rounded-full"
+                    className="size-3  rounded-full"
                     style={{ backgroundColor: preset.value }}
                   />
                   {preset.label}
@@ -170,7 +170,7 @@ export function SettingsScreen({ onBack }: Props) {
               <label className="text-text-2 text-xs">Custom</label>
               <div className="relative">
                 <div
-                  className="border-border h-8 w-8 rounded border"
+                  className="border-border size-8  rounded border"
                   style={{ backgroundColor: settings.accentColor }}
                 />
                 <input
@@ -240,7 +240,7 @@ export function SettingsScreen({ onBack }: Props) {
 
             {/* API Key */}
             <div className="mt-3 flex items-center gap-2">
-              <Key size={14} className="text-text-2 flex-shrink-0" />
+              <Key size={14} className="text-text-2 shrink-0" />
               <div className="relative flex-1">
                 <input
                   type={showKey ? "text" : "password"}

@@ -1,4 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from "react";
+import { cssMouseOffset } from "../../utils/cssZoom";
+import { FlipHorizontal2, FlipVertical2, RotateCcw } from "lucide-react";
 import type { CurvePoint } from "../../types";
 import { CURVE_PRESETS } from "../../constants";
 
@@ -19,6 +21,8 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+type TaggedPoint = CurvePoint & { _id: number };
+
 const PAD = 6;
 
 export function CurveEditor({
@@ -30,8 +34,16 @@ export function CurveEditor({
   expanded = false,
 }: CurveEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [dragging, setDragging] = useState<number | null>(null);
+  /** Tagged copy of points, only populated during a drag */
+  const taggedRef = useRef<TaggedPoint[]>([]);
+  const dragIdRef = useRef<number | null>(null);
+  const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
+  const [hoveredPoint, setHoveredPoint] = useState<number | null>(null);
+  /** Canvas-space cursor position for tooltip placement */
+  const [cursorPos, setCursorPos] = useState<{ cx: number; cy: number } | null>(
+    null,
+  );
 
   const pointR = expanded ? 7 : 5;
 
@@ -78,6 +90,23 @@ export function CurveEditor({
       ctx.stroke();
     }
 
+    // Dashed center reference lines at 0.5
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.14)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    const cx5 = toCanvasX(0.5);
+    ctx.beginPath();
+    ctx.moveTo(cx5, PAD);
+    ctx.lineTo(cx5, canvasH - PAD);
+    ctx.stroke();
+    const cy5 = toCanvasY(0.5);
+    ctx.beginPath();
+    ctx.moveTo(PAD, cy5);
+    ctx.lineTo(canvasW - PAD, cy5);
+    ctx.stroke();
+    ctx.restore();
+
     // Border
     ctx.strokeStyle = "rgba(255,255,255,0.15)";
     ctx.strokeRect(PAD, PAD, canvasW - 2 * PAD, canvasH - 2 * PAD);
@@ -98,7 +127,11 @@ export function CurveEditor({
 
     const sorted = sortByX(value);
     if (sorted.length >= 2) {
-      // Filled area under curve
+      // Vertical gradient fill under curve
+      const grad = ctx.createLinearGradient(0, toCanvasY(1), 0, toCanvasY(0));
+      grad.addColorStop(0, "rgba(96, 165, 250, 0.22)");
+      grad.addColorStop(1, "rgba(96, 165, 250, 0.03)");
+
       ctx.beginPath();
       ctx.moveTo(toCanvasX(sorted[0].x), toCanvasY(0));
       for (const pt of sorted) {
@@ -106,13 +139,13 @@ export function CurveEditor({
       }
       ctx.lineTo(toCanvasX(sorted[sorted.length - 1].x), toCanvasY(0));
       ctx.closePath();
-      ctx.fillStyle = "rgba(96, 165, 250, 0.12)";
+      ctx.fillStyle = grad;
       ctx.fill();
 
       // Curve line
       ctx.beginPath();
       ctx.strokeStyle = "#60a5fa";
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 1;
       ctx.moveTo(toCanvasX(sorted[0].x), toCanvasY(sorted[0].y));
       for (let i = 1; i < sorted.length; i++) {
         ctx.lineTo(toCanvasX(sorted[i].x), toCanvasY(sorted[i].y));
@@ -120,34 +153,50 @@ export function CurveEditor({
       ctx.stroke();
     }
 
-    // Points
+    // Points (no border)
     for (let i = 0; i < sorted.length; i++) {
-      const cx = toCanvasX(sorted[i].x);
-      const cy = toCanvasY(sorted[i].y);
+      const px = toCanvasX(sorted[i].x);
+      const py = toCanvasY(sorted[i].y);
+      const isDragging = draggingIdx === i;
+      const isHovered = hoveredPoint === i;
+      const r = isDragging || isHovered ? pointR + 2 : pointR;
+      const fill = isDragging
+        ? "#93c5fd"
+        : isHovered
+          ? "#60a5fa"
+          : "#3b82f6";
       ctx.beginPath();
-      ctx.arc(cx, cy, pointR, 0, Math.PI * 2);
-      ctx.fillStyle = dragging === i ? "#93c5fd" : "#3b82f6";
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fillStyle = fill;
       ctx.fill();
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
     }
 
-    // Hover coordinate readout in expanded mode
-    if (expanded && hover) {
-      const text = `x: ${round2(hover.x).toFixed(2)}, y: ${round2(hover.y).toFixed(2)}`;
-      ctx.fillStyle = "rgba(0,0,0,0.7)";
+    // Hover coordinate tooltip following cursor
+    if (expanded && hover && cursorPos) {
+      const pointLabel =
+        hoveredPoint !== null ? ` [pt ${hoveredPoint + 1}]` : "";
+      const text = `x: ${round2(hover.x).toFixed(2)}, y: ${round2(hover.y).toFixed(2)}${pointLabel}`;
       ctx.font = "10px monospace";
       const tw = ctx.measureText(text).width;
-      ctx.fillRect(canvasW - tw - 10, 2, tw + 8, 16);
+      const boxW = tw + 8;
+      const boxH = 16;
+      // Position near cursor, clamped inside canvas
+      let tx = cursorPos.cx + 12;
+      let ty = cursorPos.cy - 20;
+      if (tx + boxW > canvasW) tx = cursorPos.cx - boxW - 4;
+      if (ty < 0) ty = cursorPos.cy + 12;
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(tx, ty, boxW, boxH);
       ctx.fillStyle = "#e5e7eb";
       ctx.textAlign = "left";
-      ctx.fillText(text, canvasW - tw - 6, 13);
+      ctx.fillText(text, tx + 4, ty + 11);
     }
   }, [
     value,
-    dragging,
+    draggingIdx,
     hover,
+    hoveredPoint,
+    cursorPos,
     canvasW,
     canvasH,
     toCanvasX,
@@ -174,9 +223,10 @@ export function CurveEditor({
   );
 
   const getMousePos = (e: React.MouseEvent) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return { cx: 0, cy: 0 };
-    return { cx: e.clientX - rect.left, cy: e.clientY - rect.top };
+    const canvas = canvasRef.current;
+    if (!canvas) return { cx: 0, cy: 0 };
+    const { x, y } = cssMouseOffset(e, canvas);
+    return { cx: x, cy: y };
   };
 
   const onMouseDown = (e: React.MouseEvent) => {
@@ -184,12 +234,14 @@ export function CurveEditor({
     const sorted = sortByX(value);
     const hit = getPointAt(cx, cy);
     if (hit !== null) {
-      setDragging(hit);
+      // Tag all points with stable IDs; track the hit point's ID
+      taggedRef.current = sorted.map((p, i) => ({ ...p, _id: i }));
+      dragIdRef.current = hit;
+      setDraggingIdx(hit);
     } else {
       const x = fromCanvasX(cx);
       const y = fromCanvasY(cy);
-      const next = sortByX([...sorted, { x, y }]);
-      onChange(next);
+      onChange(sortByX([...sorted, { x, y }]));
     }
   };
 
@@ -197,25 +249,41 @@ export function CurveEditor({
     const { cx, cy } = getMousePos(e);
     if (expanded) {
       setHover({ x: fromCanvasX(cx), y: fromCanvasY(cy) });
+      setCursorPos({ cx, cy });
     }
-    if (dragging === null) return;
+    if (dragIdRef.current === null) {
+      setHoveredPoint(getPointAt(cx, cy));
+      return;
+    }
     const x = fromCanvasX(cx);
     const y = fromCanvasY(cy);
-    const sorted = sortByX(value);
-    const next = sorted.map((p, i) => (i === dragging ? { x, y } : p));
-    onChange(sortByX(next));
+    const id = dragIdRef.current;
+    // Update the dragged point in our tagged array
+    taggedRef.current = taggedRef.current.map((p) =>
+      p._id === id ? { ...p, x, y } : p,
+    );
+    const sorted = [...taggedRef.current].sort((a, b) => a.x - b.x);
+    setDraggingIdx(sorted.findIndex((p) => p._id === id));
+    onChange(sorted.map(({ x, y }) => ({ x, y })));
   };
 
   const onMouseUp = () => {
-    setDragging(null);
+    dragIdRef.current = null;
+    taggedRef.current = [];
+    setDraggingIdx(null);
   };
 
   const onMouseLeave = () => {
-    setDragging(null);
+    dragIdRef.current = null;
+    taggedRef.current = [];
+    setDraggingIdx(null);
     setHover(null);
+    setHoveredPoint(null);
+    setCursorPos(null);
   };
 
-  const onDoubleClick = (e: React.MouseEvent) => {
+  const onContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
     if (value.length <= 2) return;
     const { cx, cy } = getMousePos(e);
     const hit = getPointAt(cx, cy);
@@ -223,6 +291,21 @@ export function CurveEditor({
       const sorted = sortByX(value);
       onChange(sorted.filter((_, i) => i !== hit));
     }
+  };
+
+  const flipH = () => {
+    onChange(sortByX(value.map((p) => ({ x: round2(1 - p.x), y: p.y }))));
+  };
+
+  const flipV = () => {
+    onChange(sortByX(value.map((p) => ({ x: p.x, y: round2(1 - p.y) }))));
+  };
+
+  const resetLinear = () => {
+    onChange([
+      { x: 0, y: 0 },
+      { x: 1, y: 1 },
+    ]);
   };
 
   const updatePointField = (index: number, field: "x" | "y", val: number) => {
@@ -236,25 +319,64 @@ export function CurveEditor({
 
   const sorted = sortByX(value);
 
+  const cursor =
+    draggingIdx !== null
+      ? "grabbing"
+      : hoveredPoint !== null
+        ? "grab"
+        : "crosshair";
+
+  const toolbarBtnClass =
+    "border-border bg-surface-2 text-text-2 hover:bg-bg hover:text-text rounded border p-1";
+
   return (
     <div className="flex flex-col gap-1.5">
       {label && (
-        <div className="flex items-center justify-between">
-          <label className="text-text-2 text-[11px]">{label}</label>
-          <span className="text-text-2 text-[9px]">{value.length} pts</span>
+        <label className="text-text-2 text-[11px]">{label}</label>
+      )}
+      {/* Toolbar — only in expanded mode */}
+      {expanded && (
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className={toolbarBtnClass}
+            onClick={flipH}
+            title="Flip Horizontal"
+          >
+            <FlipHorizontal2 size={12} />
+          </button>
+          <button
+            type="button"
+            className={toolbarBtnClass}
+            onClick={flipV}
+            title="Flip Vertical"
+          >
+            <FlipVertical2 size={12} />
+          </button>
+          <button
+            type="button"
+            className={toolbarBtnClass}
+            onClick={resetLinear}
+            title="Reset to Linear"
+          >
+            <RotateCcw size={12} />
+          </button>
+          <span className="text-text-2 ml-auto text-[9px]">
+            {value.length} pts
+          </span>
         </div>
       )}
       <canvas
         ref={canvasRef}
         width={canvasW}
         height={canvasH}
-        className="cursor-crosshair rounded"
-        style={{ width: canvasW, height: canvasH }}
+        className="rounded"
+        style={{ width: canvasW, height: canvasH, cursor }}
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
         onMouseLeave={onMouseLeave}
-        onDoubleClick={onDoubleClick}
+        onContextMenu={onContextMenu}
       />
       {/* Presets */}
       {expanded ? (
@@ -271,7 +393,7 @@ export function CurveEditor({
           ))}
         </div>
       ) : (
-        <div className="flex gap-1">
+        <div className="flex items-center gap-1">
           {CURVE_PRESETS.slice(0, 3).map((preset) => (
             <button
               key={preset.name}
@@ -282,6 +404,9 @@ export function CurveEditor({
               {preset.name}
             </button>
           ))}
+          <span className="text-text-2 ml-auto text-[9px]">
+            {value.length} pts
+          </span>
         </div>
       )}
       {/* Point table in expanded mode */}
@@ -298,7 +423,12 @@ export function CurveEditor({
             </thead>
             <tbody>
               {sorted.map((pt, i) => (
-                <tr key={i} className="border-border border-t">
+                <tr
+                  key={i}
+                  className={`border-border border-t${hoveredPoint === i ? " bg-surface-2" : ""}`}
+                  onMouseEnter={() => setHoveredPoint(i)}
+                  onMouseLeave={() => setHoveredPoint(null)}
+                >
                   <td className="text-text-2 px-2 py-0.5">{i + 1}</td>
                   <td className="px-1 py-0.5">
                     <input
@@ -337,7 +467,7 @@ export function CurveEditor({
                           onChange(sorted.filter((_, j) => j !== i))
                         }
                       >
-                        x
+                        &times;
                       </button>
                     )}
                   </td>

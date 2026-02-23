@@ -57,6 +57,7 @@ if mode == Mode.Pulse {
 | `pixels` | int   | Total pixel count in the effect's target |
 | `pos`    | float | Normalized position: pixel / (pixels - 1), range [0.0, 1.0] |
 | `pos2d`  | vec2  | 2D position (requires @spatial true) |
+| `abs_t`  | float | Absolute time in seconds (for motion path evaluation) |
 | `PI`     | float | 3.14159... |
 | `TAU`    | float | 6.28318... (2π) |
 
@@ -68,6 +69,7 @@ if mode == Mode.Pulse {
 - `vec2` — 2D vector (x, y fields)
 - `gradient` — color gradient (callable: `grad(position)`)
 - `curve` — timing curve (callable: `curve1(x)`)
+- `path` — motion path (bare ident → Vec2 at abs_t, callable: `orb(time)` → Vec2)
 
 ## Operators
 
@@ -105,6 +107,7 @@ if mode == Mode.Pulse {
 - `color` — color picker (default: hex like `#ff0000`)
 - `gradient` — gradient editor (default: comma-separated hex `#ff0000, #0000ff`)
 - `curve` — curve editor (default: comma-separated x:y pairs `0:0, 0.5:1, 1:0`)
+- `path` — motion path selector (no default; bound at runtime via PathRef)
 - `EnumName` — dropdown from defined enum
 - `FlagsName` — multi-select from defined flags
 
@@ -233,7 +236,7 @@ fn function_name(param1: type, param2: type) -> return_type {
     expr
 }
 ```
-Supported types in signatures: `float`, `int`, `bool`, `color`, `vec2`, `gradient`, `curve`.
+Supported types in signatures: `float`, `int`, `bool`, `color`, `vec2`, `gradient`, `curve`, `path`.
 
 ## Examples
 

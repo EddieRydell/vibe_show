@@ -96,7 +96,7 @@ export function HomeScreen({ onOpenProfile }: Props) {
       <div className="flex-1 overflow-y-auto p-6">
         {/* Create form */}
         {showCreate && (
-          <div className="border-border bg-surface mb-6 flex items-center gap-3 rounded-lg border p-4">
+          <div className="border-border mb-6 flex items-center gap-3 rounded border px-4 py-3">
             <input
               type="text"
               value={newName}
@@ -134,31 +134,31 @@ export function HomeScreen({ onOpenProfile }: Props) {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="border-border divide-border divide-y rounded border">
             {profiles.map((p) => (
               <div
                 key={p.slug}
                 onClick={() => onOpenProfile(p.slug)}
-                className="border-border bg-surface hover:border-primary group cursor-pointer rounded-lg border p-4 transition-colors"
+                className="hover:bg-surface-2 group flex cursor-pointer items-center gap-4 px-4 py-3 transition-colors"
               >
-                <h3 className="text-text text-sm font-medium">{p.name}</h3>
-                <div className="text-text-2 mt-2 flex gap-4 text-xs">
-                  <span>
-                    {p.fixture_count} fixture{p.fixture_count !== 1 ? "s" : ""}
-                  </span>
-                  <span>
-                    {p.sequence_count} sequence{p.sequence_count !== 1 ? "s" : ""}
-                  </span>
-                </div>
-                <div className="text-text-2 mt-1 text-[10px]">
-                  Created {p.created_at.split("T")[0]}
+                <div className="min-w-0 flex-1">
+                  <span className="text-text text-sm font-medium">{p.name}</span>
+                  <div className="text-text-2 mt-0.5 flex gap-4 text-xs">
+                    <span>
+                      {p.fixture_count} fixture{p.fixture_count !== 1 ? "s" : ""}
+                    </span>
+                    <span>
+                      {p.sequence_count} sequence{p.sequence_count !== 1 ? "s" : ""}
+                    </span>
+                    <span>{p.created_at.split("T")[0]}</span>
+                  </div>
                 </div>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     handleDelete(p.slug, p.name);
                   }}
-                  className="text-text-2 hover:text-error mt-2 text-[10px] opacity-0 transition-all group-hover:opacity-100"
+                  className="text-text-2 hover:text-error text-[10px] opacity-0 transition-all group-hover:opacity-100"
                 >
                   Delete
                 </button>

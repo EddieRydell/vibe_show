@@ -737,7 +737,7 @@ async fn post_vixen_execute(
 
         let mut sequences_imported = 0usize;
         for seq_path in &config.sequence_paths {
-            if importer.parse_sequence(std::path::Path::new(seq_path)).is_ok() {
+            if importer.parse_sequence(std::path::Path::new(seq_path), None).is_ok() {
                 sequences_imported += 1;
             }
         }
@@ -1194,38 +1194,38 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
 /// Start the API server on a random available port. Returns the bound port.
 ///
-/// # Panics
-/// Panics if the TCP listener cannot bind (OS out of ephemeral ports) or the
-/// server fails to start. These are unrecoverable — the app cannot function
-/// without an API server.
-#[allow(clippy::unwrap_used)]
-pub async fn start_api_server(state: Arc<AppState>) -> u16 {
+/// # Errors
+/// Returns an I/O error if the TCP listener cannot bind or the local address
+/// cannot be determined.
+pub async fn start_api_server(state: Arc<AppState>) -> Result<u16, std::io::Error> {
     let app = build_router(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
 
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        if let Err(e) = axum::serve(listener, app).await {
+            eprintln!("[VibeLights] API server error: {e}");
+        }
     });
 
-    port
+    Ok(port)
 }
 
 /// Start the API server on a specific port. Returns the bound port.
-/// Used by the CLI binary.
+/// Used by the CLI binary. Blocks until the server exits.
 ///
-/// # Panics
-/// Panics if the TCP listener cannot bind or the server fails to start.
-#[allow(clippy::unwrap_used)]
-pub async fn start_api_server_on_port(state: Arc<AppState>, port: u16) -> u16 {
+/// # Errors
+/// Returns an I/O error if the TCP listener cannot bind, the local address
+/// cannot be determined, or the server encounters a fatal error.
+pub async fn start_api_server_on_port(state: Arc<AppState>, port: u16) -> Result<u16, std::io::Error> {
     let app = build_router(state);
 
     let addr = format!("127.0.0.1:{port}");
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    let actual_port = listener.local_addr().unwrap().port();
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let actual_port = listener.local_addr()?.port();
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app).await?;
 
-    actual_port
+    Ok(actual_port)
 }

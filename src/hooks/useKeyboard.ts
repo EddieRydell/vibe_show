@@ -71,6 +71,12 @@ export function useKeyboard(actions: KeyboardActions) {
             }
           }
           break;
+        case "KeyY":
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            actions.onRedo?.();
+          }
+          break;
         case "KeyS":
           if (e.ctrlKey || e.metaKey) {
             e.preventDefault();

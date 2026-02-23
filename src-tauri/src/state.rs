@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU16;
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -17,6 +17,73 @@ use crate::model::analysis::AudioAnalysis;
 use crate::model::show::Show;
 use crate::model::{BlendMode, EffectKind, EffectParams, ParamSchema, TimeRange};
 use crate::settings::AppSettings;
+
+// ── Cancellation Registry ──────────────────────────────────────────
+
+/// Manages cancel flags for long-running operations so the frontend can
+/// request cancellation and the backend can check for it cooperatively.
+pub struct CancellationRegistry {
+    flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
+}
+
+impl CancellationRegistry {
+    pub fn new() -> Self {
+        Self {
+            flags: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Register a new cancellable operation. Returns a flag that the operation
+    /// should periodically check. If an operation with the same name is already
+    /// registered, its existing flag is returned (and reset to false).
+    pub fn register(&self, operation: &str) -> Arc<AtomicBool> {
+        let mut flags = self.flags.lock();
+        let flag = flags
+            .entry(operation.to_string())
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)));
+        flag.store(false, Ordering::Relaxed);
+        flag.clone()
+    }
+
+    /// Signal cancellation for the named operation. Returns true if the
+    /// operation was found and signalled.
+    pub fn cancel(&self, operation: &str) -> bool {
+        let flags = self.flags.lock();
+        if let Some(flag) = flags.get(operation) {
+            flag.store(true, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove the cancel flag for a completed operation.
+    pub fn unregister(&self, operation: &str) {
+        self.flags.lock().remove(operation);
+    }
+}
+
+/// Poll the cancel flag every 250ms. Resolves when the flag becomes true.
+/// Intended for use with `tokio::select!` to race against async work.
+pub async fn wait_for_cancel(flag: &AtomicBool) {
+    loop {
+        if flag.load(Ordering::Relaxed) {
+            return;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+    }
+}
+
+/// Check the cancel flag and return `Err(AppError::Cancelled)` if set.
+pub fn check_cancelled(flag: &AtomicBool, operation: &str) -> Result<(), AppError> {
+    if flag.load(Ordering::Relaxed) {
+        Err(AppError::Cancelled {
+            operation: operation.to_string(),
+        })
+    } else {
+        Ok(())
+    }
+}
 
 // ── Application State ──────────────────────────────────────────────
 
@@ -49,6 +116,8 @@ pub struct AppState {
     pub agent_display_messages: Mutex<Vec<crate::chat::ChatHistoryEntry>>,
     /// Multi-conversation agent chat data.
     pub agent_chats: Mutex<crate::chat::AgentChatsData>,
+    /// Cancellation flags for long-running operations.
+    pub cancellation: CancellationRegistry,
 }
 
 impl AppState {

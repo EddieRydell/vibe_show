@@ -239,8 +239,16 @@ impl Parser {
         let (name, _) = self.expect_ident()?;
         self.expect(&Token::Colon)?;
         let ty = self.parse_param_type()?;
-        self.expect(&Token::Eq)?;
-        let default = self.parse_param_default(&ty)?;
+        // Path params have no default value (bound at runtime via PathRef).
+        let default = if matches!(ty, ParamType::Path) {
+            Expr {
+                kind: ExprKind::FloatLit(0.0),
+                span: self.span(),
+            }
+        } else {
+            self.expect(&Token::Eq)?;
+            self.parse_param_default(&ty)?
+        };
         let end_span = self.span();
         self.expect_terminator()?;
 
@@ -284,6 +292,7 @@ impl Parser {
             Token::ColorTy => { self.advance(); Ok(ParamType::Color) }
             Token::GradientTy => { self.advance(); Ok(ParamType::Gradient) }
             Token::CurveTy => { self.advance(); Ok(ParamType::Curve) }
+            Token::PathTy => { self.advance(); Ok(ParamType::Path) }
             Token::Ident(name) => { self.advance(); Ok(ParamType::Named(name)) }
             _ => Err(CompileError::parser(
                 format!("Expected type name, got {:?}", self.peek()),
@@ -493,7 +502,29 @@ impl Parser {
     // ── Expression parsing (precedence climbing) ──────────────────
 
     fn parse_expr(&mut self) -> Result<Expr, CompileError> {
-        self.parse_or()
+        let expr = self.parse_or()?;
+
+        // Ternary operator: condition ? then_expr : else_expr
+        if matches!(self.peek(), Token::Question) {
+            let start = expr.span;
+            self.advance(); // skip ?
+            let then_expr = self.parse_or()?;
+            self.expect(&Token::Colon)?;
+            // Use parse_expr for right-associativity: a ? b : c ? d : e
+            let else_expr = self.parse_expr()?;
+            let span = start.merge(else_expr.span);
+            // Desugar into if/else
+            return Ok(Expr {
+                kind: ExprKind::If {
+                    condition: Box::new(expr),
+                    then_body: vec![Stmt::Expr(then_expr)],
+                    else_body: Some(vec![Stmt::Expr(else_expr)]),
+                },
+                span,
+            });
+        }
+
+        Ok(expr)
     }
 
     fn parse_or(&mut self) -> Result<Expr, CompileError> {
@@ -604,7 +635,7 @@ impl Parser {
     }
 
     fn parse_mul(&mut self) -> Result<Expr, CompileError> {
-        let mut left = self.parse_unary()?;
+        let mut left = self.parse_power()?;
         loop {
             let op = match self.peek() {
                 Token::Star => BinOp::Mul,
@@ -613,7 +644,7 @@ impl Parser {
                 _ => break,
             };
             self.advance();
-            let right = self.parse_unary()?;
+            let right = self.parse_power()?;
             let span = left.span.merge(right.span);
             left = Expr {
                 kind: ExprKind::BinOp {
@@ -625,6 +656,27 @@ impl Parser {
             };
         }
         Ok(left)
+    }
+
+    /// Power operator `**` — right-associative, higher precedence than mul.
+    fn parse_power(&mut self) -> Result<Expr, CompileError> {
+        let left = self.parse_unary()?;
+        if matches!(self.peek(), Token::StarStar) {
+            self.advance();
+            // Right-associative: recurse into parse_power (not parse_unary)
+            let right = self.parse_power()?;
+            let span = left.span.merge(right.span);
+            Ok(Expr {
+                kind: ExprKind::BinOp {
+                    op: BinOp::Pow,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
+            })
+        } else {
+            Ok(left)
+        }
     }
 
     fn parse_unary(&mut self) -> Result<Expr, CompileError> {
@@ -787,6 +839,9 @@ impl Parser {
             Token::If => {
                 self.parse_if_expr()
             }
+            Token::Switch => {
+                self.parse_switch_expr()
+            }
             _ => {
                 Err(CompileError::parser(
                     format!("Unexpected token: {:?}", self.peek()),
@@ -805,6 +860,9 @@ impl Parser {
         let then_body = self.parse_block()?;
         let mut end_span = self.span();
         self.expect(&Token::RBrace)?;
+
+        // Skip newlines between } and else to be whitespace-agnostic (#69)
+        self.skip_newlines();
 
         let else_body = if matches!(self.peek(), Token::Else) {
             self.advance();
@@ -830,6 +888,68 @@ impl Parser {
                 condition: Box::new(condition),
                 then_body,
                 else_body,
+            },
+            span: start.merge(end_span),
+        })
+    }
+
+    fn parse_switch_expr(&mut self) -> Result<Expr, CompileError> {
+        let start = self.span();
+        self.expect(&Token::Switch)?;
+        let scrutinee = self.parse_expr()?;
+        self.expect(&Token::LBrace)?;
+        self.skip_newlines();
+
+        let mut cases = Vec::new();
+        let mut default = None;
+
+        while !matches!(self.peek(), Token::RBrace | Token::Eof) {
+            if matches!(self.peek(), Token::Default) {
+                self.advance();
+                self.expect(&Token::FatArrow)?;
+                // Parse body: either a block or a single expression
+                let body = if matches!(self.peek(), Token::LBrace) {
+                    self.advance();
+                    self.skip_newlines();
+                    let b = self.parse_block()?;
+                    self.expect(&Token::RBrace)?;
+                    b
+                } else {
+                    let expr = self.parse_expr()?;
+                    vec![Stmt::Expr(expr)]
+                };
+                default = Some(body);
+            } else if matches!(self.peek(), Token::Case) {
+                self.advance();
+                let pattern = self.parse_expr()?;
+                self.expect(&Token::FatArrow)?;
+                let body = if matches!(self.peek(), Token::LBrace) {
+                    self.advance();
+                    self.skip_newlines();
+                    let b = self.parse_block()?;
+                    self.expect(&Token::RBrace)?;
+                    b
+                } else {
+                    let expr = self.parse_expr()?;
+                    vec![Stmt::Expr(expr)]
+                };
+                cases.push((pattern, body));
+            } else {
+                return Err(CompileError::parser(
+                    format!("Expected 'case' or 'default' in switch, got {:?}", self.peek()),
+                    self.span(),
+                ));
+            }
+            self.skip_newlines();
+        }
+        let end_span = self.span();
+        self.expect(&Token::RBrace)?;
+
+        Ok(Expr {
+            kind: ExprKind::Switch {
+                scrutinee: Box::new(scrutinee),
+                cases,
+                default,
             },
             span: start.merge(end_span),
         })
@@ -1013,6 +1133,129 @@ if mode == Mode.A {
             assert_eq!(stops[1].color, (255, 68, 0));
         } else {
             panic!("expected gradient literal");
+        }
+    }
+
+    // ── Issue #69: Whitespace-agnostic if/else ──────────────────
+
+    #[test]
+    fn parse_if_else_with_newlines_between() {
+        // Newlines between } and else should work
+        let script = parse_str("if x > 0.0 {\nrgb(1.0,0.0,0.0)\n}\n\nelse {\nrgb(0.0,0.0,1.0)\n}");
+        assert_eq!(script.body.len(), 1);
+        if let Stmt::Expr(ref e) = script.body[0] {
+            if let ExprKind::If { else_body, .. } = &e.kind {
+                assert!(else_body.is_some(), "else branch should be present");
+            } else {
+                panic!("expected if expression");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_if_else_if_with_newlines() {
+        let script = parse_str("if x > 1.0 {\nrgb(1.0,0.0,0.0)\n}\n\nelse if x > 0.0 {\nrgb(0.0,1.0,0.0)\n}\n\nelse {\nrgb(0.0,0.0,1.0)\n}");
+        assert_eq!(script.body.len(), 1);
+        if let Stmt::Expr(ref e) = script.body[0] {
+            assert!(matches!(e.kind, ExprKind::If { .. }));
+        }
+    }
+
+    // ── Issue #73: Ternary operator ─────────────────────────────
+
+    #[test]
+    fn parse_ternary_operator() {
+        let script = parse_str("t > 0.5 ? rgb(1.0, 0.0, 0.0) : rgb(0.0, 0.0, 1.0)");
+        assert_eq!(script.body.len(), 1);
+        if let Stmt::Expr(ref e) = script.body[0] {
+            // Ternary desugars into ExprKind::If
+            assert!(matches!(e.kind, ExprKind::If { .. }));
+        } else {
+            panic!("expected expression");
+        }
+    }
+
+    #[test]
+    fn parse_nested_ternary() {
+        // a ? b : c ? d : e
+        let script = parse_str("t > 0.5 ? rgb(1.0, 0.0, 0.0) : t > 0.25 ? rgb(0.0, 1.0, 0.0) : rgb(0.0, 0.0, 1.0)");
+        assert_eq!(script.body.len(), 1);
+    }
+
+    // ── Issue #72: Power operator ───────────────────────────────
+
+    #[test]
+    fn parse_power_operator() {
+        let script = parse_str("let x = 2.0 ** 3.0\nrgb(x, x, x)");
+        assert_eq!(script.body.len(), 2);
+        if let Stmt::Let { value, .. } = &script.body[0] {
+            assert!(matches!(value.kind, ExprKind::BinOp { op: BinOp::Pow, .. }));
+        } else {
+            panic!("expected let binding");
+        }
+    }
+
+    #[test]
+    fn parse_power_right_associative() {
+        // 2 ** 3 ** 2 should parse as 2 ** (3 ** 2)
+        let script = parse_str("let x = 2.0 ** 3.0 ** 2.0\nrgb(x, x, x)");
+        if let Stmt::Let { value, .. } = &script.body[0] {
+            if let ExprKind::BinOp { op: BinOp::Pow, right, .. } = &value.kind {
+                assert!(matches!(right.kind, ExprKind::BinOp { op: BinOp::Pow, .. }),
+                    "right side should also be Pow (right-associative)");
+            } else {
+                panic!("expected Pow at top level");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_power_higher_precedence_than_mul() {
+        // 2 * 3 ** 2 should parse as 2 * (3 ** 2)
+        let script = parse_str("let x = 2.0 * 3.0 ** 2.0\nrgb(x, x, x)");
+        if let Stmt::Let { value, .. } = &script.body[0] {
+            if let ExprKind::BinOp { op: BinOp::Mul, right, .. } = &value.kind {
+                assert!(matches!(right.kind, ExprKind::BinOp { op: BinOp::Pow, .. }),
+                    "right side of * should be ** (higher precedence)");
+            } else {
+                panic!("expected Mul at top level");
+            }
+        }
+    }
+
+    // ── Issue #70: Switch/case ──────────────────────────────────
+
+    #[test]
+    fn parse_switch_basic() {
+        let script = parse_str("switch x {\ncase 1 => rgb(1.0, 0.0, 0.0)\ncase 2 => rgb(0.0, 1.0, 0.0)\ndefault => rgb(0.0, 0.0, 1.0)\n}");
+        assert_eq!(script.body.len(), 1);
+        if let Stmt::Expr(ref e) = script.body[0] {
+            if let ExprKind::Switch { cases, default, .. } = &e.kind {
+                assert_eq!(cases.len(), 2);
+                assert!(default.is_some());
+            } else {
+                panic!("expected switch expression");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_switch_with_blocks() {
+        let source = r#"switch x {
+case 1 => {
+    let r = 1.0
+    rgb(r, 0.0, 0.0)
+}
+default => rgb(0.0, 0.0, 0.0)
+}"#;
+        let script = parse_str(source);
+        if let Stmt::Expr(ref e) = script.body[0] {
+            if let ExprKind::Switch { cases, .. } = &e.kind {
+                assert_eq!(cases.len(), 1);
+                assert!(cases[0].1.len() >= 2, "block body should have multiple statements");
+            } else {
+                panic!("expected switch");
+            }
         }
     }
 }

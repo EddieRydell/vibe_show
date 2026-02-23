@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { cmd } from "../commands";
 import type { AnalysisFeatures, AudioAnalysis, ProgressEvent } from "../types";
 
 interface AnalysisWizardProps {
@@ -101,11 +102,18 @@ export function AnalysisWizard({ onAnalyze, onClose }: AnalysisWizardProps) {
 
   const anySelected = Object.values(features).some(Boolean);
 
+  const handleCancelAnalysis = useCallback(async () => {
+    await cmd.cancelOperation("analysis");
+  }, []);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === "Escape" && phase !== "running") onClose();
+      if (e.key === "Escape") {
+        if (phase === "running") handleCancelAnalysis();
+        else onClose();
+      }
     },
-    [onClose, phase],
+    [onClose, phase, handleCancelAnalysis],
   );
 
   return (
@@ -113,7 +121,10 @@ export function AnalysisWizard({ onAnalyze, onClose }: AnalysisWizardProps) {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onKeyDown={handleKeyDown}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget && phase !== "running") onClose();
+        if (e.target === e.currentTarget) {
+          if (phase === "running") handleCancelAnalysis();
+          else onClose();
+        }
       }}
     >
       <div className="bg-surface border-border w-[520px] rounded-lg border shadow-xl">
@@ -235,6 +246,14 @@ export function AnalysisWizard({ onAnalyze, onClose }: AnalysisWizardProps) {
                 Analyze
               </button>
             </>
+          )}
+          {phase === "running" && (
+            <button
+              onClick={handleCancelAnalysis}
+              className="border-border bg-surface-2 text-text-2 hover:bg-bg rounded border px-3 py-1.5 text-xs transition-colors"
+            >
+              Cancel Analysis
+            </button>
           )}
           {(phase === "done" || phase === "error") && (
             <button

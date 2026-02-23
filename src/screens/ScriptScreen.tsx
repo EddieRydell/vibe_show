@@ -288,11 +288,11 @@ export function ScriptScreen({
 
         {/* Right: Preview + Parameters (only when a script is selected) */}
         {currentScript && (
-          <div className="border-border flex w-[280px] flex-shrink-0 flex-col gap-3 overflow-y-auto border-l p-3">
+          <div className="border-border flex w-[280px] shrink-0 flex-col gap-3 overflow-y-auto border-l p-3">
             {/* Compile status */}
             <div className="flex items-center gap-2">
               <div
-                className={`h-2 w-2 rounded-full ${
+                className={`size-2  rounded-full ${
                   compileResult == null
                     ? "bg-text-2"
                     : compileResult.success

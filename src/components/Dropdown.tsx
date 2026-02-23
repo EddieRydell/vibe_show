@@ -96,7 +96,7 @@ export function Dropdown({ anchorRef, onClose, children, align = "left" }: Dropd
     <Portal>
       <div
         ref={dropdownRef}
-        className="fixed z-[var(--z-dropdown)]"
+        className="fixed z-(--z-dropdown)"
         style={
           position
             ? { top: position.top, left: position.left }

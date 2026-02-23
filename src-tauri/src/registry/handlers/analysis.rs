@@ -185,6 +185,13 @@ pub fn get_analysis(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
         return Ok(CommandOutput::json("No audio file.", &Option::<AudioAnalysis>::None));
     };
 
+    // Validate audio filename to prevent path traversal
+    if let Err(e) = profile::validate_filename(&audio_file) {
+        return Err(AppError::ValidationError {
+            message: format!("Invalid audio filename: {e}"),
+        });
+    }
+
     // Check memory cache
     if let Some(cached) = state.analysis_cache.lock().get(&audio_file) {
         return Ok(CommandOutput::json("Analysis from cache.", &Some(cached.clone())));
@@ -197,8 +204,8 @@ pub fn get_analysis(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let Some(profile_slug) = state.current_profile.lock().clone() else {
         return Ok(CommandOutput::json("No profile.", &Option::<AudioAnalysis>::None));
     };
-    let media_dir = profile::media_dir(&data_dir, &profile_slug);
-    let path = crate::analysis::analysis_path(&media_dir, &audio_file);
+    let media_dir = crate::paths::media_dir(&data_dir, &profile_slug);
+    let path = crate::paths::analysis_path(&media_dir, &audio_file);
 
     if path.exists() {
         if let Ok(loaded) = crate::analysis::load_analysis(&path) {

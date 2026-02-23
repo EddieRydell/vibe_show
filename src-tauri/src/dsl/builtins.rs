@@ -47,8 +47,24 @@ pub static BUILTINS: &[BuiltinFn] = &[
     BuiltinFn { name: "length",    params: &[TypeName::Vec2], ret: TypeName::Float, op: Op::Length },
     BuiltinFn { name: "dot",       params: &[TypeName::Vec2, TypeName::Vec2], ret: TypeName::Float, op: Op::Dot },
     BuiltinFn { name: "normalize", params: &[TypeName::Vec2], ret: TypeName::Vec2, op: Op::Normalize },
-    // Random
-    BuiltinFn { name: "hash", params: &[TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Hash },
+    // Random / Hash
+    BuiltinFn { name: "hash",         params: &[TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Hash },
+    BuiltinFn { name: "hash3",        params: &[TypeName::Float, TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Hash3 },
+    BuiltinFn { name: "random",       params: &[TypeName::Float], ret: TypeName::Float, op: Op::Random },
+    BuiltinFn { name: "random_range", params: &[TypeName::Float, TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::RandomRange },
+    // Easing
+    BuiltinFn { name: "ease_in",           params: &[TypeName::Float], ret: TypeName::Float, op: Op::EaseIn },
+    BuiltinFn { name: "ease_out",          params: &[TypeName::Float], ret: TypeName::Float, op: Op::EaseOut },
+    BuiltinFn { name: "ease_in_out",       params: &[TypeName::Float], ret: TypeName::Float, op: Op::EaseInOut },
+    BuiltinFn { name: "ease_in_cubic",     params: &[TypeName::Float], ret: TypeName::Float, op: Op::EaseInCubic },
+    BuiltinFn { name: "ease_out_cubic",    params: &[TypeName::Float], ret: TypeName::Float, op: Op::EaseOutCubic },
+    BuiltinFn { name: "ease_in_out_cubic", params: &[TypeName::Float], ret: TypeName::Float, op: Op::EaseInOutCubic },
+    // Noise
+    BuiltinFn { name: "noise",   params: &[TypeName::Float], ret: TypeName::Float, op: Op::Noise1 },
+    BuiltinFn { name: "noise2",  params: &[TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Noise2 },
+    BuiltinFn { name: "noise3",  params: &[TypeName::Float, TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Noise3 },
+    BuiltinFn { name: "fbm",     params: &[TypeName::Float, TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Fbm },
+    BuiltinFn { name: "worley2", params: &[TypeName::Float, TypeName::Float], ret: TypeName::Float, op: Op::Worley2 },
 ];
 
 /// Implicit builtin variables: single source of truth for name, type, AND var enum.
@@ -60,16 +76,18 @@ pub enum BuiltinVar {
     Pixels,
     Pos,
     Pos2d,
+    AbsT,
     Pi,
     Tau,
 }
 
 pub static IMPLICIT_VARS: &[(&str, TypeName, BuiltinVar)] = &[
     ("t",     TypeName::Float, BuiltinVar::T),
-    ("pixel", TypeName::Int,   BuiltinVar::Pixel),
-    ("pixels",TypeName::Int,   BuiltinVar::Pixels),
+    ("pixel", TypeName::Float, BuiltinVar::Pixel),
+    ("pixels",TypeName::Float, BuiltinVar::Pixels),
     ("pos",   TypeName::Float, BuiltinVar::Pos),
     ("pos2d", TypeName::Vec2,  BuiltinVar::Pos2d),
+    ("abs_t", TypeName::Float, BuiltinVar::AbsT),
     ("PI",    TypeName::Float, BuiltinVar::Pi),
     ("TAU",   TypeName::Float, BuiltinVar::Tau),
 ];

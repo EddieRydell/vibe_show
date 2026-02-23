@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
@@ -7,67 +7,17 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::error::AppError;
 use crate::model::PythonEnvStatus;
+use crate::paths;
 use crate::progress::emit_progress;
-use crate::state::AppState;
+use crate::state::{check_cancelled, AppState};
 
 // ── Path helpers ──────────────────────────────────────────────────
 
-/// Resolve the bundled `uv` binary path from Tauri resources.
-pub fn uv_binary_path(app: &AppHandle) -> PathBuf {
-    let resource_dir = app
-        .path()
+/// Resolve the Tauri resource directory.
+fn resource_dir(app: &AppHandle) -> PathBuf {
+    app.path()
         .resource_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
-
-    if cfg!(target_os = "windows") {
-        resource_dir.join("resources").join("uv.exe")
-    } else {
-        resource_dir.join("resources").join("uv")
-    }
-}
-
-/// Directory where the Python venv is created.
-pub fn python_env_dir(app_config_dir: &Path) -> PathBuf {
-    app_config_dir.join("python_env")
-}
-
-/// Directory where ML model weights are stored.
-pub fn models_dir(app_config_dir: &Path) -> PathBuf {
-    app_config_dir.join("models")
-}
-
-/// Path to the Python sidecar script.
-pub fn sidecar_script_path(app: &AppHandle) -> PathBuf {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
-    resource_dir
-        .join("resources")
-        .join("python")
-        .join("sidecar.py")
-}
-
-/// Path to the Python executable inside the managed venv.
-fn python_exe(app_config_dir: &Path) -> PathBuf {
-    let venv = python_env_dir(app_config_dir);
-    if cfg!(target_os = "windows") {
-        venv.join("Scripts").join("python.exe")
-    } else {
-        venv.join("bin").join("python")
-    }
-}
-
-/// Path to requirements.txt bundled with the app.
-fn requirements_path(app: &AppHandle) -> PathBuf {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
-    resource_dir
-        .join("resources")
-        .join("python")
-        .join("requirements.txt")
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 // ── Environment status check ──────────────────────────────────────
@@ -78,20 +28,20 @@ pub async fn check_env_status(
     app: &AppHandle,
     state: &AppState,
 ) -> PythonEnvStatus {
-    let uv_path = uv_binary_path(app);
+    let uv_path = paths::uv_binary_path(&resource_dir(app));
     let uv_available = uv_path.exists();
 
-    let venv_dir = python_env_dir(app_config_dir);
+    let venv_dir = paths::python_env_dir(app_config_dir);
     let venv_exists = venv_dir.exists();
 
-    let py_exe = python_exe(app_config_dir);
+    let py_exe = paths::python_exe(app_config_dir);
     let python_installed = py_exe.exists();
 
     // Check if deps are installed by looking for a marker file
-    let deps_installed = venv_dir.join(".deps_installed").exists();
+    let deps_installed = paths::deps_installed_marker(app_config_dir).exists();
 
     // Check for known model directories
-    let models = models_dir(app_config_dir);
+    let models = paths::models_dir(app_config_dir);
     let mut installed_models = Vec::new();
     for model_name in &["htdemucs", "whisper-turbo", "allin1", "essentia"] {
         if models.join(model_name).exists() {
@@ -125,30 +75,37 @@ pub async fn check_env_status(
 // ── Bootstrap Python environment ──────────────────────────────────
 
 /// Install Python 3.12 via uv, create a venv, and install all dependencies.
-/// Emits progress events throughout.
-pub async fn bootstrap_python(app: &AppHandle, app_config_dir: &Path) -> Result<(), AppError> {
-    let uv = uv_binary_path(app);
+/// Emits progress events throughout. Checks the `cancel_flag` between steps.
+pub async fn bootstrap_python(
+    app: &AppHandle,
+    app_config_dir: &Path,
+    cancel_flag: &Arc<AtomicBool>,
+) -> Result<(), AppError> {
+    let res_dir = resource_dir(app);
+    let uv = paths::uv_binary_path(&res_dir);
     if !uv.exists() {
         return Err(AppError::PythonError {
             message: format!("uv binary not found at {}", uv.display()),
         });
     }
 
-    let venv_dir = python_env_dir(app_config_dir);
-    let reqs = requirements_path(app);
+    let venv_dir = paths::python_env_dir(app_config_dir);
+    let reqs = paths::requirements_path(&res_dir);
 
     // Step 1: Install Python 3.12
+    check_cancelled(cancel_flag, "python_setup")?;
     emit_progress(app, "python_setup", "Installing Python 3.12...", 0.1, None);
-    let status = tokio::process::Command::new(&uv)
+    let mut child = tokio::process::Command::new(&uv)
         .args(["python", "install", "3.12"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .status()
-        .await
+        .kill_on_drop(true)
+        .spawn()
         .map_err(|e| AppError::PythonError {
             message: format!("Failed to run uv python install: {e}"),
         })?;
 
+    let status = wait_or_cancel(&mut child, cancel_flag, "python_setup").await?;
     if !status.success() {
         return Err(AppError::PythonError {
             message: "uv python install 3.12 failed".into(),
@@ -156,8 +113,9 @@ pub async fn bootstrap_python(app: &AppHandle, app_config_dir: &Path) -> Result<
     }
 
     // Step 2: Create venv
+    check_cancelled(cancel_flag, "python_setup")?;
     emit_progress(app, "python_setup", "Creating virtual environment...", 0.25, None);
-    let status = tokio::process::Command::new(&uv)
+    let mut child = tokio::process::Command::new(&uv)
         .args([
             "venv",
             &venv_dir.to_string_lossy(),
@@ -166,12 +124,13 @@ pub async fn bootstrap_python(app: &AppHandle, app_config_dir: &Path) -> Result<
         ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .status()
-        .await
+        .kill_on_drop(true)
+        .spawn()
         .map_err(|e| AppError::PythonError {
             message: format!("Failed to create venv: {e}"),
         })?;
 
+    let status = wait_or_cancel(&mut child, cancel_flag, "python_setup").await?;
     if !status.success() {
         return Err(AppError::PythonError {
             message: "uv venv creation failed".into(),
@@ -179,6 +138,7 @@ pub async fn bootstrap_python(app: &AppHandle, app_config_dir: &Path) -> Result<
     }
 
     // Step 3: Install dependencies
+    check_cancelled(cancel_flag, "python_setup")?;
     emit_progress(
         app,
         "python_setup",
@@ -188,23 +148,24 @@ pub async fn bootstrap_python(app: &AppHandle, app_config_dir: &Path) -> Result<
     );
 
     if reqs.exists() {
-        let status = tokio::process::Command::new(&uv)
+        let mut child = tokio::process::Command::new(&uv)
             .args([
                 "pip",
                 "install",
                 "-r",
                 &reqs.to_string_lossy(),
                 "--python",
-                &python_exe(app_config_dir).to_string_lossy(),
+                &paths::python_exe(app_config_dir).to_string_lossy(),
             ])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .status()
-            .await
+            .kill_on_drop(true)
+            .spawn()
             .map_err(|e| AppError::PythonError {
                 message: format!("Failed to install dependencies: {e}"),
             })?;
 
+        let status = wait_or_cancel(&mut child, cancel_flag, "python_setup").await?;
         if !status.success() {
             return Err(AppError::PythonError {
                 message: "pip install failed — check requirements.txt".into(),
@@ -213,11 +174,30 @@ pub async fn bootstrap_python(app: &AppHandle, app_config_dir: &Path) -> Result<
     }
 
     // Write marker file
-    let marker = venv_dir.join(".deps_installed");
+    let marker = paths::deps_installed_marker(app_config_dir);
     let _ = tokio::fs::write(&marker, "1").await;
 
     emit_progress(app, "python_setup", "Python environment ready", 1.0, None);
     Ok(())
+}
+
+/// Wait for a child process to finish, but kill it if the cancel flag is set.
+async fn wait_or_cancel(
+    child: &mut tokio::process::Child,
+    cancel_flag: &AtomicBool,
+    operation: &str,
+) -> Result<std::process::ExitStatus, AppError> {
+    tokio::select! {
+        result = child.wait() => {
+            result.map_err(|e| AppError::PythonError {
+                message: format!("Process error: {e}"),
+            })
+        }
+        () = crate::state::wait_for_cancel(cancel_flag) => {
+            let _ = child.kill().await;
+            Err(AppError::Cancelled { operation: operation.to_string() })
+        }
+    }
 }
 
 // ── Sidecar lifecycle ─────────────────────────────────────────────
@@ -227,12 +207,12 @@ pub async fn start_sidecar(
     app_config_dir: &Path,
     app: &AppHandle,
 ) -> Result<(tokio::process::Child, u16), AppError> {
-    let py = python_exe(app_config_dir);
+    let py = paths::python_exe(app_config_dir);
     if !py.exists() {
         return Err(AppError::PythonNotReady);
     }
 
-    let script = sidecar_script_path(app);
+    let script = paths::sidecar_script_path(&resource_dir(app));
     if !script.exists() {
         return Err(AppError::PythonError {
             message: format!("Sidecar script not found at {}", script.display()),
@@ -251,7 +231,7 @@ pub async fn start_sidecar(
         .port();
     drop(listener);
 
-    let models = models_dir(app_config_dir);
+    let models = paths::models_dir(app_config_dir);
     let _ = std::fs::create_dir_all(&models);
 
     let mut child = tokio::process::Command::new(&py)
