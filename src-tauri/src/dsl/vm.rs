@@ -139,8 +139,16 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
             Op::Gt => float_cmp(stack, |a, b| a > b),
             Op::Le => float_cmp(stack, |a, b| a <= b),
             Op::Ge => float_cmp(stack, |a, b| a >= b),
-            Op::Eq => float_cmp(stack, |a, b| (a - b).abs() < f64::EPSILON),
-            Op::Ne => float_cmp(stack, |a, b| (a - b).abs() >= f64::EPSILON),
+            Op::Eq => float_cmp(stack, |a, b| {
+                let diff = (a - b).abs();
+                let magnitude = a.abs().max(b.abs()).max(1.0);
+                diff < 1e-9 * magnitude
+            }),
+            Op::Ne => float_cmp(stack, |a, b| {
+                let diff = (a - b).abs();
+                let magnitude = a.abs().max(b.abs()).max(1.0);
+                diff >= 1e-9 * magnitude
+            }),
 
             // Logic
             Op::And => float_binop(stack, |a, b| {
