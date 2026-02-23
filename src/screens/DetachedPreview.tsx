@@ -119,16 +119,16 @@ export function DetachedPreview() {
           if (result) {
             setMainPlaying(result.playing);
             setFrame(result.frame);
-          } else {
-            // Paused — read current state for display
-            return cmd.getPlayback().then((pb) => {
-              if (cancelled) return;
-              setMainPlaying(pb.playing);
-              return invoke<Frame>("get_frame", { time: pb.current_time });
-            }).then((f) => {
-              if (f && !cancelled) setFrame(f);
-            });
+            return;
           }
+          // Paused — read current state for display
+          return cmd.getPlayback().then((pb) => {
+            if (cancelled) return;
+            setMainPlaying(pb.playing);
+            return invoke<Frame>("get_frame", { time: pb.current_time });
+          }).then((f) => {
+            if (f && !cancelled) setFrame(f);
+          });
         })
         .catch(() => {})
         .finally(() => {

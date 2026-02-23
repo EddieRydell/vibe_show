@@ -34,11 +34,8 @@ pub fn evaluate_pixels_batch(
     }
 
     let segment_count = colors.len() - 1;
-    let inv_total = if total_pixels > 1 {
-        1.0 / ((total_pixels - 1) as f64)
-    } else {
-        0.0
-    };
+    let divisor = (total_pixels.saturating_sub(1)).max(1) as f64;
+    let inv_total = 1.0 / divisor;
     let time_offset = t * offset;
 
     for (i, pixel) in dest.iter_mut().enumerate() {
@@ -85,8 +82,9 @@ impl Effect for GradientEffect {
             return colors.first().copied().unwrap_or(Color::BLACK);
         }
 
+        let divisor = (pixel_count.saturating_sub(1)).max(1) as f64;
         let pos = if pixel_count > 1 {
-            (pixel_index as f64) / ((pixel_count - 1) as f64)
+            (pixel_index as f64) / divisor
         } else {
             0.5
         };

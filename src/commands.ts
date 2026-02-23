@@ -163,9 +163,9 @@ export const cmd = {
     }),
   updateSequenceSettings: (p: {
     name?: string;
-    audioFile?: string | null;
-    duration?: number;
-    frameRate?: number;
+    audioFile?: string | null | undefined;
+    duration?: number | undefined;
+    frameRate?: number | undefined;
   }) =>
     exec("UpdateSequenceSettings", {
       name: p.name ?? null,

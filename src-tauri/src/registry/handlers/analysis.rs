@@ -192,12 +192,7 @@ pub fn get_analysis(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
         });
     }
 
-    // Check memory cache
-    if let Some(cached) = state.analysis_cache.lock().get(&audio_file) {
-        return Ok(CommandOutput::json("Analysis from cache.", &Some(cached.clone())));
-    }
-
-    // Check disk cache
+    // Resolve the full path to the audio file and verify it exists
     let Ok(data_dir) = get_data_dir(state) else {
         return Ok(CommandOutput::json("No data dir.", &Option::<AudioAnalysis>::None));
     };
@@ -205,6 +200,23 @@ pub fn get_analysis(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
         return Ok(CommandOutput::json("No profile.", &Option::<AudioAnalysis>::None));
     };
     let media_dir = crate::paths::media_dir(&data_dir, &profile_slug);
+
+    let audio_path = media_dir.join(&audio_file);
+    if !audio_path.exists() {
+        return Err(AppError::ValidationError {
+            message: format!(
+                "Audio file '{}' not found in media directory",
+                audio_file
+            ),
+        });
+    }
+
+    // Check memory cache
+    if let Some(cached) = state.analysis_cache.lock().get(&audio_file) {
+        return Ok(CommandOutput::json("Analysis from cache.", &Some(cached.clone())));
+    }
+
+    // Check disk cache
     let path = crate::paths::analysis_path(&media_dir, &audio_file);
 
     if path.exists() {

@@ -19,11 +19,11 @@ export function useAppShell(): AppShellContextType {
 
 interface ScreenShellProps {
   title: string;
-  subtitle?: string;
-  onBack?: () => void;
-  backLabel?: string;
+  subtitle?: string | undefined;
+  onBack?: (() => void) | undefined;
+  backLabel?: string | undefined;
   toolbar?: React.ReactNode;
-  hideSettings?: boolean;
+  hideSettings?: boolean | undefined;
   children: React.ReactNode;
 }
 

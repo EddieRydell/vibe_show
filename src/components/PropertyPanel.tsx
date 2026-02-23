@@ -209,6 +209,15 @@ export function PropertyPanel({
       .finally(() => setLoading(false));
   }, [selectedEffect, sequenceIndex, showVersion]);
 
+  // Clear debounce timer on unmount to prevent firing after cleanup
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, []);
+
   const updateParam = useCallback(
     (key: string, value: ParamValue) => {
       if (!selectedEffect) return;

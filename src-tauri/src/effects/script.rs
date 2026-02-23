@@ -85,11 +85,12 @@ pub fn evaluate_pixels_batch(
 
     // Reuse a single VmBuffers across all pixels to avoid per-pixel heap allocations.
     let mut vm_buffers = VmBuffers::new();
+    let divisor = (total_pixels.saturating_sub(1)).max(1) as f64;
 
     for (local_idx, pixel) in dest.iter_mut().enumerate() {
         let global_idx = global_offset + local_idx;
         let pos = if total_pixels > 1 {
-            global_idx as f64 / (total_pixels - 1) as f64
+            global_idx as f64 / divisor
         } else {
             0.0
         };

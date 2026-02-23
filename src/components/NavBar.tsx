@@ -3,10 +3,10 @@ import { useAppShell } from "./ScreenShell";
 
 interface NavBarProps {
   title: string;
-  subtitle?: string;
-  onBack?: () => void;
-  backLabel?: string;
-  hideSettings?: boolean;
+  subtitle?: string | undefined;
+  onBack?: (() => void) | undefined;
+  backLabel?: string | undefined;
+  hideSettings?: boolean | undefined;
 }
 
 export function NavBar({ title, subtitle, onBack, backLabel = "Back", hideSettings }: NavBarProps) {

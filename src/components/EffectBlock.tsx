@@ -6,7 +6,7 @@ interface EffectBlockProps {
   sequenceIndex: number;
   trackIndex: number;
   effectIndex: number;
-  refreshKey?: number;
+  refreshKey?: number | undefined;
 }
 
 const THUMBNAIL_TIME_SAMPLES = 120;
