@@ -563,7 +563,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
           <button
             onClick={() => onOpenScript(null)}
             className="text-text-2 hover:text-text ml-1 p-1 transition-colors"
-            title="Script Studio"
+            title="Effect Studio"
           >
             <Code size={14} />
           </button>

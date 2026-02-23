@@ -24,7 +24,7 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.anthropic.com https://api.openai.com http://127.0.0.1:*; img-src 'self' data: blob: asset: https://asset.localhost; font-src 'self'; media-src 'self' blob: asset: https://asset.localhost; worker-src 'self' blob:",
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": ["$HOME/**", "$APPDATA/**", "$APPCONFIG/**"]
       }
     }
   }

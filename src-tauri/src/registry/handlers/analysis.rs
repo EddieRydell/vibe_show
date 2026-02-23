@@ -221,10 +221,7 @@ pub fn get_analysis(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
 
     if path.exists() {
         if let Ok(loaded) = crate::analysis::load_analysis(&path) {
-            state
-                .analysis_cache
-                .lock()
-                .insert(audio_file, loaded.clone());
+            state.cache_analysis(audio_file, loaded.clone());
             return Ok(CommandOutput::json("Analysis loaded from disk.", &Some(loaded)));
         }
     }

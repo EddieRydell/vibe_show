@@ -11,10 +11,19 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+.env.*
 .credentials
 
 # Bun build cache
 *.bun-build
+
+# Certificates and private keys
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
 
 # Generated Tauri icons (regenerate with: pnpm tauri icon)
 src-tauri/icons/*.png

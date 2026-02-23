@@ -56,6 +56,7 @@ pub fn open_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutp
 
     *state.show.lock() = assembled;
     state.dispatcher.lock().clear();
+    state.script_cache.lock().clear();
 
     state.with_playback_mut(|playback| {
         playback.playing = false;
@@ -90,6 +91,8 @@ pub fn delete_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOu
     let mut current = state.current_sequence.lock();
     if current.as_deref() == Some(&p.slug) {
         *current = None;
+        // Clear script cache since the deleted sequence may have had scripts
+        state.script_cache.lock().clear();
     }
 
     Ok(CommandOutput::unit(format!(

@@ -109,42 +109,50 @@ export default function App() {
       break;
     case "home":
       content = (
-        <HomeScreen
-          onOpenProfile={handleOpenProfile}
-        />
+        <ErrorBoundary>
+          <HomeScreen
+            onOpenProfile={handleOpenProfile}
+          />
+        </ErrorBoundary>
       );
       break;
     case "settings":
-      content = <SettingsScreen onBack={handleCloseSettings} />;
+      content = <ErrorBoundary><SettingsScreen onBack={handleCloseSettings} /></ErrorBoundary>;
       break;
     case "profile":
       content = (
-        <ProfileScreen
-          slug={screen.slug}
-          onBack={handleBackToHome}
-          onOpenSequence={(sequenceSlug) => handleOpenSequence(screen.slug, sequenceSlug)}
-          onOpenScript={(name) => handleOpenScript(screen.slug, name)}
-        />
+        <ErrorBoundary>
+          <ProfileScreen
+            slug={screen.slug}
+            onBack={handleBackToHome}
+            onOpenSequence={(sequenceSlug) => handleOpenSequence(screen.slug, sequenceSlug)}
+            onOpenScript={(name) => handleOpenScript(screen.slug, name)}
+          />
+        </ErrorBoundary>
       );
       break;
     case "editor":
       content = (
-        <EditorScreen
-          profileSlug={screen.profileSlug}
-          sequenceSlug={screen.sequenceSlug}
-          onBack={() => handleBackToProfile(screen.profileSlug)}
-          onOpenScript={(name) => handleOpenScript(screen.profileSlug, name)}
-        />
+        <ErrorBoundary>
+          <EditorScreen
+            profileSlug={screen.profileSlug}
+            sequenceSlug={screen.sequenceSlug}
+            onBack={() => handleBackToProfile(screen.profileSlug)}
+            onOpenScript={(name) => handleOpenScript(screen.profileSlug, name)}
+          />
+        </ErrorBoundary>
       );
       break;
     case "script":
       content = (
-        <ScriptScreen
-          profileSlug={screen.profileSlug}
-          initialScriptName={screen.scriptName}
-          onBack={() => setScreen(screen.returnTo)}
-          onOpenScript={(name) => handleOpenScript(screen.profileSlug, name)}
-        />
+        <ErrorBoundary>
+          <ScriptScreen
+            profileSlug={screen.profileSlug}
+            initialScriptName={screen.scriptName}
+            onBack={() => setScreen(screen.returnTo)}
+            onOpenScript={(name) => handleOpenScript(screen.profileSlug, name)}
+          />
+        </ErrorBoundary>
       );
       break;
   }

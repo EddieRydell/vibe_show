@@ -91,6 +91,39 @@ pub fn update_profile_fixtures(
     state: &Arc<AppState>,
     p: UpdateProfileFixturesParams,
 ) -> Result<CommandOutput, AppError> {
+    use std::collections::HashSet;
+    use crate::model::{FixtureId, GroupId, GroupMember};
+
+    // Validate group members reference valid fixtures and groups
+    let fixture_ids: HashSet<FixtureId> = p.fixtures.iter().map(|f| f.id).collect();
+    let group_ids: HashSet<GroupId> = p.groups.iter().map(|g| g.id).collect();
+    for group in &p.groups {
+        for member in &group.members {
+            match member {
+                GroupMember::Fixture(fid) => {
+                    if !fixture_ids.contains(fid) {
+                        return Err(AppError::ValidationError {
+                            message: format!(
+                                "Group \"{}\" references fixture {} which does not exist.",
+                                group.name, fid.0
+                            ),
+                        });
+                    }
+                }
+                GroupMember::Group(gid) => {
+                    if !group_ids.contains(gid) {
+                        return Err(AppError::ValidationError {
+                            message: format!(
+                                "Group \"{}\" references group {} which does not exist.",
+                                group.name, gid.0
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
     let slug = state.require_profile()?;
     let mut loaded = profile::load_profile(&data_dir, &slug).map_err(AppError::from)?;

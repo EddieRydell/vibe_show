@@ -7,6 +7,7 @@ import { GradientEditorDialog } from "./GradientEditorDialog";
 import { paramKeyStr, effectKindLabel } from "../types";
 import { parseEffectKey } from "../utils/effectKey";
 import { formatTimeDuration } from "../utils/formatTime";
+import { getParam, getDefault } from "../utils/paramAccess";
 import { useShowVersion } from "../hooks/useShowVersion";
 import {
   FloatSlider,
@@ -28,67 +29,11 @@ interface PropertyPanelProps {
 const PANEL_WIDTH = 260;
 const DEBOUNCE_MS = 50;
 
-function getParamFloat(params: Record<string, ParamValue>, key: string, fallback: number): number {
-  const v = params[key];
-  if (v && "Float" in v) return v.Float;
-  return fallback;
-}
-
-function getParamInt(params: Record<string, ParamValue>, key: string, fallback: number): number {
-  const v = params[key];
-  if (v && "Int" in v) return v.Int;
-  return fallback;
-}
-
-function getParamBool(params: Record<string, ParamValue>, key: string, fallback: boolean): boolean {
-  const v = params[key];
-  if (v && "Bool" in v) return v.Bool;
-  return fallback;
-}
-
-function getParamColor(params: Record<string, ParamValue>, key: string, fallback: Color): Color {
-  const v = params[key];
-  if (v && "Color" in v) return v.Color;
-  return fallback;
-}
-
-function getParamColorList(
-  params: Record<string, ParamValue>,
-  key: string,
-  fallback: Color[],
-): Color[] {
-  const v = params[key];
-  if (v && "ColorList" in v) return v.ColorList;
-  return fallback;
-}
-
-function getDefaultFloat(schema: ParamSchema): number {
-  if ("Float" in schema.default) return schema.default.Float;
-  return 0;
-}
-
-function getDefaultInt(schema: ParamSchema): number {
-  if ("Int" in schema.default) return schema.default.Int;
-  return 0;
-}
-
-function getDefaultBool(schema: ParamSchema): boolean {
-  if ("Bool" in schema.default) return schema.default.Bool;
-  return false;
-}
-
-function getDefaultColor(schema: ParamSchema): Color {
-  if ("Color" in schema.default) return schema.default.Color;
-  return { r: 255, g: 255, b: 255, a: 255 };
-}
-
-function getDefaultColorList(schema: ParamSchema): Color[] {
-  if ("ColorList" in schema.default) return schema.default.ColorList;
-  return [
-    { r: 255, g: 0, b: 0, a: 255 },
-    { r: 0, g: 0, b: 255, a: 255 },
-  ];
-}
+const DEFAULT_COLOR: Color = { r: 255, g: 255, b: 255, a: 255 };
+const DEFAULT_COLOR_LIST: Color[] = [
+  { r: 255, g: 0, b: 0, a: 255 },
+  { r: 0, g: 0, b: 255, a: 255 },
+];
 
 function getParamCurve(
   params: Record<string, ParamValue>,
@@ -124,23 +69,6 @@ function getDefaultGradient(schema: ParamSchema): ColorStop[] {
     { position: 0, color: { r: 255, g: 255, b: 255, a: 255 } },
     { position: 1, color: { r: 255, g: 255, b: 255, a: 255 } },
   ];
-}
-
-function getParamText(params: Record<string, ParamValue>, key: string, fallback: string): string {
-  const v = params[key];
-  if (v && "Text" in v) return v.Text;
-  return fallback;
-}
-
-function getDefaultText(schema: ParamSchema): string {
-  if ("Text" in schema.default) return schema.default.Text;
-  return "";
-}
-
-function getParamColorMode(params: Record<string, ParamValue>, key: string, fallback: string): string {
-  const v = params[key];
-  if (v && "ColorMode" in v) return v.ColorMode;
-  return fallback;
 }
 
 function getDefaultColorMode(schema: ParamSchema): string {
@@ -438,7 +366,7 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames, onE
   }
 
   if (typeof pt === "object" && "Float" in pt) {
-    const value = getParamFloat(params, keyStr, getDefaultFloat(schema));
+    const value = getParam(params, keyStr, "Float", getDefault(schema, "Float", 0));
     return (
       <FloatSlider
         label={schema.label}
@@ -452,7 +380,7 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames, onE
   }
 
   if (typeof pt === "object" && "Int" in pt) {
-    const value = getParamInt(params, keyStr, getDefaultInt(schema));
+    const value = getParam(params, keyStr, "Int", getDefault(schema, "Int", 0));
     return (
       <IntSlider
         label={schema.label}
@@ -465,21 +393,21 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames, onE
   }
 
   if (pt === "Bool") {
-    const value = getParamBool(params, keyStr, getDefaultBool(schema));
+    const value = getParam(params, keyStr, "Bool", getDefault(schema, "Bool", false));
     return (
       <BoolToggle label={schema.label} value={value} onChange={(v) => onChange({ Bool: v })} />
     );
   }
 
   if (pt === "Color") {
-    const value = getParamColor(params, keyStr, getDefaultColor(schema));
+    const value = getParam(params, keyStr, "Color", getDefault(schema, "Color", DEFAULT_COLOR));
     return (
       <ColorInput label={schema.label} value={value} onChange={(v) => onChange({ Color: v })} />
     );
   }
 
   if (typeof pt === "object" && "ColorList" in pt) {
-    const value = getParamColorList(params, keyStr, getDefaultColorList(schema));
+    const value = getParam(params, keyStr, "ColorList", getDefault(schema, "ColorList", DEFAULT_COLOR_LIST));
     return (
       <ColorListEditor
         label={schema.label}
@@ -546,7 +474,7 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames, onE
   }
 
   if (typeof pt === "object" && "ColorMode" in pt) {
-    const value = getParamColorMode(params, keyStr, getDefaultColorMode(schema));
+    const value = getParam(params, keyStr, "ColorMode", getDefaultColorMode(schema));
     return (
       <SelectInput
         label={schema.label}
@@ -558,7 +486,7 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames, onE
   }
 
   if (typeof pt === "object" && "Text" in pt) {
-    const value = getParamText(params, keyStr, getDefaultText(schema));
+    const value = getParam(params, keyStr, "Text", getDefault(schema, "Text", ""));
     return (
       <SelectInput
         label={schema.label}

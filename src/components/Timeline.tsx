@@ -5,6 +5,7 @@ import { effectKindLabel } from "../types";
 import type { WaveformData } from "../hooks/useAudio";
 import { makeEffectKey } from "../utils/effectKey";
 import { getEffectiveZoom } from "../utils/cssZoom";
+import { sectionColor } from "../utils/sectionColor";
 
 interface TimelineProps {
   show: Show | null;
@@ -54,21 +55,6 @@ function formatRulerTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return m > 0 ? `${m}:${s.toString().padStart(2, "0")}` : `${s}s`;
-}
-
-/** Map song section labels to semi-transparent background colors. */
-function sectionColor(label: string): string {
-  const colors: Record<string, string> = {
-    intro: "rgba(100, 149, 237, 0.12)",
-    verse: "rgba(60, 179, 113, 0.12)",
-    chorus: "rgba(255, 165, 0, 0.15)",
-    bridge: "rgba(186, 85, 211, 0.12)",
-    outro: "rgba(100, 149, 237, 0.12)",
-    solo: "rgba(255, 99, 71, 0.12)",
-    inst: "rgba(255, 215, 0, 0.12)",
-  };
-  const key = label.toLowerCase().replace(/[0-9]/g, "").trim();
-  return colors[key] ?? "rgba(128, 128, 128, 0.08)";
 }
 
 /** Resolve a group to its fixture IDs with memoization. */

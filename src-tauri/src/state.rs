@@ -185,6 +185,20 @@ impl AppState {
         self.current_sequence.lock().clone().ok_or(AppError::NoSequence)
     }
 
+    /// Insert an analysis result into the cache, evicting the oldest entry
+    /// if the cache exceeds `MAX_ANALYSIS_CACHE` entries.
+    pub fn cache_analysis(&self, key: String, value: AudioAnalysis) {
+        const MAX_ANALYSIS_CACHE: usize = 10;
+        let mut cache = self.analysis_cache.lock();
+        cache.insert(key, value);
+        while cache.len() > MAX_ANALYSIS_CACHE {
+            // Remove an arbitrary entry to stay within the cap.
+            if let Some(first_key) = cache.keys().next().cloned() {
+                cache.remove(&first_key);
+            }
+        }
+    }
+
     /// Resolve the active sequence index within `show.sequences`.
     ///
     /// Verifies that a sequence is loaded (via `current_sequence`) and that the

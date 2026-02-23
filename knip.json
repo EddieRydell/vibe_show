@@ -1,3 +1,7 @@
 {
-  "ignoreExportsUsedInFile": true
+  "ignoreExportsUsedInFile": true,
+  "ignore": [
+    "mcp-server/**",
+    "agent-sidecar/**"
+  ]
 }

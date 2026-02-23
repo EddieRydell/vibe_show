@@ -737,7 +737,7 @@ function EffectsTab({ setError, onOpenScript }: { setError: (e: string | null) =
               onClick={() => onOpenScript(null)}
               className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-3 py-1 text-xs transition-colors"
             >
-              Open Script Studio
+              Open Effect Studio
             </button>
             <button
               onClick={() => onOpenScript(null)}

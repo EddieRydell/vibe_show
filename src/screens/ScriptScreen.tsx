@@ -255,7 +255,7 @@ export function ScriptScreen({
   );
 
   return (
-    <ScreenShell title="Script Studio" subtitle={subtitle} onBack={onBack} toolbar={toolbar}>
+    <ScreenShell title="Effect Studio" subtitle={subtitle} onBack={onBack} toolbar={toolbar}>
       {/* Main content */}
       <div className="flex min-h-0 flex-1">
         {/* Left: Script Browser */}
@@ -360,7 +360,7 @@ function WelcomePanel({
     <div className="flex flex-1 flex-col items-center justify-center gap-6 p-8">
       <div className="flex flex-col items-center gap-2">
         <Sparkles size={32} className="text-primary" />
-        <h2 className="text-text text-lg font-semibold">Script Studio</h2>
+        <h2 className="text-text text-lg font-semibold">Effect Studio</h2>
         <p className="text-text-2 max-w-md text-center text-sm">
           Create custom light effects with AI or write them yourself.
           Describe what you want and the AI will generate the script for you.

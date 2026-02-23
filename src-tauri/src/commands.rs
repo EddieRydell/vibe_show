@@ -1,8 +1,5 @@
 #![allow(
     clippy::needless_pass_by_value,
-    clippy::must_use_candidate,
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
     clippy::unreachable
 )]
 
@@ -419,11 +416,8 @@ pub async fn analyze_audio(
         eprintln!("[VibeLights] Failed to save analysis cache: {e}");
     }
 
-    // Save to memory cache
-    state_arc
-        .analysis_cache
-        .lock()
-        .insert(audio_file, analysis_result.clone());
+    // Save to memory cache (capped at 10 entries)
+    state_arc.cache_analysis(audio_file, analysis_result.clone());
 
     Ok(analysis_result)
 }
