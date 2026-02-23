@@ -78,8 +78,11 @@ pub fn add_effect(state: &Arc<AppState>, p: AddEffectParams) -> Result<CommandOu
     validate_time_range(p.start, p.end)?;
     validate_opacity(p.opacity)?;
 
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    let seq_idx = state.active_sequence_index(&show)?;
     let cmd = EditCommand::AddEffect {
-        sequence_index: 0,
+        sequence_index: seq_idx,
         track_index: p.track_index,
         kind: p.kind.clone(),
         start: p.start,
@@ -87,12 +90,10 @@ pub fn add_effect(state: &Arc<AppState>, p: AddEffectParams) -> Result<CommandOu
         blend_mode: p.blend_mode,
         opacity: p.opacity,
     };
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
     let result = dispatcher.execute(&mut show, &cmd)?;
     let track_name = show
         .sequences
-        .first()
+        .get(seq_idx)
         .and_then(|s| s.tracks.get(p.track_index))
         .map_or("unknown", |t| t.name.as_str());
     Ok(CommandOutput::data(
@@ -114,12 +115,13 @@ pub fn delete_effects(
         .into_iter()
         .map(|t| (t.track_index, t.effect_index))
         .collect();
-    let cmd = EditCommand::DeleteEffects {
-        sequence_index: 0,
-        targets,
-    };
     let mut dispatcher = state.dispatcher.lock();
     let mut show = state.show.lock();
+    let seq_idx = state.active_sequence_index(&show)?;
+    let cmd = EditCommand::DeleteEffects {
+        sequence_index: seq_idx,
+        targets,
+    };
     dispatcher.execute(&mut show, &cmd)?;
     Ok(CommandOutput::unit(format!("Deleted {n} effect(s).")))
 }
@@ -129,15 +131,16 @@ pub fn update_effect_param(
     p: UpdateEffectParamParams,
 ) -> Result<CommandOutput, AppError> {
     let key_str = format!("{:?}", p.key);
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    let seq_idx = state.active_sequence_index(&show)?;
     let cmd = EditCommand::UpdateEffectParam {
-        sequence_index: 0,
+        sequence_index: seq_idx,
         track_index: p.track_index,
         effect_index: p.effect_index,
         key: p.key,
         value: p.value,
     };
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
     dispatcher.execute(&mut show, &cmd)?;
     Ok(CommandOutput::unit(format!("Updated param \"{key_str}\".")))
 }
@@ -148,15 +151,16 @@ pub fn update_effect_time_range(
 ) -> Result<CommandOutput, AppError> {
     validate_time_range(p.start, p.end)?;
 
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    let seq_idx = state.active_sequence_index(&show)?;
     let cmd = EditCommand::UpdateEffectTimeRange {
-        sequence_index: 0,
+        sequence_index: seq_idx,
         track_index: p.track_index,
         effect_index: p.effect_index,
         start: p.start,
         end: p.end,
     };
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
     dispatcher.execute(&mut show, &cmd)?;
     Ok(CommandOutput::unit(format!(
         "Updated time range to {:.1}s-{:.1}s.",
@@ -165,20 +169,19 @@ pub fn update_effect_time_range(
 }
 
 pub fn add_track(state: &Arc<AppState>, p: AddTrackParams) -> Result<CommandOutput, AppError> {
-    let fixture_name = {
-        let show = state.show.lock();
-        show.fixtures
-            .iter()
-            .find(|f| f.id.0 == p.fixture_id)
-            .map_or_else(|| format!("fixture {}", p.fixture_id), |f| f.name.clone())
-    };
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    let seq_idx = state.active_sequence_index(&show)?;
+    let fixture_name = show
+        .fixtures
+        .iter()
+        .find(|f| f.id.0 == p.fixture_id)
+        .map_or_else(|| format!("fixture {}", p.fixture_id), |f| f.name.clone());
     let cmd = EditCommand::AddTrack {
-        sequence_index: 0,
+        sequence_index: seq_idx,
         name: p.name.clone(),
         target: EffectTarget::Fixtures(vec![FixtureId(p.fixture_id)]),
     };
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
     let result = dispatcher.execute(&mut show, &cmd)?;
     Ok(CommandOutput::data(
         format!(
@@ -193,12 +196,13 @@ pub fn delete_track(
     state: &Arc<AppState>,
     p: DeleteTrackParams,
 ) -> Result<CommandOutput, AppError> {
-    let cmd = EditCommand::DeleteTrack {
-        sequence_index: 0,
-        track_index: p.track_index,
-    };
     let mut dispatcher = state.dispatcher.lock();
     let mut show = state.show.lock();
+    let seq_idx = state.active_sequence_index(&show)?;
+    let cmd = EditCommand::DeleteTrack {
+        sequence_index: seq_idx,
+        track_index: p.track_index,
+    };
     dispatcher.execute(&mut show, &cmd)?;
     Ok(CommandOutput::unit(format!(
         "Deleted track {}.",
@@ -210,14 +214,15 @@ pub fn move_effect_to_track(
     state: &Arc<AppState>,
     p: MoveEffectToTrackParams,
 ) -> Result<CommandOutput, AppError> {
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    let seq_idx = state.active_sequence_index(&show)?;
     let cmd = EditCommand::MoveEffectToTrack {
-        sequence_index: 0,
+        sequence_index: seq_idx,
         from_track: p.from_track,
         effect_index: p.effect_index,
         to_track: p.to_track,
     };
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
     let result = dispatcher.execute(&mut show, &cmd)?;
     Ok(CommandOutput::data(
         format!(
@@ -239,21 +244,28 @@ pub fn update_sequence_settings(
         validate_positive_finite(frame_rate, "Frame rate")?;
     }
 
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    let seq_idx = state.active_sequence_index(&show)?;
     let cmd = EditCommand::UpdateSequenceSettings {
-        sequence_index: 0,
+        sequence_index: seq_idx,
         name: p.name,
         audio_file: p.audio_file,
         duration: p.duration,
         frame_rate: p.frame_rate,
     };
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
     dispatcher.execute(&mut show, &cmd)?;
     Ok(CommandOutput::unit("Updated sequence settings."))
 }
 
 #[allow(clippy::cast_possible_truncation)]
 pub fn batch_edit(state: &Arc<AppState>, p: BatchEditParams) -> Result<CommandOutput, AppError> {
+    // Resolve active sequence index up front so batch commands target the right sequence.
+    let seq_idx = {
+        let show = state.show.lock();
+        state.active_sequence_index(&show)?
+    };
+
     let mut edit_commands = Vec::new();
     for (i, cmd_val) in p.commands.iter().enumerate() {
         let action = cmd_val
@@ -299,9 +311,10 @@ pub fn batch_edit(state: &Arc<AppState>, p: BatchEditParams) -> Result<CommandOu
             }
         }
 
-        let cmd = parse_batch_command(action, params).map_err(|e| AppError::ValidationError {
-            message: format!("Command {i} ({action}): {e}"),
-        })?;
+        let cmd =
+            parse_batch_command(action, params, seq_idx).map_err(|e| AppError::ValidationError {
+                message: format!("Command {i} ({action}): {e}"),
+            })?;
         edit_commands.push(cmd);
     }
 
@@ -329,6 +342,7 @@ pub fn batch_edit(state: &Arc<AppState>, p: BatchEditParams) -> Result<CommandOu
 fn parse_batch_command(
     action: &str,
     params: &serde_json::Value,
+    sequence_index: usize,
 ) -> Result<EditCommand, String> {
     use serde_json::Value;
     match action {
@@ -352,7 +366,7 @@ fn parse_batch_command(
             validate_time_range_str(start, end)?;
             validate_opacity_str(opacity)?;
             Ok(EditCommand::AddEffect {
-                sequence_index: 0,
+                sequence_index,
                 track_index: params
                     .get("track_index")
                     .and_then(Value::as_u64)
@@ -386,12 +400,12 @@ fn parse_batch_command(
                 })
                 .collect::<Result<_, String>>()?;
             Ok(EditCommand::DeleteEffects {
-                sequence_index: 0,
+                sequence_index,
                 targets,
             })
         }
         "update_effect_param" => Ok(EditCommand::UpdateEffectParam {
-            sequence_index: 0,
+            sequence_index,
             track_index: params
                 .get("track_index")
                 .and_then(Value::as_u64)
@@ -416,7 +430,7 @@ fn parse_batch_command(
                 .ok_or("Missing end")?;
             validate_time_range_str(start, end)?;
             Ok(EditCommand::UpdateEffectTimeRange {
-                sequence_index: 0,
+                sequence_index,
                 track_index: params
                     .get("track_index")
                     .and_then(Value::as_u64)
@@ -435,7 +449,7 @@ fn parse_batch_command(
                 .and_then(Value::as_u64)
                 .ok_or("Missing fixture_id")? as u32;
             Ok(EditCommand::AddTrack {
-                sequence_index: 0,
+                sequence_index,
                 name: params
                     .get("name")
                     .and_then(Value::as_str)
@@ -447,7 +461,7 @@ fn parse_batch_command(
             })
         }
         "delete_track" => Ok(EditCommand::DeleteTrack {
-            sequence_index: 0,
+            sequence_index,
             track_index: params
                 .get("track_index")
                 .and_then(Value::as_u64)
@@ -465,7 +479,7 @@ fn parse_batch_command(
             .map_err(|e| format!("Invalid stops: {e}"))?;
             let gradient = ColorGradient::new(stops).ok_or("Gradient needs at least 2 stops")?;
             Ok(EditCommand::SetGradient {
-                sequence_index: 0,
+                sequence_index,
                 name,
                 gradient,
             })
@@ -482,13 +496,13 @@ fn parse_batch_command(
             .map_err(|e| format!("Invalid points: {e}"))?;
             let curve = Curve::new(points).ok_or("Curve needs at least 2 points")?;
             Ok(EditCommand::SetCurve {
-                sequence_index: 0,
+                sequence_index,
                 name,
                 curve,
             })
         }
         "delete_library_gradient" => Ok(EditCommand::DeleteGradient {
-            sequence_index: 0,
+            sequence_index,
             name: params
                 .get("name")
                 .and_then(Value::as_str)
@@ -496,7 +510,7 @@ fn parse_batch_command(
                 .to_string(),
         }),
         "delete_library_curve" => Ok(EditCommand::DeleteCurve {
-            sequence_index: 0,
+            sequence_index,
             name: params
                 .get("name")
                 .and_then(Value::as_str)
@@ -515,13 +529,13 @@ fn parse_batch_command(
                 .ok_or("Missing source")?
                 .to_string();
             Ok(EditCommand::SetScript {
-                sequence_index: 0,
+                sequence_index,
                 name,
                 source,
             })
         }
         "delete_script" => Ok(EditCommand::DeleteScript {
-            sequence_index: 0,
+            sequence_index,
             name: params
                 .get("name")
                 .and_then(Value::as_str)
