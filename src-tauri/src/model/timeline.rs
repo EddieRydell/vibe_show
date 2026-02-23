@@ -34,6 +34,8 @@ impl TryFrom<TimeRangeRaw> for TimeRange {
     }
 }
 
+const TIME_EPSILON: f64 = 1e-9;
+
 impl TimeRange {
     /// Create a time range. Returns None if start >= end or either is negative.
     pub fn new(start: f64, end: f64) -> Option<Self> {
@@ -57,8 +59,10 @@ impl TimeRange {
     }
 
     /// Returns true if the given time falls within this range (inclusive start, exclusive end).
+    /// Uses a small epsilon tolerance to avoid single-frame gaps at effect boundaries
+    /// caused by floating-point precision.
     pub fn contains(&self, t: f64) -> bool {
-        t >= self.start && t < self.end
+        t >= self.start - TIME_EPSILON && t < self.end + TIME_EPSILON
     }
 
     /// Raw normalization — may return values outside [0, 1].
