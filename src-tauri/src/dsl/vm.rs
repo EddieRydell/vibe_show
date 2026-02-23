@@ -101,7 +101,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
 
         match ops[ip] {
             Op::PushConst(idx) => {
-                stack.push(Value::Float(consts[idx as usize]));
+                let val = consts.get(idx as usize).copied().unwrap_or(0.0);
+                stack.push(Value::Float(val));
             }
             Op::PushParam(idx) => {
                 let val = ctx.param_values.get(idx as usize).copied().unwrap_or(0.0);
