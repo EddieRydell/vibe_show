@@ -23,14 +23,32 @@ pub fn pause(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
 }
 
 pub fn seek(state: &Arc<AppState>, p: SeekParams) -> Result<CommandOutput, AppError> {
+    if !p.time.is_finite() {
+        return Err(AppError::ValidationError {
+            message: "Seek time must be a finite number.".to_string(),
+        });
+    }
+
+    // Read sequence duration from show first (lock ordering: show before playback).
+    let duration = {
+        let show = state.show.lock();
+        let playback = state.playback.lock();
+        show.sequences
+            .get(playback.sequence_index)
+            .map_or(0.0, |s| s.duration)
+    };
+
     let mut playback = state.playback.lock();
-    playback.current_time = p.time.max(0.0);
+    playback.current_time = p.time.clamp(0.0, duration);
     if playback.playing {
         playback.last_tick = Some(Instant::now());
     } else {
         playback.last_tick = None;
     }
-    Ok(CommandOutput::unit(format!("Seeked to {:.1}s.", p.time)))
+    Ok(CommandOutput::unit(format!(
+        "Seeked to {:.1}s.",
+        playback.current_time
+    )))
 }
 
 pub fn undo(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
