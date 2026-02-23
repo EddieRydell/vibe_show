@@ -964,6 +964,8 @@ export function Timeline({
               : "border-border bg-surface-2 text-text-2 hover:bg-bg hover:text-text"
           }`}
           title="Select mode (V)"
+          aria-label="Select mode"
+          aria-pressed={mode === "select"}
         >
           <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="mr-0.5 inline-block align-[-1px]">
             <path d="M2 1l10 6.5L7.5 9l-2 5.5L2 1z" />
@@ -978,6 +980,8 @@ export function Timeline({
               : "border-border bg-surface-2 text-text-2 hover:bg-bg hover:text-text"
           }`}
           title="Edit mode (M)"
+          aria-label="Edit mode"
+          aria-pressed={mode === "edit"}
         >
           <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="mr-0.5 inline-block align-[-1px]">
             <path d="M8 2v4H4v1h4v4h1V7h4V6H9V2H8zM8 0l3 3H9V5H7V3H5L8 0zM8 16l-3-3h2v-2h2v2h2l-3 3zM0 8l3-3v2h2v2H3v2L0 8zM16 8l-3 3v-2h-2V7h2V5l3 3z" />
@@ -992,6 +996,8 @@ export function Timeline({
               : "border-border bg-surface-2 text-text-2 hover:bg-bg hover:text-text"
           }`}
           title="Swipe mode (S)"
+          aria-label="Swipe mode"
+          aria-pressed={mode === "swipe"}
         >
           <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="mr-0.5 inline-block align-[-1px]">
             <path d="M2 14L14 2M10 2h4v4" stroke="currentColor" strokeWidth="2" fill="none" />

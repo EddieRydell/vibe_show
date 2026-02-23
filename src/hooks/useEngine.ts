@@ -30,6 +30,7 @@ export function useEngine(
   const [undoState, setUndoState] = useState<UndoState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const animFrameRef = useRef<number>(0);
+  const frameRequestIdRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
   const playbackRef = useRef<PlaybackInfo | null>(null);
   const playingRef = useRef(false);
@@ -99,8 +100,10 @@ export function useEngine(
             }
           }
         }
+        const thisRequest = ++frameRequestIdRef.current;
         invoke<Frame>("get_frame", { time: audioTime })
           .then((f) => {
+            if (thisRequest !== frameRequestIdRef.current) return;
             setFrame(f);
             setPlayback((prev) => {
               const updated = prev ? { ...prev, current_time: audioTime, playing: true } : prev;

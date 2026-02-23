@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -233,11 +235,25 @@ struct UndoEntry {
 
 const MAX_UNDO_LEVELS: usize = 50;
 
+/// Maximum elapsed time between two coalescing edits for them to share one
+/// undo entry. If a coalescing edit arrives after this window, it starts a
+/// fresh undo entry even if it has the same coalesce key.
+const COALESCE_WINDOW: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// Manages command execution with snapshot-based undo/redo.
-#[derive(Default)]
 pub struct CommandDispatcher {
     undo_stack: Vec<UndoEntry>,
     redo_stack: Vec<UndoEntry>,
+    /// The coalesce key of the most recent coalescing edit.
+    last_coalesce_key: Option<String>,
+    /// The timestamp of the most recent coalescing edit.
+    last_coalesce_time: Option<Instant>,
+}
+
+impl Default for CommandDispatcher {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CommandDispatcher {
@@ -245,6 +261,8 @@ impl CommandDispatcher {
         Self {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            last_coalesce_key: None,
+            last_coalesce_time: None,
         }
     }
 
@@ -253,7 +271,11 @@ impl CommandDispatcher {
     ///
     /// Consecutive commands with the same coalesce key (e.g. repeated param
     /// tweaks on the same effect) share one undo entry so a single Ctrl+Z
-    /// reverts the whole run of micro-edits.
+    /// reverts the whole run of micro-edits. Coalescing uses a time-based
+    /// window: if the same coalesce key arrives within [`COALESCE_WINDOW`] of
+    /// the previous coalescing edit, they share one undo entry. Interleaved
+    /// non-coalescing commands (e.g. moving an effect) do **not** break the
+    /// chain — only elapsed time or a different coalesce key does.
     pub fn execute(
         &mut self,
         show: &mut crate::model::Show,
@@ -263,17 +285,52 @@ impl CommandDispatcher {
         let description = cmd.description();
         let new_coalesce_key = cmd.coalesce_key();
 
-        // Check if we can coalesce with the previous undo entry.
+        // Check if we can coalesce with a previous coalescing edit.
+        // We coalesce when:
+        //   1. The new command has a coalesce key, AND
+        //   2. It matches the last coalesce key, AND
+        //   3. The last coalescing edit was within the time window, AND
+        //   4. There is a matching undo entry to coalesce into.
+        let now = Instant::now();
         let coalesced = if let Some(ref new_key) = new_coalesce_key {
-            self.undo_stack
-                .last()
-                .and_then(|top| top.coalesce_key.as_ref())
-                .is_some_and(|top_key| top_key == new_key)
+            let key_matches = self
+                .last_coalesce_key
+                .as_ref()
+                .is_some_and(|prev_key| prev_key == new_key);
+            let within_window = self
+                .last_coalesce_time
+                .is_some_and(|t| now.duration_since(t) < COALESCE_WINDOW);
+            if key_matches && within_window {
+                // Find the undo entry with the matching coalesce key (it may
+                // not be on top if non-coalescing commands were interleaved).
+                self.undo_stack
+                    .iter()
+                    .rposition(|e| {
+                        e.coalesce_key.as_ref().is_some_and(|k| k == new_key)
+                    })
+            } else {
+                None
+            }
         } else {
-            false
+            None
         };
 
-        if !coalesced {
+        if let Some(coalesce_idx) = coalesced {
+            // Coalescing: apply the command but keep the existing undo entry's
+            // snapshot (which captures the state before the first edit in this run).
+            let result = self.apply(show, cmd)?;
+
+            // Update the description to reflect the latest edit.
+            self.undo_stack[coalesce_idx].description = description;
+
+            // Update the coalesce timestamp.
+            self.last_coalesce_time = Some(now);
+
+            // Still clear redo — the coalesced edit invalidates any redo history.
+            self.redo_stack.clear();
+
+            Ok(result)
+        } else {
             // Snapshot the sequence before mutation
             let snapshot = show
                 .sequences
@@ -292,26 +349,21 @@ impl CommandDispatcher {
                 description,
                 sequence_index: seq_idx,
                 snapshot,
-                coalesce_key: new_coalesce_key,
+                coalesce_key: new_coalesce_key.clone(),
             });
             if self.undo_stack.len() > MAX_UNDO_LEVELS {
                 self.undo_stack.remove(0);
             }
             self.redo_stack.clear();
 
-            Ok(result)
-        } else {
-            // Coalescing: apply the command but keep the existing undo entry's
-            // snapshot (which captures the state before the first edit in this run).
-            let result = self.apply(show, cmd)?;
-
-            // Update the description to reflect the latest edit.
-            if let Some(top) = self.undo_stack.last_mut() {
-                top.description = description;
+            // Update coalesce tracking for coalescing commands.
+            if new_coalesce_key.is_some() {
+                self.last_coalesce_key = new_coalesce_key;
+                self.last_coalesce_time = Some(now);
             }
-
-            // Still clear redo — the coalesced edit invalidates any redo history.
-            self.redo_stack.clear();
+            // Non-coalescing commands intentionally do NOT clear
+            // last_coalesce_key/last_coalesce_time so that interleaved
+            // non-coalescing operations don't break the coalesce chain.
 
             Ok(result)
         }
@@ -319,6 +371,10 @@ impl CommandDispatcher {
 
     /// Undo the last command. Returns the description of what was undone.
     pub fn undo(&mut self, show: &mut crate::model::Show) -> Result<String, AppError> {
+        // Undo breaks any active coalesce chain.
+        self.last_coalesce_key = None;
+        self.last_coalesce_time = None;
+
         let entry = self.undo_stack.pop().ok_or(AppError::ValidationError {
             message: "Nothing to undo".into(),
         })?;
@@ -351,6 +407,10 @@ impl CommandDispatcher {
 
     /// Redo the last undone command. Returns the description of what was redone.
     pub fn redo(&mut self, show: &mut crate::model::Show) -> Result<String, AppError> {
+        // Redo breaks any active coalesce chain.
+        self.last_coalesce_key = None;
+        self.last_coalesce_time = None;
+
         let entry = self.redo_stack.pop().ok_or(AppError::ValidationError {
             message: "Nothing to redo".into(),
         })?;
@@ -395,6 +455,8 @@ impl CommandDispatcher {
     pub fn clear(&mut self) {
         self.undo_stack.clear();
         self.redo_stack.clear();
+        self.last_coalesce_key = None;
+        self.last_coalesce_time = None;
     }
 
     /// Apply a command to the show, returning the result. Does not manage undo state.
