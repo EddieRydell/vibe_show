@@ -746,10 +746,10 @@ export function Timeline({
       } else if (ds.type === "swipe") {
         // Check element under cursor for effect keys
         const el = document.elementFromPoint(e.clientX, e.clientY);
-        if (el) {
-          const effectEl = (el as HTMLElement).closest("[data-effect-key]");
-          if (effectEl) {
-            const key = (effectEl as HTMLElement).dataset.effectKey;
+        if (el instanceof HTMLElement) {
+          const effectEl = el.closest("[data-effect-key]");
+          if (effectEl instanceof HTMLElement) {
+            const key = effectEl.dataset.effectKey;
             if (key && !ds.swipedKeys.has(key)) {
               ds.swipedKeys.add(key);
               // Update selection
