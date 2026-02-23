@@ -416,8 +416,8 @@ mod tests {
         let frame = evaluate(&show, 0, 3.0, None, None);
         assert!(frame.fixtures.contains_key(&1));
 
-        // At end (exclusive)
-        let frame = evaluate(&show, 0, 4.0, None, None);
+        // Well past the end (beyond epsilon tolerance)
+        let frame = evaluate(&show, 0, 4.1, None, None);
         assert!(frame.fixtures.is_empty());
     }
 
