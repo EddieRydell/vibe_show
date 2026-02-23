@@ -13,7 +13,71 @@ use crate::registry::params::{
 use crate::registry::CommandOutput;
 use crate::state::AppState;
 
+// ── Validation helpers ──────────────────────────────────────────
+
+fn validate_time_range(start: f64, end: f64) -> Result<(), AppError> {
+    if !start.is_finite() || !end.is_finite() {
+        return Err(AppError::ValidationError {
+            message: "Time values must be finite".to_string(),
+        });
+    }
+    if start < 0.0 {
+        return Err(AppError::ValidationError {
+            message: "Start time must be non-negative".to_string(),
+        });
+    }
+    if start >= end {
+        return Err(AppError::ValidationError {
+            message: format!("Start ({start:.3}) must be less than end ({end:.3})"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_opacity(opacity: f64) -> Result<(), AppError> {
+    if !opacity.is_finite() {
+        return Err(AppError::ValidationError {
+            message: "Opacity must be finite".to_string(),
+        });
+    }
+    if !(0.0..=1.0).contains(&opacity) {
+        return Err(AppError::ValidationError {
+            message: format!("Opacity ({opacity:.3}) must be between 0.0 and 1.0"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_positive_finite(value: f64, name: &str) -> Result<(), AppError> {
+    if !value.is_finite() {
+        return Err(AppError::ValidationError {
+            message: format!("{name} must be finite"),
+        });
+    }
+    if value <= 0.0 {
+        return Err(AppError::ValidationError {
+            message: format!("{name} must be positive"),
+        });
+    }
+    Ok(())
+}
+
+// ── String-returning variants for batch_edit context ────────────
+
+fn validate_time_range_str(start: f64, end: f64) -> Result<(), String> {
+    validate_time_range(start, end).map_err(|e| e.to_string())
+}
+
+fn validate_opacity_str(opacity: f64) -> Result<(), String> {
+    validate_opacity(opacity).map_err(|e| e.to_string())
+}
+
+// ── Handlers ────────────────────────────────────────────────────
+
 pub fn add_effect(state: &Arc<AppState>, p: AddEffectParams) -> Result<CommandOutput, AppError> {
+    validate_time_range(p.start, p.end)?;
+    validate_opacity(p.opacity)?;
+
     let cmd = EditCommand::AddEffect {
         sequence_index: 0,
         track_index: p.track_index,
@@ -82,6 +146,8 @@ pub fn update_effect_time_range(
     state: &Arc<AppState>,
     p: UpdateEffectTimeRangeParams,
 ) -> Result<CommandOutput, AppError> {
+    validate_time_range(p.start, p.end)?;
+
     let cmd = EditCommand::UpdateEffectTimeRange {
         sequence_index: 0,
         track_index: p.track_index,
@@ -166,6 +232,13 @@ pub fn update_sequence_settings(
     state: &Arc<AppState>,
     p: UpdateSequenceSettingsParams,
 ) -> Result<CommandOutput, AppError> {
+    if let Some(duration) = p.duration {
+        validate_positive_finite(duration, "Duration")?;
+    }
+    if let Some(frame_rate) = p.frame_rate {
+        validate_positive_finite(frame_rate, "Frame rate")?;
+    }
+
     let cmd = EditCommand::UpdateSequenceSettings {
         sequence_index: 0,
         name: p.name,
@@ -268,6 +341,16 @@ fn parse_batch_command(
                 .get("opacity")
                 .and_then(Value::as_f64)
                 .unwrap_or(1.0);
+            let start = params
+                .get("start")
+                .and_then(Value::as_f64)
+                .ok_or("Missing start")?;
+            let end = params
+                .get("end")
+                .and_then(Value::as_f64)
+                .ok_or("Missing end")?;
+            validate_time_range_str(start, end)?;
+            validate_opacity_str(opacity)?;
             Ok(EditCommand::AddEffect {
                 sequence_index: 0,
                 track_index: params
@@ -278,14 +361,8 @@ fn parse_batch_command(
                     params.get("kind").cloned().unwrap_or(Value::Null),
                 )
                 .map_err(|e| e.to_string())?,
-                start: params
-                    .get("start")
-                    .and_then(Value::as_f64)
-                    .ok_or("Missing start")?,
-                end: params
-                    .get("end")
-                    .and_then(Value::as_f64)
-                    .ok_or("Missing end")?,
+                start,
+                end,
                 blend_mode,
                 opacity,
             })
@@ -328,25 +405,30 @@ fn parse_batch_command(
             value: serde_json::from_value(params.get("value").cloned().unwrap_or(Value::Null))
                 .map_err(|e| e.to_string())?,
         }),
-        "update_effect_time_range" => Ok(EditCommand::UpdateEffectTimeRange {
-            sequence_index: 0,
-            track_index: params
-                .get("track_index")
-                .and_then(Value::as_u64)
-                .ok_or("Missing track_index")? as usize,
-            effect_index: params
-                .get("effect_index")
-                .and_then(Value::as_u64)
-                .ok_or("Missing effect_index")? as usize,
-            start: params
+        "update_effect_time_range" => {
+            let start = params
                 .get("start")
                 .and_then(Value::as_f64)
-                .ok_or("Missing start")?,
-            end: params
+                .ok_or("Missing start")?;
+            let end = params
                 .get("end")
                 .and_then(Value::as_f64)
-                .ok_or("Missing end")?,
-        }),
+                .ok_or("Missing end")?;
+            validate_time_range_str(start, end)?;
+            Ok(EditCommand::UpdateEffectTimeRange {
+                sequence_index: 0,
+                track_index: params
+                    .get("track_index")
+                    .and_then(Value::as_u64)
+                    .ok_or("Missing track_index")? as usize,
+                effect_index: params
+                    .get("effect_index")
+                    .and_then(Value::as_u64)
+                    .ok_or("Missing effect_index")? as usize,
+                start,
+                end,
+            })
+        }
         "add_track" => {
             let fixture_id = params
                 .get("fixture_id")
