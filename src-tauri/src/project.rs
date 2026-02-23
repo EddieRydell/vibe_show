@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use serde::Serialize;
 
@@ -109,15 +111,31 @@ pub(crate) fn slugify(name: &str) -> String {
     }
 }
 
+/// Per-file mutex map to serialize concurrent writes to the same path.
+static FILE_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 /// Atomically write bytes to a file using write-to-temp-then-rename.
 ///
-/// 1. Writes data to a `.tmp` sibling file
-/// 2. Calls `fsync` to flush to disk
-/// 3. Renames the existing file to `.bak` (best-effort)
-/// 4. Renames the `.tmp` file to the target path
+/// 1. Acquires a per-file mutex to prevent concurrent writes to the same path
+/// 2. Writes data to a `.tmp` sibling file
+/// 3. Calls `fsync` to flush to disk
+/// 4. Renames the existing file to `.bak` (best-effort)
+/// 5. Renames the `.tmp` file to the target path
 ///
-/// This prevents data corruption from power loss or crashes mid-write.
+/// This prevents data corruption from power loss or crashes mid-write,
+/// and the per-file lock prevents concurrent callers from racing on the `.tmp` file.
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), ProjectError> {
+    // Acquire per-file lock to serialize writes to the same path
+    let lock = {
+        let mut locks = FILE_LOCKS.lock().unwrap();
+        locks
+            .entry(path.to_path_buf())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    };
+    let _guard = lock.lock().unwrap();
+
     // Build sibling paths: foo.json → foo.json.tmp, foo.json.bak
     let file_name = path.file_name().unwrap_or_default();
 
