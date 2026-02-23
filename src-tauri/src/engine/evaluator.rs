@@ -13,13 +13,18 @@ use crate::util::base64_encode;
 ///
 /// Only fixtures with non-black pixels are included. Pixel data is
 /// base64-encoded RGBA bytes for compact serialization over IPC.
-#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct Frame {
     /// Map from fixture ID to base64-encoded RGBA pixel data.
     /// Each string decodes to `pixel_count * 4` bytes (R, G, B, A per pixel).
     /// Fixtures that are all-black are omitted.
     pub fixtures: HashMap<u32, String>,
+    /// Diagnostic warnings when the frame is empty for a known reason
+    /// (e.g. missing sequence, no tracks). `None` when there is nothing to report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub warnings: Option<Vec<String>>,
 }
 
 /// Resolve target fixtures using pre-computed group cache.
@@ -81,8 +86,19 @@ pub fn evaluate(
     let Some(sequence) = show.sequences.get(sequence_index) else {
         return Frame {
             fixtures: HashMap::new(),
+            warnings: Some(vec![format!(
+                "Sequence not found (index {sequence_index}, show has {})",
+                show.sequences.len()
+            )]),
         };
     };
+
+    if sequence.tracks.is_empty() {
+        return Frame {
+            fixtures: HashMap::new(),
+            warnings: Some(vec!["No tracks in sequence".to_string()]),
+        };
+    }
 
     // Library references for ref resolution
     let gradient_lib = &sequence.gradient_library;
@@ -260,6 +276,7 @@ pub fn evaluate(
             .filter(|(_, colors)| !is_all_black(colors))
             .map(|(id, colors)| (id.0, colors_to_base64(&colors)))
             .collect(),
+        warnings: None,
     }
 }
 

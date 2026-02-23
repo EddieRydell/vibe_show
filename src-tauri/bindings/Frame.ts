@@ -12,4 +12,9 @@ export type Frame = {
  * Each string decodes to `pixel_count * 4` bytes (R, G, B, A per pixel).
  * Fixtures that are all-black are omitted.
  */
-fixtures: { [key in number]: string }, };
+fixtures: { [key in number]: string }, 
+/**
+ * Diagnostic warnings when the frame is empty for a known reason
+ * (e.g. missing sequence, no tracks). `None` when there is nothing to report.
+ */
+warnings?: Array<string>, };
