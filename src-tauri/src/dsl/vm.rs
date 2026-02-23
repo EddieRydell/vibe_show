@@ -7,6 +7,17 @@ use crate::model::motion_path::MotionPath;
 /// Maximum stack depth to prevent runaway scripts.
 const MAX_STACK: usize = 256;
 
+/// Diagnostic color returned when a stack underflow is detected.
+/// Magenta is chosen because it is visually distinctive and rarely
+/// appears in normal light shows, making script bugs immediately obvious.
+const UNDERFLOW_COLOR: Color = Color { r: 255, g: 0, b: 255, a: 255 };
+
+/// Maximum number of instructions executed per pixel to prevent infinite loops.
+/// With no loops in the current DSL, real scripts complete in well under 10 000
+/// instructions per pixel.  This limit is a safety net against compiler bugs
+/// or future loop constructs that could produce backward jumps.
+const MAX_INSTRUCTIONS: usize = 100_000;
+
 /// Runtime value on the VM stack.
 #[derive(Debug, Clone, Copy)]
 enum Value {
@@ -91,11 +102,14 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
     let stack = &mut buffers.stack;
     let locals = &mut buffers.locals;
     let mut ip: usize = 0;
+    let mut instruction_count: usize = 0;
+    let mut underflow = false;
     let ops = &script.ops;
     let consts = &script.constants;
 
     while ip < ops.len() {
-        if stack.len() >= MAX_STACK {
+        instruction_count += 1;
+        if instruction_count > MAX_INSTRUCTIONS || stack.len() >= MAX_STACK {
             return Color::BLACK;
         }
 
@@ -117,74 +131,82 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     if (idx as usize) < locals.len() {
                         locals[idx as usize] = val;
                     }
+                } else {
+                    underflow = true;
                 }
             }
             Op::Pop => {
-                stack.pop();
+                if stack.pop().is_none() {
+                    underflow = true;
+                }
             }
 
             // Arithmetic
-            Op::Add => float_binop(stack, |a, b| a + b),
-            Op::Sub => float_binop(stack, |a, b| a - b),
-            Op::Mul => float_binop(stack, |a, b| a * b),
-            Op::Div => float_binop(stack, |a, b| if b == 0.0 { 0.0 } else { a / b }),
-            Op::Mod => float_binop(stack, |a, b| if b == 0.0 { 0.0 } else { a % b }),
+            Op::Add => float_binop(stack, &mut underflow, |a, b| a + b),
+            Op::Sub => float_binop(stack, &mut underflow, |a, b| a - b),
+            Op::Mul => float_binop(stack, &mut underflow, |a, b| a * b),
+            Op::Div => float_binop(stack, &mut underflow, |a, b| if b == 0.0 { 0.0 } else { a / b }),
+            Op::Mod => float_binop(stack, &mut underflow, |a, b| if b == 0.0 { 0.0 } else { a % b }),
             Op::Neg => {
                 if let Some(val) = stack.pop() {
                     stack.push(Value::Float(-val.as_float()));
+                } else {
+                    underflow = true;
                 }
             }
 
             // Comparison
-            Op::Lt => float_cmp(stack, |a, b| a < b),
-            Op::Gt => float_cmp(stack, |a, b| a > b),
-            Op::Le => float_cmp(stack, |a, b| a <= b),
-            Op::Ge => float_cmp(stack, |a, b| a >= b),
-            Op::Eq => float_cmp(stack, |a, b| {
+            Op::Lt => float_cmp(stack, &mut underflow, |a, b| a < b),
+            Op::Gt => float_cmp(stack, &mut underflow, |a, b| a > b),
+            Op::Le => float_cmp(stack, &mut underflow, |a, b| a <= b),
+            Op::Ge => float_cmp(stack, &mut underflow, |a, b| a >= b),
+            Op::Eq => float_cmp(stack, &mut underflow, |a, b| {
                 let diff = (a - b).abs();
                 let magnitude = a.abs().max(b.abs()).max(1.0);
                 diff < 1e-9 * magnitude
             }),
-            Op::Ne => float_cmp(stack, |a, b| {
+            Op::Ne => float_cmp(stack, &mut underflow, |a, b| {
                 let diff = (a - b).abs();
                 let magnitude = a.abs().max(b.abs()).max(1.0);
                 diff >= 1e-9 * magnitude
             }),
 
             // Logic
-            Op::And => float_binop(stack, |a, b| {
+            Op::And => float_binop(stack, &mut underflow, |a, b| {
                 if a != 0.0 && b != 0.0 { 1.0 } else { 0.0 }
             }),
-            Op::Or => float_binop(stack, |a, b| {
+            Op::Or => float_binop(stack, &mut underflow, |a, b| {
                 if a != 0.0 || b != 0.0 { 1.0 } else { 0.0 }
             }),
             Op::Not => {
                 if let Some(val) = stack.pop() {
                     stack.push(Value::Float(if val.as_float() == 0.0 { 1.0 } else { 0.0 }));
+                } else {
+                    underflow = true;
                 }
             }
 
             // Math (1-arg)
-            Op::Sin => float_unary(stack, f64::sin),
-            Op::Cos => float_unary(stack, f64::cos),
-            Op::Tan => float_unary(stack, f64::tan),
-            Op::Abs => float_unary(stack, f64::abs),
-            Op::Floor => float_unary(stack, f64::floor),
-            Op::Ceil => float_unary(stack, f64::ceil),
-            Op::Round => float_unary(stack, f64::round),
-            Op::Fract => float_unary(stack, f64::fract),
-            Op::Sqrt => float_unary(stack, f64::sqrt),
-            Op::Sign => float_unary(stack, f64::signum),
-            Op::Exp => float_unary(stack, f64::exp),
-            Op::Log => float_unary(stack, f64::ln),
+            Op::Sin => float_unary(stack, &mut underflow, f64::sin),
+            Op::Cos => float_unary(stack, &mut underflow, f64::cos),
+            Op::Tan => float_unary(stack, &mut underflow, f64::tan),
+            Op::Abs => float_unary(stack, &mut underflow, f64::abs),
+            Op::Floor => float_unary(stack, &mut underflow, f64::floor),
+            Op::Ceil => float_unary(stack, &mut underflow, f64::ceil),
+            Op::Round => float_unary(stack, &mut underflow, f64::round),
+            Op::Fract => float_unary(stack, &mut underflow, f64::fract),
+            Op::Sqrt => float_unary(stack, &mut underflow, f64::sqrt),
+            Op::Sign => float_unary(stack, &mut underflow, f64::signum),
+            Op::Exp => float_unary(stack, &mut underflow, f64::exp),
+            Op::Log => float_unary(stack, &mut underflow, f64::ln),
 
             // Math (2-arg)
-            Op::Pow => float_binop(stack, f64::powf),
-            Op::Min => float_binop(stack, f64::min),
-            Op::Max => float_binop(stack, f64::max),
-            Op::Step => float_binop(stack, |edge, x| if x < edge { 0.0 } else { 1.0 }),
-            Op::Atan2 => float_binop(stack, f64::atan2),
-            Op::Modf => float_binop(stack, |a, b| if b == 0.0 { 0.0 } else { a % b }),
+            Op::Pow => float_binop(stack, &mut underflow, f64::powf),
+            Op::Min => float_binop(stack, &mut underflow, f64::min),
+            Op::Max => float_binop(stack, &mut underflow, f64::max),
+            Op::Step => float_binop(stack, &mut underflow, |edge, x| if x < edge { 0.0 } else { 1.0 }),
+            Op::Atan2 => float_binop(stack, &mut underflow, f64::atan2),
+            Op::Modf => float_binop(stack, &mut underflow, |a, b| if b == 0.0 { 0.0 } else { a % b }),
 
             // Math (3-arg)
             Op::Clamp => {
@@ -193,6 +215,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     let min_val = stack.pop().map_or(0.0, Value::as_float);
                     let x = stack.pop().map_or(0.0, Value::as_float);
                     stack.push(Value::Float(x.clamp(min_val, max_val)));
+                } else {
+                    underflow = true;
                 }
             }
             Op::Mix => {
@@ -201,6 +225,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     let b = stack.pop().map_or(0.0, Value::as_float);
                     let a = stack.pop().map_or(0.0, Value::as_float);
                     stack.push(Value::Float(a + (b - a) * t));
+                } else {
+                    underflow = true;
                 }
             }
             Op::Smoothstep => {
@@ -214,6 +240,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0)
                     };
                     stack.push(Value::Float(t * t * (3.0 - 2.0 * t)));
+                } else {
+                    underflow = true;
                 }
             }
 
@@ -228,6 +256,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         float_to_u8(g),
                         float_to_u8(b),
                     )));
+                } else {
+                    underflow = true;
                 }
             }
             Op::Hsv => {
@@ -236,6 +266,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     let s = stack.pop().map_or(0.0, Value::as_float);
                     let h = stack.pop().map_or(0.0, Value::as_float);
                     stack.push(Value::Color(Color::from_hsv(h, s, v)));
+                } else {
+                    underflow = true;
                 }
             }
             Op::Rgba => {
@@ -250,6 +282,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         float_to_u8(b),
                         float_to_u8(a),
                     )));
+                } else {
+                    underflow = true;
                 }
             }
             Op::ColorScale => {
@@ -257,30 +291,40 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     let factor = stack.pop().map_or(0.0, Value::as_float);
                     let color = stack.pop().map_or(Color::BLACK, Value::as_color);
                     stack.push(Value::Color(color.scale(factor)));
+                } else {
+                    underflow = true;
                 }
             }
             Op::ColorR => {
                 if let Some(val) = stack.pop() {
                     let c = val.as_color();
                     stack.push(Value::Float(f64::from(c.r) / 255.0));
+                } else {
+                    underflow = true;
                 }
             }
             Op::ColorG => {
                 if let Some(val) = stack.pop() {
                     let c = val.as_color();
                     stack.push(Value::Float(f64::from(c.g) / 255.0));
+                } else {
+                    underflow = true;
                 }
             }
             Op::ColorB => {
                 if let Some(val) = stack.pop() {
                     let c = val.as_color();
                     stack.push(Value::Float(f64::from(c.b) / 255.0));
+                } else {
+                    underflow = true;
                 }
             }
             Op::ColorA => {
                 if let Some(val) = stack.pop() {
                     let c = val.as_color();
                     stack.push(Value::Float(f64::from(c.a) / 255.0));
+                } else {
+                    underflow = true;
                 }
             }
 
@@ -290,6 +334,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     let y = stack.pop().map_or(0.0, Value::as_float);
                     let x = stack.pop().map_or(0.0, Value::as_float);
                     stack.push(Value::Vec2(x, y));
+                } else {
+                    underflow = true;
                 }
             }
             Op::Vec2X => {
@@ -298,6 +344,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         Value::Vec2(x, _) => stack.push(Value::Float(x)),
                         _ => stack.push(Value::Float(0.0)),
                     }
+                } else {
+                    underflow = true;
                 }
             }
             Op::Vec2Y => {
@@ -306,6 +354,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         Value::Vec2(_, y) => stack.push(Value::Float(y)),
                         _ => stack.push(Value::Float(0.0)),
                     }
+                } else {
+                    underflow = true;
                 }
             }
             Op::Distance => {
@@ -320,6 +370,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         }
                         _ => stack.push(Value::Float(0.0)),
                     }
+                } else {
+                    underflow = true;
                 }
             }
             Op::Length => {
@@ -328,6 +380,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         Value::Vec2(x, y) => stack.push(Value::Float((x * x + y * y).sqrt())),
                         _ => stack.push(Value::Float(0.0)),
                     }
+                } else {
+                    underflow = true;
                 }
             }
             Op::Dot => {
@@ -340,6 +394,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         }
                         _ => stack.push(Value::Float(0.0)),
                     }
+                } else {
+                    underflow = true;
                 }
             }
             Op::Normalize => {
@@ -355,6 +411,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         }
                         _ => stack.push(Value::Vec2(0.0, 0.0)),
                     }
+                } else {
+                    underflow = true;
                 }
             }
 
@@ -366,6 +424,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         .and_then(|g| g.as_ref())
                         .map_or(Color::BLACK, |g| g.evaluate(t));
                     stack.push(Value::Color(color));
+                } else {
+                    underflow = true;
                 }
             }
             Op::EvalCurve(param_idx) => {
@@ -375,6 +435,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         .and_then(|c| c.as_ref())
                         .map_or(0.0, |c| c.evaluate(x));
                     stack.push(Value::Float(y));
+                } else {
+                    underflow = true;
                 }
             }
             Op::LoadColor(param_idx) => {
@@ -390,6 +452,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         .and_then(|p| p.as_ref())
                         .map_or((0.0, 0.0), |p| p.evaluate(t));
                     stack.push(Value::Vec2(x, y));
+                } else {
+                    underflow = true;
                 }
             }
             Op::EvalPathAtT(param_idx) => {
@@ -405,6 +469,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     let b = stack.pop().map_or(0.0, Value::as_float);
                     let a = stack.pop().map_or(0.0, Value::as_float);
                     stack.push(Value::Float(hash_f64(a, b)));
+                } else {
+                    underflow = true;
                 }
             }
             Op::Hash3 => {
@@ -413,12 +479,16 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     let b = stack.pop().map_or(0.0, Value::as_float);
                     let a = stack.pop().map_or(0.0, Value::as_float);
                     stack.push(Value::Float(hash3_f64(a, b, c)));
+                } else {
+                    underflow = true;
                 }
             }
             Op::Random => {
                 if let Some(val) = stack.pop() {
                     let x = val.as_float();
                     stack.push(Value::Float(hash_f64(x, 0.0)));
+                } else {
+                    underflow = true;
                 }
             }
             Op::RandomRange => {
@@ -428,21 +498,23 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     let min_val = stack.pop().map_or(0.0, Value::as_float);
                     let h = hash_f64(x, 0.0);
                     stack.push(Value::Float(min_val + (max_val - min_val) * h));
+                } else {
+                    underflow = true;
                 }
             }
 
             // Easing functions
-            Op::EaseIn => float_unary(stack, |t| t * t),
-            Op::EaseOut => float_unary(stack, |t| t * (2.0 - t)),
-            Op::EaseInOut => float_unary(stack, |t| {
+            Op::EaseIn => float_unary(stack, &mut underflow, |t| t * t),
+            Op::EaseOut => float_unary(stack, &mut underflow, |t| t * (2.0 - t)),
+            Op::EaseInOut => float_unary(stack, &mut underflow, |t| {
                 if t < 0.5 { 2.0 * t * t } else { -1.0 + (4.0 - 2.0 * t) * t }
             }),
-            Op::EaseInCubic => float_unary(stack, |t| t * t * t),
-            Op::EaseOutCubic => float_unary(stack, |t| {
+            Op::EaseInCubic => float_unary(stack, &mut underflow, |t| t * t * t),
+            Op::EaseOutCubic => float_unary(stack, &mut underflow, |t| {
                 let t1 = t - 1.0;
                 t1 * t1 * t1 + 1.0
             }),
-            Op::EaseInOutCubic => float_unary(stack, |t| {
+            Op::EaseInOutCubic => float_unary(stack, &mut underflow, |t| {
                 if t < 0.5 {
                     4.0 * t * t * t
                 } else {
@@ -452,14 +524,16 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
             }),
 
             // Noise functions
-            Op::Noise1 => float_unary(stack, noise::perlin1),
-            Op::Noise2 => float_binop(stack, noise::perlin2),
+            Op::Noise1 => float_unary(stack, &mut underflow, noise::perlin1),
+            Op::Noise2 => float_binop(stack, &mut underflow, noise::perlin2),
             Op::Noise3 => {
                 if stack.len() >= 3 {
                     let z = stack.pop().map_or(0.0, Value::as_float);
                     let y = stack.pop().map_or(0.0, Value::as_float);
                     let x = stack.pop().map_or(0.0, Value::as_float);
                     stack.push(Value::Float(noise::perlin3(x, y, z)));
+                } else {
+                    underflow = true;
                 }
             }
             Op::Fbm => {
@@ -468,9 +542,11 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     let y = stack.pop().map_or(0.0, Value::as_float);
                     let x = stack.pop().map_or(0.0, Value::as_float);
                     stack.push(Value::Float(noise::fbm(x, y, octaves as u32)));
+                } else {
+                    underflow = true;
                 }
             }
-            Op::Worley2 => float_binop(stack, noise::worley2),
+            Op::Worley2 => float_binop(stack, &mut underflow, noise::worley2),
 
             // Enum/Flags
             #[allow(clippy::cast_sign_loss)]
@@ -480,6 +556,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     stack.push(Value::Float(
                         if param_val == u32::from(variant_idx) { 1.0 } else { 0.0 }
                     ));
+                } else {
+                    underflow = true;
                 }
             }
             #[allow(clippy::cast_sign_loss)]
@@ -489,6 +567,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     stack.push(Value::Float(
                         if flags & bit_mask != 0 { 1.0 } else { 0.0 }
                     ));
+                } else {
+                    underflow = true;
                 }
             }
 
@@ -499,6 +579,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                         ip = target as usize;
                         continue;
                     }
+                } else {
+                    underflow = true;
                 }
             }
             Op::Jump(target) => {
@@ -527,6 +609,12 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
         ip += 1;
     }
 
+    // If a stack underflow was detected at any point during execution,
+    // return a diagnostic magenta color to make the bug visible.
+    if underflow {
+        return UNDERFLOW_COLOR;
+    }
+
     // Top of stack is the result color
     stack.pop().map_or(Color::BLACK, Value::as_color)
 }
@@ -538,27 +626,36 @@ fn float_to_u8(f: f64) -> u8 {
 }
 
 /// Binary operation on two floats from the stack.
-fn float_binop(stack: &mut Vec<Value>, op: impl FnOnce(f64, f64) -> f64) {
+/// Sets `underflow` if the stack has fewer than 2 elements.
+fn float_binop(stack: &mut Vec<Value>, underflow: &mut bool, op: impl FnOnce(f64, f64) -> f64) {
     if stack.len() >= 2 {
         let b = stack.pop().map_or(0.0, Value::as_float);
         let a = stack.pop().map_or(0.0, Value::as_float);
         stack.push(Value::Float(op(a, b)));
+    } else {
+        *underflow = true;
     }
 }
 
 /// Comparison producing a bool (stored as 0.0 or 1.0).
-fn float_cmp(stack: &mut Vec<Value>, op: impl FnOnce(f64, f64) -> bool) {
+/// Sets `underflow` if the stack has fewer than 2 elements.
+fn float_cmp(stack: &mut Vec<Value>, underflow: &mut bool, op: impl FnOnce(f64, f64) -> bool) {
     if stack.len() >= 2 {
         let b = stack.pop().map_or(0.0, Value::as_float);
         let a = stack.pop().map_or(0.0, Value::as_float);
         stack.push(Value::Float(if op(a, b) { 1.0 } else { 0.0 }));
+    } else {
+        *underflow = true;
     }
 }
 
 /// Unary float operation.
-fn float_unary(stack: &mut Vec<Value>, op: impl FnOnce(f64) -> f64) {
+/// Sets `underflow` if the stack is empty.
+fn float_unary(stack: &mut Vec<Value>, underflow: &mut bool, op: impl FnOnce(f64) -> f64) {
     if let Some(val) = stack.pop() {
         stack.push(Value::Float(op(val.as_float())));
+    } else {
+        *underflow = true;
     }
 }
 

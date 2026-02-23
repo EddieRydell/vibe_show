@@ -61,9 +61,14 @@ impl TimeRange {
         t >= self.start && t < self.end
     }
 
-    /// Normalize a time value to [0, 1] within this range. Clamps to bounds.
+    /// Raw normalization — may return values outside [0, 1].
+    pub fn normalize_unclamped(&self, t: f64) -> f64 {
+        (t - self.start) / self.duration()
+    }
+
+    /// Clamped normalization for effect evaluation.
     pub fn normalize(&self, t: f64) -> f64 {
-        ((t - self.start) / self.duration()).clamp(0.0, 1.0)
+        self.normalize_unclamped(t).clamp(0.0, 1.0)
     }
 }
 
