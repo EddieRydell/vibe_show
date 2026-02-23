@@ -177,6 +177,10 @@ pub fn evaluate(
                             pos_vec.extend_from_slice(positions);
                         } else {
                             // Layout mismatch: fall back to evenly-spaced horizontal
+                            eprintln!(
+                                "Layout mismatch for fixture {:?}: expected {} positions, got {} — using fallback",
+                                fid, pc, positions.len()
+                            );
                             for i in 0..pc {
                                 let x = if pc > 1 { i as f32 / (pc - 1) as f32 } else { 0.5 };
                                 pos_vec.push(Position2D { x, y: 0.5 });
