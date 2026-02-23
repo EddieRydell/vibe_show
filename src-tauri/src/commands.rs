@@ -544,15 +544,9 @@ pub fn tick(state: State<Arc<AppState>>, _dt: f64) -> Option<TickResult> {
 
     if playback.current_time >= effective_end {
         if playback.looping {
-            if let Some((region_start, _)) = playback.region {
-                // Loop back to region start
-                playback.current_time = region_start;
-                playback.last_tick = Some(now);
-            } else {
-                playback.current_time = effective_end;
-                playback.playing = false;
-                playback.last_tick = None;
-            }
+            let loop_start = playback.region.map(|(s, _)| s).unwrap_or(0.0);
+            playback.current_time = loop_start;
+            playback.last_tick = Some(now);
         } else {
             playback.current_time = effective_end;
             playback.playing = false;
