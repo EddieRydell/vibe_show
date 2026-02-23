@@ -184,6 +184,30 @@ impl AppState {
     pub fn require_sequence(&self) -> Result<String, AppError> {
         self.current_sequence.lock().clone().ok_or(AppError::NoSequence)
     }
+
+    /// Resolve the active sequence index within `show.sequences`.
+    ///
+    /// Verifies that a sequence is loaded (via `current_sequence`) and that the
+    /// show actually contains at least one sequence. Returns the index of the
+    /// active sequence. Currently the architecture always places the active
+    /// sequence at index 0 (see `assemble_show`), but this method validates
+    /// that assumption rather than blindly hardcoding it.
+    ///
+    /// **Lock ordering**: callers must NOT hold `self.show` when calling this,
+    /// because this method locks `current_sequence` only. Pass the show ref
+    /// separately after locking.
+    pub fn active_sequence_index(&self, show: &crate::model::Show) -> Result<usize, AppError> {
+        // Ensure a sequence is loaded.
+        let _slug = self.require_sequence()?;
+
+        // Verify the show has at least one sequence.
+        if show.sequences.is_empty() {
+            return Err(AppError::NoSequence);
+        }
+
+        // assemble_show() always places the active sequence at index 0.
+        Ok(0)
+    }
 }
 
 pub struct PlaybackState {

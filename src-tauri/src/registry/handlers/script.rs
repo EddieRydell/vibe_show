@@ -35,13 +35,14 @@ pub fn write_script(
                 .script_cache
                 .lock()
                 .insert(p.name.clone(), Arc::new(compiled));
+            let mut dispatcher = state.dispatcher.lock();
+            let mut show = state.show.lock();
+            let seq_idx = state.active_sequence_index(&show)?;
             let cmd = EditCommand::SetScript {
-                sequence_index: 0,
+                sequence_index: seq_idx,
                 name: p.name.clone(),
                 source: p.source,
             };
-            let mut dispatcher = state.dispatcher.lock();
-            let mut show = state.show.lock();
             dispatcher.execute(&mut show, &cmd)?;
             if params_desc.is_empty() {
                 Ok(CommandOutput::unit(format!(
@@ -85,12 +86,13 @@ pub fn get_script_source(
 }
 
 pub fn delete_script(state: &Arc<AppState>, p: NameParams) -> Result<CommandOutput, AppError> {
-    let cmd = EditCommand::DeleteScript {
-        sequence_index: 0,
-        name: p.name.clone(),
-    };
     let mut dispatcher = state.dispatcher.lock();
     let mut show = state.show.lock();
+    let seq_idx = state.active_sequence_index(&show)?;
+    let cmd = EditCommand::DeleteScript {
+        sequence_index: seq_idx,
+        name: p.name.clone(),
+    };
     dispatcher.execute(&mut show, &cmd)?;
     // Also remove from cache
     state.script_cache.lock().remove(&p.name);
@@ -242,13 +244,14 @@ pub fn compile_script(
                 .script_cache
                 .lock()
                 .insert(p.name.clone(), Arc::new(compiled));
+            let mut dispatcher = state.dispatcher.lock();
+            let mut show = state.show.lock();
+            let seq_idx = state.active_sequence_index(&show)?;
             let cmd = EditCommand::SetScript {
-                sequence_index: 0,
+                sequence_index: seq_idx,
                 name: p.name.clone(),
                 source: p.source,
             };
-            let mut dispatcher = state.dispatcher.lock();
-            let mut show = state.show.lock();
             dispatcher.execute(&mut show, &cmd)?;
             let result = crate::commands::ScriptCompileResult {
                 success: true,
@@ -312,13 +315,14 @@ pub fn rename_script(
     state: &Arc<AppState>,
     p: RenameParams,
 ) -> Result<CommandOutput, AppError> {
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    let seq_idx = state.active_sequence_index(&show)?;
     let cmd = EditCommand::RenameScript {
-        sequence_index: 0,
+        sequence_index: seq_idx,
         old_name: p.old_name.clone(),
         new_name: p.new_name.clone(),
     };
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
     dispatcher.execute(&mut show, &cmd)?;
     drop(show);
     drop(dispatcher);
