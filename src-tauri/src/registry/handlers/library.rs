@@ -4,13 +4,41 @@ use std::sync::Arc;
 
 use crate::dispatcher::EditCommand;
 use crate::error::AppError;
-use crate::model::{ColorGradient, Curve, ParamValue};
+use crate::model::{ColorGradient, Curve, ParamValue, Sequence};
 use crate::registry::params::{
     LinkEffectToLibraryParams, NameParams, RenameParams, SetLibraryCurveParams,
     SetLibraryGradientParams,
 };
 use crate::registry::CommandOutput;
 use crate::state::AppState;
+
+/// Count how many effects in the sequence reference a gradient library item by name.
+fn count_gradient_refs(seq: &Sequence, name: &str) -> usize {
+    seq.tracks
+        .iter()
+        .flat_map(|t| &t.effects)
+        .filter(|e| {
+            e.params
+                .inner()
+                .values()
+                .any(|v| matches!(v, ParamValue::GradientRef(n) if n == name))
+        })
+        .count()
+}
+
+/// Count how many effects in the sequence reference a curve library item by name.
+fn count_curve_refs(seq: &Sequence, name: &str) -> usize {
+    seq.tracks
+        .iter()
+        .flat_map(|t| &t.effects)
+        .filter(|e| {
+            e.params
+                .inner()
+                .values()
+                .any(|v| matches!(v, ParamValue::CurveRef(n) if n == name))
+        })
+        .count()
+}
 
 pub fn list_library(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let show = state.show.lock();
@@ -69,6 +97,20 @@ pub fn delete_library_gradient(
     state: &Arc<AppState>,
     p: NameParams,
 ) -> Result<CommandOutput, AppError> {
+    // Check for dangling references before deleting
+    {
+        let show = state.show.lock();
+        let seq = show.sequences.first().ok_or(AppError::NoSequence)?;
+        let ref_count = count_gradient_refs(seq, &p.name);
+        if ref_count > 0 {
+            return Err(AppError::ValidationError {
+                message: format!(
+                    "Cannot delete gradient \"{}\": it is referenced by {} effect(s). Remove the references first.",
+                    p.name, ref_count
+                ),
+            });
+        }
+    }
     let cmd = EditCommand::DeleteGradient {
         sequence_index: 0,
         name: p.name.clone(),
@@ -86,6 +128,20 @@ pub fn delete_library_curve(
     state: &Arc<AppState>,
     p: NameParams,
 ) -> Result<CommandOutput, AppError> {
+    // Check for dangling references before deleting
+    {
+        let show = state.show.lock();
+        let seq = show.sequences.first().ok_or(AppError::NoSequence)?;
+        let ref_count = count_curve_refs(seq, &p.name);
+        if ref_count > 0 {
+            return Err(AppError::ValidationError {
+                message: format!(
+                    "Cannot delete curve \"{}\": it is referenced by {} effect(s). Remove the references first.",
+                    p.name, ref_count
+                ),
+            });
+        }
+    }
     let cmd = EditCommand::DeleteCurve {
         sequence_index: 0,
         name: p.name.clone(),
