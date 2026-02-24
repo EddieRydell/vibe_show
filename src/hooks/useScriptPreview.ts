@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { cmd } from "../commands";
 import type { EffectParams, ScriptPreviewData } from "../types";
 
 interface UseScriptPreviewOptions {
@@ -32,12 +32,7 @@ export function useScriptPreview({
       setHeatmap(null);
       return;
     }
-    invoke<ScriptPreviewData | null>("preview_script", {
-      name: scriptName,
-      params,
-      pixelCount,
-      timeSamples,
-    })
+    cmd.previewScript(scriptName, params, pixelCount, timeSamples)
       .then(setHeatmap)
       .catch(console.error);
   }, [scriptName, compiled, params, pixelCount, timeSamples]);

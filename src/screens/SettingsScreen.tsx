@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { cmd } from "../commands";
-import { Sun, Moon, Monitor, RotateCcw, Key, Eye, EyeOff, Globe, Bot, MessageSquare } from "lucide-react";
+import { Sun, Moon, Monitor, RotateCcw, Key, Eye, EyeOff, Globe } from "lucide-react";
 import { useUISettings, type ThemeMode } from "../hooks/useUISettings";
 import { ScreenShell } from "../components/ScreenShell";
-import type { ChatMode, LlmProvider } from "../types";
+import type { LlmProvider } from "../types";
 
 interface Props {
   onBack: () => void;
@@ -29,28 +29,12 @@ const PROVIDER_OPTIONS: { value: LlmProvider; label: string }[] = [
   { value: "OpenAiCompatible", label: "OpenAI Compatible" },
 ];
 
-const CHAT_MODE_OPTIONS: { value: ChatMode; label: string; description: string; Icon: typeof Bot }[] = [
-  {
-    value: "Basic",
-    label: "Basic Chat",
-    description: "Direct API calls. Works with all providers.",
-    Icon: MessageSquare,
-  },
-  {
-    value: "Agent",
-    label: "Claude Agent",
-    description: "Full Claude Code tooling. Requires Node.js. Claude only.",
-    Icon: Bot,
-  },
-];
-
 export function SettingsScreen({ onBack }: Props) {
   const { settings, update, reset, defaults } = useUISettings();
   const [provider, setProvider] = useState<LlmProvider>("Anthropic");
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
-  const [chatMode, setChatMode] = useState<ChatMode>("Basic");
   const [showKey, setShowKey] = useState(false);
   const [keySaved, setKeySaved] = useState(false);
 
@@ -61,7 +45,6 @@ export function SettingsScreen({ onBack }: Props) {
       if (config.has_api_key) setApiKey("********");
       setBaseUrl(config.base_url ?? "");
       setModel(config.model ?? "");
-      setChatMode(config.chat_mode);
     }).catch(console.warn);
   }, []);
 
@@ -73,7 +56,6 @@ export function SettingsScreen({ onBack }: Props) {
         apiKey: keyToSave,
         baseUrl: baseUrl || null,
         model: model || null,
-        chatMode,
       });
       setKeySaved(true);
       if (keyToSave) setApiKey("********");
@@ -81,7 +63,7 @@ export function SettingsScreen({ onBack }: Props) {
     } catch (e) {
       console.error("[VibeLights] Failed to save LLM config:", e);
     }
-  }, [provider, apiKey, baseUrl, model, chatMode]);
+  }, [provider, apiKey, baseUrl, model]);
 
   const handleClearApiKey = useCallback(async () => {
     try {
@@ -97,23 +79,6 @@ export function SettingsScreen({ onBack }: Props) {
       console.error("[VibeLights] Failed to clear API key:", e);
     }
   }, [provider, baseUrl, model]);
-
-  const handleChatModeChange = useCallback(async (mode: ChatMode) => {
-    setChatMode(mode);
-    setKeySaved(false);
-    // Save immediately since this is a standalone toggle
-    try {
-      await cmd.setLlmConfig({
-        provider,
-        apiKey: apiKey === "********" ? "" : apiKey,
-        baseUrl: baseUrl || null,
-        model: model || null,
-        chatMode: mode,
-      });
-    } catch (e) {
-      console.error("[VibeLights] Failed to save chat mode:", e);
-    }
-  }, [provider, apiKey, baseUrl, model]);
 
   return (
     <ScreenShell title="Settings" onBack={onBack} hideSettings>
@@ -305,39 +270,11 @@ export function SettingsScreen({ onBack }: Props) {
               />
             </div>
 
-            {/* Chat mode (only shown for Anthropic) */}
-            {provider === "Anthropic" && (
-              <div className="mt-4">
-                <label className="text-text-2 mb-2 block text-xs font-medium">Chat Mode</label>
-                <div className="flex gap-2">
-                  {CHAT_MODE_OPTIONS.map(({ value, label, Icon }) => (
-                    <button
-                      key={value}
-                      onClick={() => handleChatModeChange(value)}
-                      className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
-                        chatMode === value
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text"
-                      }`}
-                    >
-                      <Icon size={12} />
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-text-2 mt-2 text-xs">
-                  {chatMode === "Agent"
-                    ? "Agent mode uses Claude Code tools (file reading, search) for deep analysis. Requires Node.js 20+ in PATH."
-                    : "Basic mode uses direct API calls with 3 meta-tools. Works with all providers."}
-                </p>
-              </div>
-            )}
-
             {/* Save button */}
             <div className="mt-3 flex items-center gap-2">
               <button
                 onClick={handleSaveLlmConfig}
-                disabled={chatMode !== "Agent" && (!apiKey || apiKey === "********")}
+                disabled={!apiKey || apiKey === "********"}
                 className={`rounded border px-3 py-1.5 text-xs transition-colors ${
                   keySaved
                     ? "border-green-500/30 bg-green-500/10 text-green-400"
@@ -349,7 +286,7 @@ export function SettingsScreen({ onBack }: Props) {
             </div>
 
             <p className="text-text-2 mt-2 text-xs">
-              Your API key is stored locally and used for the embedded chat panel.
+              Your API key is stored locally and used for the AI chat agent.
               {provider === "Anthropic"
                 ? " Get one at console.anthropic.com"
                 : " Enter the base URL and key for your OpenAI-compatible provider."}

@@ -1,23 +1,17 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::error::AppError;
 use crate::registry::params::{InitializeDataDirParams, SetLlmConfigParams};
 use crate::registry::{CommandOutput, CommandResult};
-use crate::settings::{self, AppSettings, ChatMode, LlmConfigInfo, LlmProvider, LlmProviderConfig};
+use crate::settings::{self, AppSettings, LlmConfigInfo, LlmProvider, LlmProviderConfig};
 use crate::state::AppState;
 
 pub fn get_settings(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let settings = state.settings.lock().clone();
     Ok(CommandOutput::new("Settings", CommandResult::GetSettings(settings)))
-}
-
-pub fn get_api_port(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
-    let port = state.api_port.load(Ordering::Relaxed);
-    Ok(CommandOutput::new("API port", CommandResult::GetApiPort(port)))
 }
 
 pub fn initialize_data_dir(
@@ -53,9 +47,6 @@ pub fn set_llm_config(
             base_url: p.base_url,
             model: p.model,
         };
-        if let Some(chat_mode) = p.chat_mode {
-            s.chat_mode = chat_mode;
-        }
         settings::save_settings(&state.app_config_dir, s)
             .map_err(|e| AppError::SettingsSaveError {
                 message: e.to_string(),
@@ -79,9 +70,8 @@ pub fn get_llm_config(state: &Arc<AppState>) -> Result<CommandOutput, AppError> 
             has_api_key: false,
             base_url: None,
             model: None,
-            chat_mode: ChatMode::default(),
         },
-        |s| LlmConfigInfo::from_config(&s.llm, s.chat_mode),
+        |s| LlmConfigInfo::from_config(&s.llm),
     );
     Ok(CommandOutput::new("LLM config", CommandResult::GetLlmConfig(info)))
 }

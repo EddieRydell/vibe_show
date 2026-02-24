@@ -125,13 +125,6 @@ pub async fn start_agent_sidecar(
     };
 
     // Gather env vars
-    let api_port = state.api_port.load(Ordering::Relaxed);
-    if api_port == 0 {
-        return Err(AppError::AgentError {
-            message: "VibeLights API server not yet started".into(),
-        });
-    }
-
     let api_key = state
         .settings
         .lock()
@@ -162,7 +155,6 @@ pub async fn start_agent_sidecar(
     }
 
     cmd.env("AGENT_PORT", "0") // Let OS pick a free port
-        .env("VIBELIGHTS_PORT", api_port.to_string())
         .env("VIBELIGHTS_DATA_DIR", &data_dir)
         .env("VIBELIGHTS_MODEL", &model);
 
@@ -337,10 +329,14 @@ pub async fn send_message(
 
     let mut body = serde_json::json!({ "message": message });
     if let Some(sid) = &session_id {
-        body["sessionId"] = serde_json::json!(sid);
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("sessionId".to_string(), serde_json::json!(sid));
+        }
     }
     if let Some(ctx) = context {
-        body["context"] = serde_json::json!(ctx);
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("context".to_string(), serde_json::json!(ctx));
+        }
     }
 
     // Ensure there's an active conversation

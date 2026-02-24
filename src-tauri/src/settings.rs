@@ -17,15 +17,6 @@ pub enum LlmProvider {
     OpenAiCompatible,
 }
 
-/// Chat mode: Basic (direct API) or Agent (Claude Agent SDK sidecar).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
-#[ts(export)]
-pub enum ChatMode {
-    #[default]
-    Basic,
-    Agent,
-}
-
 /// Full configuration for the chosen LLM provider.
 ///
 /// The `api_key` field is never written to `settings.json`. It is stored in a
@@ -64,18 +55,16 @@ pub struct LlmConfigInfo {
     pub has_api_key: bool,
     pub base_url: Option<String>,
     pub model: Option<String>,
-    pub chat_mode: ChatMode,
 }
 
 impl LlmConfigInfo {
     #[must_use]
-    pub fn from_config(config: &LlmProviderConfig, chat_mode: ChatMode) -> Self {
+    pub fn from_config(config: &LlmProviderConfig) -> Self {
         Self {
             provider: config.provider,
             has_api_key: config.api_key.as_ref().is_some_and(|k| !k.is_empty()),
             base_url: config.base_url.clone(),
             model: config.model.clone(),
-            chat_mode,
         }
     }
 }
@@ -101,9 +90,6 @@ pub struct AppSettings {
     /// Default features to run when analyzing audio. None = all enabled.
     #[serde(default)]
     pub default_analysis_features: Option<AnalysisFeatures>,
-    /// Chat mode: Basic (direct API calls) or Agent (Claude Agent SDK sidecar).
-    #[serde(default)]
-    pub chat_mode: ChatMode,
 }
 
 const SETTINGS_VERSION: u32 = 1;
@@ -118,7 +104,6 @@ impl AppSettings {
             llm: LlmProviderConfig::default(),
             use_gpu: false,
             default_analysis_features: None,
-            chat_mode: ChatMode::default(),
         }
     }
 }

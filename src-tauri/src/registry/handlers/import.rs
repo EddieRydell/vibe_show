@@ -280,6 +280,224 @@ pub fn scan_vixen_directory(_state: &Arc<AppState>, p: ScanVixenDirectoryParams)
     Ok(CommandOutput::new("Vixen directory scanned.", CommandResult::ScanVixenDirectory(Box::new(discovery))))
 }
 
+// ── Async handler ────────────────────────────────────────────────
+
+#[cfg(feature = "tauri-app")]
+#[allow(clippy::too_many_lines)]
+pub async fn execute_vixen_import(
+    state: Arc<AppState>,
+    app: Option<tauri::AppHandle>,
+    config: crate::import::vixen::VixenImportConfig,
+) -> Result<CommandOutput, AppError> {
+    let data_dir = get_data_dir(&state).map_err(|_| AppError::NoSettings)?;
+    let cancel_flag = state.cancellation.register("import");
+
+    let app_ref = app.clone();
+    let emit = move |step: &str, msg: &str, pct: f64, detail: Option<&str>| {
+        if let Some(ref a) = app_ref {
+            crate::progress::emit_progress(a, step, msg, pct, detail);
+        }
+    };
+
+    let emit2 = emit.clone();
+    let result = tokio::time::timeout(
+        tokio::time::Duration::from_secs(600),
+        tokio::task::spawn_blocking(move || {
+            let vixen_path = std::path::Path::new(&config.vixen_dir);
+            let config_path = vixen_path
+                .join(crate::import::VIXEN_SYSTEM_DATA_DIR)
+                .join(crate::import::VIXEN_SYSTEM_CONFIG_FILE);
+
+            emit2("import", "Parsing system config...", 0.05, None);
+            crate::state::check_cancelled(&cancel_flag, "import")?;
+            let mut importer = crate::import::vixen::VixenImporter::new();
+            importer
+                .parse_system_config(&config_path)
+                .map_err(|e| AppError::ImportError { message: e.to_string() })?;
+
+            crate::state::check_cancelled(&cancel_flag, "import")?;
+            let layout_items = if config.import_layout {
+                emit2("import", "Parsing layout...", 0.1, None);
+                let override_path = config
+                    .preview_file_override
+                    .as_deref()
+                    .map(std::path::Path::new);
+                match importer.parse_preview(vixen_path, override_path) {
+                    Ok(layouts) => layouts,
+                    Err(e) => {
+                        eprintln!("[VibeLights] Preview import warning: {e}");
+                        Vec::new()
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+
+            crate::state::check_cancelled(&cancel_flag, "import")?;
+            let total_seqs = config.sequence_paths.len();
+            let mut sequences_imported = 0usize;
+            for (i, seq_path) in config.sequence_paths.iter().enumerate() {
+                crate::state::check_cancelled(&cancel_flag, "import")?;
+                #[allow(clippy::cast_precision_loss)]
+                let base_progress = 0.15 + 0.45 * (i as f64 / total_seqs.max(1) as f64);
+                #[allow(clippy::cast_precision_loss)]
+                let next_progress = 0.15 + 0.45 * ((i + 1) as f64 / total_seqs.max(1) as f64);
+                let detail = format!("Sequence {} of {}", i + 1, total_seqs);
+                emit2("import", "Parsing sequences...", base_progress, Some(&detail));
+                let emit3 = emit2.clone();
+                let detail2 = detail.clone();
+                let progress_cb = move |frac: f64| {
+                    let p = base_progress + (next_progress - base_progress) * frac;
+                    emit3("import", "Parsing sequences...", p, Some(&detail2));
+                };
+                match importer.parse_sequence(std::path::Path::new(seq_path), Some(&progress_cb)) {
+                    Ok(()) => sequences_imported += 1,
+                    Err(e) => {
+                        eprintln!("[VibeLights] Sequence import warning: {e}");
+                    }
+                }
+            }
+
+            let guid_map = importer.guid_map().clone();
+            let warnings: Vec<String> = importer.warnings().to_vec();
+            let show = importer.into_show();
+
+            let fixtures_imported = show.fixtures.len();
+            let groups_imported = show.groups.len();
+            let controllers_imported = if config.import_controllers {
+                show.controllers.len()
+            } else {
+                0
+            };
+            let layout_items_imported = layout_items.len();
+
+            crate::state::check_cancelled(&cancel_flag, "import")?;
+            emit2("import", "Saving setup...", 0.65, None);
+            let setup_name = if config.setup_name.trim().is_empty() {
+                "Vixen Import".to_string()
+            } else {
+                config.setup_name.trim().to_string()
+            };
+            let summary =
+                setup::create_setup(&data_dir, &setup_name).map_err(AppError::from)?;
+
+            let layout = if layout_items.is_empty() {
+                show.layout.clone()
+            } else {
+                crate::model::show::Layout {
+                    fixtures: layout_items,
+                }
+            };
+
+            let prof = setup::Setup {
+                name: setup_name,
+                slug: summary.slug.clone(),
+                fixtures: show.fixtures.clone(),
+                groups: show.groups.clone(),
+                controllers: if config.import_controllers {
+                    show.controllers.clone()
+                } else {
+                    Vec::new()
+                },
+                patches: if config.import_controllers {
+                    show.patches.clone()
+                } else {
+                    Vec::new()
+                },
+                layout,
+            };
+            setup::save_setup(&data_dir, &summary.slug, &prof).map_err(AppError::from)?;
+            setup::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map)
+                .map_err(AppError::from)?;
+
+            crate::state::check_cancelled(&cancel_flag, "import")?;
+            let mut media_imported = 0usize;
+            if !config.media_filenames.is_empty() {
+                emit2("import", "Copying media files...", 0.70, None);
+                for media_filename in &config.media_filenames {
+                    crate::state::check_cancelled(&cancel_flag, "import")?;
+                    let source = vixen_path.join("Media").join(media_filename);
+                    if source.exists() {
+                        match setup::import_media(&data_dir, &summary.slug, &source) {
+                            Ok(_) => media_imported += 1,
+                            Err(e) => {
+                                eprintln!("[VibeLights] Media import warning: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+
+            crate::state::check_cancelled(&cancel_flag, "import")?;
+            emit2("import", "Saving sequences...", 0.75, None);
+            for (i, seq) in show.sequences.iter().enumerate() {
+                crate::state::check_cancelled(&cancel_flag, "import")?;
+                #[allow(clippy::cast_precision_loss)]
+                let progress = 0.75 + 0.15 * (i as f64 / show.sequences.len().max(1) as f64);
+                emit2(
+                    "import",
+                    "Saving sequences...",
+                    progress,
+                    Some(&format!("Sequence {} of {}", i + 1, show.sequences.len())),
+                );
+                let mut seq = seq.clone();
+                if let Some(ref audio_path) = seq.audio_file {
+                    let audio_basename = std::path::Path::new(audio_path)
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string());
+                    if let Some(ref basename) = audio_basename {
+                        if config.media_filenames.iter().any(|m| m == basename) {
+                            seq.audio_file = Some(basename.clone());
+                        } else {
+                            seq.audio_file = None;
+                        }
+                    }
+                }
+                if let Err(e) = setup::create_sequence(&data_dir, &summary.slug, &seq.name) {
+                    eprintln!("[VibeLights] Failed to create sequence entry: {e}");
+                }
+                let seq_slug = crate::project::slugify(&seq.name);
+                setup::save_sequence(&data_dir, &summary.slug, &seq_slug, &seq)
+                    .map_err(AppError::from)?;
+            }
+
+            emit2("import", "Import complete", 1.0, None);
+
+            Ok::<_, AppError>(crate::import::vixen::VixenImportResult {
+                setup_slug: summary.slug,
+                fixtures_imported,
+                groups_imported,
+                controllers_imported,
+                layout_items_imported,
+                sequences_imported,
+                media_imported,
+                warnings,
+            })
+        }),
+    )
+    .await;
+
+    state.cancellation.unregister("import");
+
+    match result {
+        Ok(join_result) => {
+            let import_result = join_result.map_err(|e| AppError::ApiError { message: e.to_string() })??;
+            Ok(CommandOutput::new(
+                "Vixen import complete.",
+                CommandResult::ExecuteVixenImport(import_result),
+            ))
+        }
+        Err(_elapsed) => {
+            if let Some(ref a) = app {
+                crate::progress::emit_progress(a, "import", "Import timed out", 1.0, None);
+            }
+            Err(AppError::ImportError {
+                message: "Import timed out after 10 minutes".into(),
+            })
+        }
+    }
+}
+
 pub fn check_vixen_preview_file(
     _state: &Arc<AppState>,
     p: CheckVixenPreviewFileParams,

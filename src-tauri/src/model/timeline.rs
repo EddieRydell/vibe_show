@@ -396,11 +396,13 @@ pub struct ParamSchema {
 
 /// Named, typed parameters for an effect instance.
 /// Serializes as a flat JSON object (transparent over the inner HashMap).
-#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS, JsonSchema)]
 #[serde(transparent)]
+#[schemars(transparent)]
 #[ts(export)]
 pub struct EffectParams(
     #[ts(as = "HashMap<String, ParamValue>")]
+    #[schemars(with = "HashMap<String, ParamValue>")]
     HashMap<ParamKey, ParamValue>,
 );
 

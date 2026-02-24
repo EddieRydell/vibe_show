@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { emitTo } from "@tauri-apps/api/event";
 import { cmd } from "../commands";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -85,7 +84,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
 
   // Load the sequence into the engine on mount
   useEffect(() => {
-    invoke("open_sequence", { slug: sequenceSlug })
+    cmd.openSequence(sequenceSlug)
       .then(() => {
         refreshAll();
         setLoading(false);

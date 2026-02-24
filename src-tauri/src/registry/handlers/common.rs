@@ -3,7 +3,25 @@
 use std::sync::Arc;
 
 use crate::commands::{self, ScriptCompileResult, ScriptError};
+use crate::error::AppError;
+use crate::registry::params::CancelOperationParams;
+use crate::registry::{CommandOutput, CommandResult};
 use crate::state::AppState;
+
+pub fn cancel_operation(
+    state: &Arc<AppState>,
+    p: CancelOperationParams,
+) -> Result<CommandOutput, AppError> {
+    let cancelled = state.cancellation.cancel(&p.operation);
+    Ok(CommandOutput::new(
+        if cancelled {
+            format!("Cancelled operation '{}'.", p.operation)
+        } else {
+            format!("No active operation '{}' to cancel.", p.operation)
+        },
+        CommandResult::CancelOperation(cancelled),
+    ))
+}
 
 /// Compile a script source, cache the result, and return a `ScriptCompileResult`.
 ///

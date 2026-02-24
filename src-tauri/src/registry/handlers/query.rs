@@ -121,6 +121,17 @@ pub fn list_effects(_state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     Ok(CommandOutput::new(lines.join("\n"), CommandResult::ListEffects(effects)))
 }
 
+pub fn describe_show(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
+    let show = state.show.lock();
+    let mut text = describe::describe_show(&show);
+    if let Some(seq) = show.sequences.first() {
+        text.push('\n');
+        text.push('\n');
+        text.push_str(&describe::describe_sequence(seq));
+    }
+    Ok(CommandOutput::new(text.clone(), CommandResult::DescribeShow(text)))
+}
+
 pub fn get_effect_detail(
     state: &Arc<AppState>,
     p: GetEffectDetailParams,

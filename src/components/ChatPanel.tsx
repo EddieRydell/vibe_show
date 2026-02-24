@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { cmd } from "../commands";
 import type { ConversationSummary } from "../types";
-import { MessageSquare, Send, X, Trash2, Loader2, Key, Check, History, Plus } from "lucide-react";
-import { useAppShell } from "./ScreenShell";
+import { MessageSquare, Send, X, Trash2, Loader2, Check, History, Plus } from "lucide-react";
 import Markdown from "react-markdown";
-import type { ChatMode } from "../types";
 import type { AppScreen } from "../screens";
 import { parseChatEntries } from "../utils/validators";
 
@@ -47,13 +44,10 @@ function buildScreenContext(screen: AppScreen): string {
 }
 
 export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) {
-  const { openSettings } = useAppShell();
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [streaming, setStreaming] = useState("");
-  const [hasApiKey, setHasApiKey] = useState(false);
-  const [chatMode, setChatMode] = useState<ChatMode>("Basic");
   const [toolActivity, setToolActivity] = useState<ToolActivity[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -63,32 +57,17 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
     cmd.listAgentConversations().then(setConversations).catch(console.warn);
   }, []);
 
-  // Check API key and chat mode on mount
-  useEffect(() => {
-    cmd.getLlmConfig().then((config) => {
-      setHasApiKey(config.has_api_key);
-      setChatMode(config.chat_mode);
-    }).catch(console.warn);
-  }, [open]);
-
-  // Load persisted chat history on mount and when chat mode changes.
-  // Chat is global — not tied to sequences or setups.
+  // Load persisted chat history on mount.
   useEffect(() => {
     refreshConversations();
-    if (chatMode === "Agent") {
-      cmd.getAgentChatHistory().then((entries) => {
-        setMessages(parseChatEntries(entries));
-      }).catch(console.warn);
-    } else {
-      cmd.getChatHistory().then((entries) => {
-        setMessages(parseChatEntries(entries));
-      }).catch(console.warn);
-    }
+    cmd.getAgentChatHistory().then((entries) => {
+      setMessages(parseChatEntries(entries));
+    }).catch(console.warn);
     setStreaming("");
     setSending(false);
-  }, [chatMode, refreshConversations]);
+  }, [refreshConversations]);
 
-  // Listen for chat events (both backends emit the same events).
+  // Listen for chat events.
   // Uses cancelled-flag pattern to avoid stale listener accumulation.
   useEffect(() => {
     let cancelled = false;
@@ -133,21 +112,11 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
         }
         return "";
       });
-      // Refresh messages from the appropriate backend
-      setChatMode((currentMode) => {
-        if (currentMode === "Agent") {
-          cmd.getAgentChatHistory().then((entries) => {
-            const parsed = parseChatEntries(entries);
-            if (parsed.length > 0) setMessages(parsed);
-          }).catch(console.warn);
-        } else {
-          cmd.getChatHistory().then((entries) => {
-            const parsed = parseChatEntries(entries);
-            if (parsed.length > 0) setMessages(parsed);
-          }).catch(console.warn);
-        }
-        return currentMode;
-      });
+      // Refresh messages from agent backend
+      cmd.getAgentChatHistory().then((entries) => {
+        const parsed = parseChatEntries(entries);
+        if (parsed.length > 0) setMessages(parsed);
+      }).catch(console.warn);
       onRefresh();
     });
 
@@ -176,11 +145,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
     const context = buildScreenContext(screen);
 
     try {
-      if (chatMode === "Agent") {
-        await invoke("send_agent_message", { message: msg, context });
-      } else {
-        await invoke("send_chat_message", { message: msg, context });
-      }
+      await cmd.sendAgentMessage(msg, context);
     } catch (e: unknown) {
       const text =
         typeof e === "string"
@@ -194,28 +159,21 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
       ]);
       setSending(false);
     }
-  }, [input, sending, chatMode, screen]);
+  }, [input, sending, screen]);
 
   const handleClear = useCallback(async () => {
-    if (chatMode === "Agent") {
-      await cmd.newAgentConversation().catch(console.warn);
-      await invoke("clear_agent_session").catch(console.warn);
-      refreshConversations();
-    } else {
-      await cmd.clearChat();
-    }
+    await cmd.newAgentConversation().catch(console.warn);
+    await cmd.clearAgentSession().catch(console.warn);
+    refreshConversations();
     setMessages([]);
     setStreaming("");
     setToolActivity([]);
-  }, [chatMode, refreshConversations]);
+  }, [refreshConversations]);
 
   const handleStop = useCallback(async () => {
-    if (chatMode === "Agent") {
-      await invoke("cancel_agent_message").catch(console.warn);
-    }
-    await cmd.stopChat();
+    await cmd.cancelAgentMessage().catch(console.warn);
     setSending(false);
-  }, [chatMode]);
+  }, []);
 
   const handleSwitchConversation = useCallback(async (id: string) => {
     await cmd.switchAgentConversation(id).catch(console.warn);
@@ -245,30 +203,26 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
         <div className="flex items-center gap-2">
           <MessageSquare size={14} className="text-primary" />
           <span className="text-text text-sm font-medium">Chat</span>
-          {chatMode === "Agent" && (
-            <span className="bg-primary/15 text-primary rounded px-1.5 py-0.5 text-[10px] font-medium">
-              Agent
-            </span>
-          )}
+          <span className="bg-primary/15 text-primary rounded px-1.5 py-0.5 text-[10px] font-medium">
+            Agent
+          </span>
         </div>
         <div className="flex items-center gap-1">
-          {chatMode === "Agent" && (
-            <button
-              onClick={() => setShowHistory((v) => !v)}
-              className={`rounded p-1 transition-colors ${showHistory ? "text-primary bg-primary/10" : "text-text-2 hover:text-text"}`}
-              aria-label="Conversation history"
-              title="Conversation history"
-            >
-              <History size={14} />
-            </button>
-          )}
+          <button
+            onClick={() => setShowHistory((v) => !v)}
+            className={`rounded p-1 transition-colors ${showHistory ? "text-primary bg-primary/10" : "text-text-2 hover:text-text"}`}
+            aria-label="Conversation history"
+            title="Conversation history"
+          >
+            <History size={14} />
+          </button>
           <button
             onClick={handleClear}
             className="text-text-2 hover:text-text rounded p-1 transition-colors"
-            aria-label={chatMode === "Agent" ? "New conversation" : "Clear conversation"}
-            title={chatMode === "Agent" ? "New conversation" : "Clear conversation"}
+            aria-label="New conversation"
+            title="New conversation"
           >
-            {chatMode === "Agent" ? <Plus size={14} /> : <Trash2 size={14} />}
+            <Plus size={14} />
           </button>
           <button
             onClick={onClose}
@@ -281,7 +235,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
       </div>
 
       {/* Conversation History */}
-      {showHistory && chatMode === "Agent" && (
+      {showHistory && (
         <div className="border-border border-b overflow-y-auto max-h-48">
           {conversations.length === 0 ? (
             <div className="text-text-2 p-3  text-center text-xs">No conversations yet</div>
@@ -317,21 +271,6 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2" aria-live="polite">
-        {!hasApiKey && chatMode !== "Agent" && (
-          <div className="bg-surface-2 border-border rounded border p-3 text-center">
-            <Key size={20} className="text-text-2 mx-auto mb-2" />
-            <p className="text-text-2 mb-2 text-xs">
-              Set your API key in Settings to use the chat.
-            </p>
-            <button
-              onClick={openSettings}
-              className="bg-primary text-white rounded px-3 py-1 text-xs hover:opacity-90"
-            >
-              Open Settings
-            </button>
-          </div>
-        )}
-
         {messages.map((msg, i) => (
           <div key={i} className={`text-xs ${msg.role === "user" ? "text-right" : ""}`}>
             {msg.role === "user" ? (
@@ -398,8 +337,8 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
                 handleSend();
               }
             }}
-            placeholder={hasApiKey || chatMode === "Agent" ? "Ask AI to edit your show..." : "API key required"}
-            disabled={(!hasApiKey && chatMode !== "Agent") || sending}
+            placeholder="Ask AI to edit your show..."
+            disabled={sending}
             className="border-border bg-bg text-text placeholder:text-text-2 flex-1 rounded border px-2 py-1.5 text-xs outline-none focus:border-primary disabled:opacity-50"
           />
           {sending ? (
@@ -413,7 +352,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
           ) : (
             <button
               onClick={handleSend}
-              disabled={(!hasApiKey && chatMode !== "Agent") || !input.trim()}
+              disabled={!input.trim()}
               aria-label="Send message"
               className="bg-primary text-white rounded px-2 py-1.5 transition-colors hover:opacity-90 disabled:opacity-50"
             >

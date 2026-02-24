@@ -1,5 +1,4 @@
 import { useCallback, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { cmd } from "../commands";
 import type {
@@ -57,9 +56,7 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
     setError(null);
     setPreviewFileOverride(null);
     try {
-      const disc = await invoke<VixenDiscovery>("scan_vixen_directory", {
-        vixenDir: vixenDir.trim(),
-      });
+      const disc = await cmd.scanVixenDirectory(vixenDir.trim());
       setDiscovery(disc);
       // Pre-select all sequences and media
       setSelectedSequences(new Set(disc.sequences.map((s) => s.path)));
@@ -115,10 +112,7 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
         sequence_paths: Array.from(selectedSequences),
         media_filenames: Array.from(selectedMedia),
       };
-      const res = await invoke<VixenImportResult>(
-        "execute_vixen_import",
-        { config },
-      );
+      const res = await cmd.executeVixenImport(config);
       setResult(res);
       setStep("done");
     } catch (e) {

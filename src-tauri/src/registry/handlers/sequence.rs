@@ -48,7 +48,7 @@ pub fn open_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutp
         setup::load_sequence(&data_dir, &setup_slug, &p.slug).map_err(AppError::from)?;
     let assembled = setup::assemble_show(&setup_data, &sequence);
 
-    *state.show.lock() = assembled;
+    *state.show.lock() = assembled.clone();
     state.dispatcher.lock().clear();
     state.script_cache.lock().clear();
 
@@ -64,9 +64,8 @@ pub fn open_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutp
 
     commands::recompile_all_scripts(state);
 
-    let show = state.show.lock();
-    let track_count = show.sequences.first().map_or(0, |s| s.tracks.len());
-    let effect_count: usize = show
+    let track_count = assembled.sequences.first().map_or(0, |s| s.tracks.len());
+    let effect_count: usize = assembled
         .sequences
         .first()
         .map_or(0, |s| s.tracks.iter().map(|t| t.effects.len()).sum());
@@ -74,7 +73,7 @@ pub fn open_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutp
     Ok(CommandOutput::new(format!(
         "Opened sequence \"{}\". {} tracks, {} effects.",
         p.slug, track_count, effect_count
-    ), CommandResult::OpenSequence))
+    ), CommandResult::OpenSequence(Box::new(assembled))))
 }
 
 pub fn delete_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutput, AppError> {

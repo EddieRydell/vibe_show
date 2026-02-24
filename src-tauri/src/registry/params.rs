@@ -2,10 +2,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    BlendMode, ColorGradient, Controller, Curve, EffectKind, FixtureDef,
+    BlendMode, ColorGradient, Controller, Curve, EffectKind, EffectParams, FixtureDef,
     FixtureGroup, Layout, Patch, ParamKey, ParamValue,
 };
-use crate::settings::{ChatMode, LlmProvider};
+use crate::model::AnalysisFeatures;
+use crate::settings::LlmProvider;
 
 fn default_blend_mode() -> BlendMode {
     BlendMode::Override
@@ -235,8 +236,6 @@ pub struct SetLlmConfigParams {
     pub base_url: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
-    #[serde(default)]
-    pub chat_mode: Option<ChatMode>,
 }
 
 // ── Setup params ──────────────────────────────────────────────
@@ -405,4 +404,87 @@ pub struct ScanVixenDirectoryParams {
 #[cfg_attr(feature = "tauri-app", ts(export))]
 pub struct CheckVixenPreviewFileParams {
     pub file_path: String,
+}
+
+// ── Hot-path params ────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+pub struct TickParams {
+    pub dt: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+pub struct GetFrameParams {
+    pub time: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+pub struct GetFrameFilteredParams {
+    pub time: f64,
+    pub effects: Vec<(usize, usize)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+pub struct RenderEffectThumbnailParams {
+    pub sequence_index: usize,
+    pub track_index: usize,
+    pub effect_index: usize,
+    pub time_samples: usize,
+    pub pixel_rows: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+pub struct PreviewScriptParams {
+    pub name: String,
+    pub params: EffectParams,
+    pub pixel_count: usize,
+    pub time_samples: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+pub struct PreviewScriptFrameParams {
+    pub name: String,
+    pub params: EffectParams,
+    pub pixel_count: usize,
+    pub t: f64,
+}
+
+// ── Cancellation params ────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+pub struct CancelOperationParams {
+    pub operation: String,
+}
+
+// ── Async command params ───────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+pub struct AnalyzeAudioParams {
+    #[serde(default)]
+    pub features: Option<AnalysisFeatures>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+pub struct SendAgentMessageParams {
+    pub message: String,
+    #[serde(default)]
+    pub context: Option<String>,
 }

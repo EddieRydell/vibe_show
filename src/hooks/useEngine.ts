@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { cmd } from "../commands";
-import type { Frame, PlaybackInfo, Show, TickResult, UndoState } from "../types";
+import type { Frame, PlaybackInfo, Show, UndoState } from "../types";
 
 export interface EngineState {
   show: Show | null;
@@ -53,7 +52,7 @@ export function useEngine(
       })
       .catch(console.error);
     const time = playbackRef.current?.current_time ?? 0.0;
-    invoke<Frame>("get_frame", { time }).then(setFrame).catch(console.error);
+    cmd.getFrame(time).then(setFrame).catch(console.error);
     cmd.getUndoState().then(setUndoState).catch(console.error);
   }, []);
 
@@ -101,7 +100,7 @@ export function useEngine(
           }
         }
         const thisRequest = ++frameRequestIdRef.current;
-        invoke<Frame>("get_frame", { time: audioTime })
+        cmd.getFrame(audioTime)
           .then((f) => {
             if (thisRequest !== frameRequestIdRef.current) return;
             setFrame(f);
@@ -123,7 +122,7 @@ export function useEngine(
         const dt = lastTimeRef.current ? (timestamp - lastTimeRef.current) / 1000.0 : 0;
         lastTimeRef.current = timestamp;
 
-        invoke<TickResult | null>("tick", { dt })
+        cmd.tick(dt)
           .then((result) => {
             if (result) {
               setFrame(result.frame);
@@ -190,7 +189,7 @@ export function useEngine(
     cmd
       .seek(time)
       .then(() => {
-        invoke<Frame>("get_frame", { time }).then(setFrame);
+        cmd.getFrame(time).then(setFrame);
         cmd.getPlayback().then((pb) => {
           setPlayback(pb);
           playbackRef.current = pb;

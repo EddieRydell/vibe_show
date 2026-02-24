@@ -17,31 +17,12 @@ pub struct NewConversationResult {
     pub id: String,
 }
 
-pub fn get_chat_history(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
-    let history = state.chat.lock().history_for_display();
-    Ok(CommandOutput::new(
-        format!("{} messages.", history.len()),
-        CommandResult::GetChatHistory(history),
-    ))
-}
-
 pub fn get_agent_chat_history(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let messages = state.agent_display_messages.lock().clone();
     Ok(CommandOutput::new(
         format!("{} messages.", messages.len()),
         CommandResult::GetAgentChatHistory(messages),
     ))
-}
-
-pub fn clear_chat(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
-    state.chat.lock().clear();
-    crate::chat::save_chat_history(state);
-    Ok(CommandOutput::new("Chat cleared.", CommandResult::ClearChat))
-}
-
-pub fn stop_chat(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
-    state.chat.lock().cancel();
-    Ok(CommandOutput::new("Chat cancelled.", CommandResult::StopChat))
 }
 
 pub fn list_agent_conversations(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {

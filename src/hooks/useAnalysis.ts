@@ -1,5 +1,4 @@
 import { useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import type {
   AudioAnalysis,
   PythonEnvStatus,
@@ -16,7 +15,7 @@ export function useAnalysis() {
   const [settingUp, setSettingUp] = useState(false);
 
   const checkPython = useCallback(async () => {
-    const status = await invoke<PythonEnvStatus>("get_python_status");
+    const status = await cmd.getPythonStatus();
     setPythonStatus(status);
     return status;
   }, []);
@@ -24,7 +23,7 @@ export function useAnalysis() {
   const setupPython = useCallback(async () => {
     setSettingUp(true);
     try {
-      await invoke("setup_python_env");
+      await cmd.setupPythonEnv();
       await checkPython();
     } finally {
       setSettingUp(false);
@@ -41,9 +40,7 @@ export function useAnalysis() {
     async (features?: AnalysisFeatures) => {
       setAnalyzing(true);
       try {
-        const result = await invoke<AudioAnalysis>("analyze_audio", {
-          features: features ?? null,
-        });
+        const result = await cmd.analyzeAudio(features);
         setAnalysis(result);
         return result;
       } finally {

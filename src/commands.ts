@@ -3,12 +3,6 @@
  * All operations go through a single Tauri IPC endpoint.
  *
  * Return types are inferred from CommandReturnMap — no manual `as T` casts.
- *
- * Commands that STAY as direct `invoke()` (async/streaming/binary/hot-path):
- *   - send_chat_message, open_sequence, execute_vixen_import, analyze_audio
- *   - tick, get_frame, get_frame_filtered
- *   - render_effect_thumbnail, preview_script, preview_script_frame
- *   - get_python_status, setup_python_env, start_python_sidecar, stop_python_sidecar
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -19,7 +13,6 @@ import type {
   UnitCommand,
 } from "./commandMap";
 import type {
-  ChatMode,
   ColorGradient,
   Controller,
   Curve,
@@ -32,6 +25,9 @@ import type {
   ParamKey,
   ParamValue,
   BlendMode,
+  AnalysisFeatures,
+  EffectParams,
+  VixenImportConfig,
 } from "./types";
 
 // ── Core exec helpers ─────────────────────────────────────────────
@@ -160,7 +156,6 @@ export const cmd = {
 
   // ── Settings ────────────────────────────────────────────
   getSettings: () => execData("GetSettings"),
-  getApiPort: () => execData("GetApiPort"),
   initializeDataDir: (dataDir: string) =>
     execData("InitializeDataDir", { data_dir: dataDir }),
   setLlmConfig: (p: {
@@ -168,14 +163,12 @@ export const cmd = {
     apiKey: string;
     baseUrl?: string | null;
     model?: string | null;
-    chatMode?: ChatMode;
   }) =>
     exec("SetLlmConfig", {
       provider: p.provider,
       api_key: p.apiKey,
       base_url: p.baseUrl ?? null,
       model: p.model ?? null,
-      ...(p.chatMode !== undefined && { chat_mode: p.chatMode }),
     }),
   getLlmConfig: () => execData("GetLlmConfig"),
 
@@ -200,7 +193,7 @@ export const cmd = {
   listSequences: () => execData("ListSequences"),
   createSequence: (name: string) =>
     execData("CreateSequence", { name }),
-  openSequence: (slug: string) => exec("OpenSequence", { slug }),
+  openSequence: (slug: string) => execData("OpenSequence", { slug }),
   deleteSequence: (slug: string) => exec("DeleteSequence", { slug }),
   saveCurrentSequence: () => exec("SaveCurrentSequence"),
 
@@ -213,14 +206,15 @@ export const cmd = {
     execData("ResolveMediaPath", { name }),
 
   // ── Chat ────────────────────────────────────────────────
-  getChatHistory: () => execData("GetChatHistory"),
   getAgentChatHistory: () => execData("GetAgentChatHistory"),
-  clearChat: () => exec("ClearChat"),
-  stopChat: () => exec("StopChat"),
   listAgentConversations: () => execData("ListAgentConversations"),
   newAgentConversation: () => execData("NewAgentConversation"),
   switchAgentConversation: (id: string) => exec("SwitchAgentConversation", { conversation_id: id }),
   deleteAgentConversation: (id: string) => exec("DeleteAgentConversation", { conversation_id: id }),
+  sendAgentMessage: (message: string, context?: string) =>
+    exec("SendAgentMessage", { message, context: context ?? null }),
+  cancelAgentMessage: () => exec("CancelAgentMessage"),
+  clearAgentSession: () => exec("ClearAgentSession"),
 
   // ── Global Library ──────────────────────────────────────
   listGlobalGradients: () => execData("ListGlobalGradients"),
@@ -255,14 +249,61 @@ export const cmd = {
   getScriptParams: (name: string) =>
     execData("GetScriptParams", { name }),
 
+  // ── Hot-path (playback/preview) ─────────────────────────
+  tick: (dt: number) => execData("Tick", { dt }),
+  getFrame: (time: number) => execData("GetFrame", { time }),
+  getFrameFiltered: (time: number, effects: [number, number][]) =>
+    execData("GetFrameFiltered", { time, effects }),
+  renderEffectThumbnail: (
+    sequenceIndex: number,
+    trackIndex: number,
+    effectIndex: number,
+    timeSamples: number,
+    pixelRows: number,
+  ) =>
+    execData("RenderEffectThumbnail", {
+      sequence_index: sequenceIndex,
+      track_index: trackIndex,
+      effect_index: effectIndex,
+      time_samples: timeSamples,
+      pixel_rows: pixelRows,
+    }),
+  previewScript: (
+    name: string,
+    params: EffectParams,
+    pixelCount: number,
+    timeSamples: number,
+  ) =>
+    execData("PreviewScript", {
+      name,
+      params,
+      pixel_count: pixelCount,
+      time_samples: timeSamples,
+    }),
+  previewScriptFrame: (
+    name: string,
+    params: EffectParams,
+    pixelCount: number,
+    t: number,
+  ) =>
+    execData("PreviewScriptFrame", { name, params, pixel_count: pixelCount, t }),
+
   // ── Cancellation ────────────────────────────────────────
   cancelOperation: (operation: string) =>
-    invoke<boolean>("cancel_operation", { operation }),
+    execData("CancelOperation", { operation }),
 
   // ── Analysis ────────────────────────────────────────────
   getAnalysis: () => execData("GetAnalysis"),
+  analyzeAudio: (features?: AnalysisFeatures) =>
+    execData("AnalyzeAudio", { features: features ?? null }),
 
-  // ── Vixen Import (sync) ─────────────────────────────────
+  // ── Python ──────────────────────────────────────────────
+  getPythonStatus: () => execData("GetPythonStatus"),
+  setupPythonEnv: () => exec("SetupPythonEnv"),
+  startPythonSidecar: () => execData("StartPythonSidecar"),
+  stopPythonSidecar: () => exec("StopPythonSidecar"),
+
+  // ── Vixen Import ────────────────────────────────────────
   importVixenSequence: (setupSlug: string, timPath: string) =>
     execData("ImportVixenSequence", {
       setup_slug: setupSlug,
@@ -272,4 +313,6 @@ export const cmd = {
     execData("ScanVixenDirectory", { vixen_dir: vixenDir }),
   checkVixenPreviewFile: (filePath: string) =>
     execData("CheckVixenPreviewFile", { file_path: filePath }),
+  executeVixenImport: (config: VixenImportConfig) =>
+    execData("ExecuteVixenImport", config),
 };

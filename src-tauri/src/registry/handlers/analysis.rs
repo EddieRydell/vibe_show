@@ -185,6 +185,97 @@ pub fn get_analysis_detail(
     }
 }
 
+// ── Async handler ────────────────────────────────────────────────
+
+#[cfg(feature = "tauri-app")]
+pub async fn analyze_audio(
+    state: Arc<AppState>,
+    app: Option<tauri::AppHandle>,
+    p: crate::registry::params::AnalyzeAudioParams,
+) -> Result<CommandOutput, AppError> {
+    let app_handle = app.ok_or_else(|| AppError::ApiError {
+        message: "AppHandle required for analyze_audio".into(),
+    })?;
+
+    let audio_file = state
+        .with_show(|show| {
+            show.sequences
+                .first()
+                .and_then(|s| s.audio_file.clone())
+        })
+        .ok_or(AppError::AnalysisError {
+            message: "No audio file in current sequence".into(),
+        })?;
+
+    crate::setup::validate_filename(&audio_file).map_err(|_| AppError::ValidationError {
+        message: format!("Invalid audio filename: {audio_file}"),
+    })?;
+
+    let data_dir = get_data_dir(&state).map_err(|_| AppError::NoSettings)?;
+    let setup_slug = state.require_setup()?;
+    let media_dir = crate::paths::media_dir(&data_dir, &setup_slug);
+    let audio_path = media_dir.join(&audio_file);
+
+    if !audio_path.exists() {
+        return Err(AppError::NotFound {
+            what: format!("Audio file: {audio_file}"),
+        });
+    }
+
+    let features = p.features.unwrap_or_else(|| {
+        state
+            .settings
+            .lock()
+            .as_ref()
+            .and_then(|s| s.default_analysis_features.clone())
+            .unwrap_or_default()
+    });
+
+    let use_gpu = state
+        .settings
+        .lock()
+        .as_ref()
+        .is_some_and(|s| s.use_gpu);
+
+    let port = crate::python::ensure_sidecar(&state, &app_handle).await?;
+
+    let cancel_flag = state.cancellation.register("analysis");
+    let output_dir = crate::paths::stems_dir(&media_dir, &audio_file);
+    let models = crate::paths::models_dir(&state.app_config_dir);
+
+    let analysis_result = tokio::select! {
+        result = crate::analysis::run_analysis(
+            &app_handle,
+            port,
+            &audio_path,
+            &output_dir,
+            &features,
+            &models,
+            use_gpu,
+        ) => {
+            state.cancellation.unregister("analysis");
+            result?
+        }
+        () = crate::state::wait_for_cancel(&cancel_flag) => {
+            state.cancellation.unregister("analysis");
+            crate::progress::emit_progress(&app_handle, "analysis", "Cancelled", 1.0, None);
+            return Err(AppError::Cancelled { operation: "analysis".into() });
+        }
+    };
+
+    let cache_path = crate::paths::analysis_path(&media_dir, &audio_file);
+    if let Err(e) = crate::analysis::save_analysis(&cache_path, &analysis_result) {
+        eprintln!("[VibeLights] Failed to save analysis cache: {e}");
+    }
+
+    state.cache_analysis(audio_file, analysis_result.clone());
+
+    Ok(CommandOutput::new(
+        "Audio analysis complete.",
+        CommandResult::AnalyzeAudio(Box::new(analysis_result)),
+    ))
+}
+
 pub fn get_analysis(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let audio_file = state.with_show(|show| {
         show.sequences

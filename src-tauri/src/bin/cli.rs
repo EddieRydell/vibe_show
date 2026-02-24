@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 use std::process;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::AtomicU16;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -13,6 +13,12 @@ use std::collections::HashMap;
 use clap::{Parser, Subcommand};
 use serde_json::Value;
 
+use vibe_lights::dispatcher::CommandDispatcher;
+use vibe_lights::model::Show;
+use vibe_lights::registry::{self, Command, CommandOutput};
+use vibe_lights::settings;
+use vibe_lights::state::{AppState, CancellationRegistry, PlaybackState};
+
 // ── CLI argument parsing ─────────────────────────────────────────
 
 #[derive(Parser)]
@@ -21,9 +27,17 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// Connect to a specific port (default: auto-discover from .vibelights-port)
+    /// Data directory override
     #[arg(long, global = true)]
-    port: Option<u16>,
+    data_dir: Option<String>,
+
+    /// Open this setup on startup
+    #[arg(long, global = true)]
+    setup: Option<String>,
+
+    /// Open this sequence on startup (requires --setup)
+    #[arg(long, global = true)]
+    sequence: Option<String>,
 
     /// Output raw JSON instead of formatted text
     #[arg(long, global = true)]
@@ -32,24 +46,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the `VibeLights` API server (long-running)
-    Serve {
-        /// Data directory (overrides settings.json)
-        #[arg(long)]
-        data_dir: Option<String>,
-        /// Open this setup on startup
-        #[arg(long)]
-        setup: Option<String>,
-        /// Open this sequence on startup (requires --setup)
-        #[arg(long)]
-        sequence: Option<String>,
-        /// Bind to specific port (default: OS-assigned)
-        #[arg(long, default_value = "0")]
-        port: u16,
-        /// Set Claude API key
-        #[arg(long)]
-        api_key: Option<String>,
-    },
     /// Setup management
     Setups {
         #[command(subcommand)]
@@ -122,12 +118,8 @@ enum Commands {
     Seek { time: f64 },
     /// Get the full show JSON
     Show,
-    /// Human-readable description of the show
-    Describe {
-        /// Include frame state at this time
-        #[arg(long)]
-        frame_time: Option<f64>,
-    },
+    /// Human-readable description of the show and sequence
+    Describe,
     /// Get frame data at a specific time
     Frame { time: f64 },
     /// List available effect types with parameter schemas
@@ -146,16 +138,14 @@ enum Commands {
     UndoState,
     /// Save the current sequence
     Save,
-    /// Send a chat message
+    /// Send a chat message (agent mode)
     Chat { message: String },
-    /// Get chat history
+    /// Get agent chat history
     ChatHistory,
-    /// Clear chat history
+    /// Clear agent chat and start new conversation
     ChatClear,
-    /// Scan a Vixen 3 directory
-    VixenScan { vixen_dir: String },
-    /// Execute a Vixen import (pass config JSON)
-    VixenImport { config_json: String },
+    /// Get current settings
+    Settings,
     /// Benchmark frame evaluation (direct, no HTTP)
     Bench {
         /// Data directory
@@ -204,49 +194,52 @@ enum SequenceAction {
     Save,
 }
 
-// ── Server mode ──────────────────────────────────────────────────
+// ── State initialization ─────────────────────────────────────────
 
-#[allow(clippy::too_many_lines)]
-async fn run_serve(
-    data_dir: Option<String>,
-    setup: Option<String>,
-    sequence: Option<String>,
-    port: u16,
-    api_key: Option<String>,
-) {
-    use vibe_lights::api;
-    use vibe_lights::chat::ChatManager;
-    use vibe_lights::dispatcher::CommandDispatcher;
-    use vibe_lights::model::Show;
-    use vibe_lights::settings;
-    use vibe_lights::state::{AppState, PlaybackState};
+fn dirs_config_dir() -> PathBuf {
+    // Match Tauri's app config dir pattern: <config_dir>/com.vibelights.app
+    let base = if cfg!(target_os = "windows") {
+        std::env::var("APPDATA")
+            .map_or_else(|_| PathBuf::from("C:\\Users\\Default\\AppData\\Roaming"), PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        dirs_home().join("Library/Application Support")
+    } else {
+        std::env::var("XDG_CONFIG_HOME")
+            .map_or_else(|_| dirs_home().join(".config"), PathBuf::from)
+    };
+    base.join(vibe_lights::paths::APP_ID)
+}
 
-    // Determine app config dir
+fn dirs_home() -> PathBuf {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_or_else(|_| PathBuf::from("."), PathBuf::from)
+}
+
+fn initialize_state(
+    data_dir_override: Option<&str>,
+    setup_slug: Option<&str>,
+    sequence_slug: Option<&str>,
+) -> Arc<AppState> {
     let app_config_dir = dirs_config_dir();
-
-    // Load or create settings
     let mut loaded_settings = settings::load_settings(&app_config_dir);
 
     // Override data_dir if provided
-    if let Some(ref dd) = data_dir {
+    if let Some(dd) = data_dir_override {
         let data_path = PathBuf::from(dd);
         std::fs::create_dir_all(data_path.join("setups")).ok();
         let mut s = loaded_settings
             .clone()
             .unwrap_or_else(|| settings::AppSettings::new(data_path.clone()));
         s.data_dir = data_path;
-        settings::save_settings(&app_config_dir, &s).ok();
         loaded_settings = Some(s);
     }
 
-    // Override API key if provided
-    if let Some(ref key) = api_key {
-        if let Some(ref mut s) = loaded_settings {
-            s.llm.api_key = Some(key.clone());
-            // Save key to credentials file, not settings.json
-            settings::save_api_key(&app_config_dir, key).ok();
-        }
-    }
+    // Load global libraries
+    let global_libs = loaded_settings
+        .as_ref()
+        .and_then(|s| vibe_lights::setup::load_global_libraries(&s.data_dir).ok())
+        .unwrap_or_default();
 
     let state = Arc::new(AppState {
         show: Mutex::new(Show::empty()),
@@ -259,112 +252,243 @@ async fn run_serve(
             looping: false,
         }),
         dispatcher: Mutex::new(CommandDispatcher::new()),
-        chat: Mutex::new(ChatManager::new()),
-        api_port: AtomicU16::new(0),
-        app_config_dir: app_config_dir.clone(),
+        app_config_dir,
         settings: Mutex::new(loaded_settings.clone()),
         current_setup: Mutex::new(None),
         current_sequence: Mutex::new(None),
-        script_cache: Mutex::new(std::collections::HashMap::new()),
+        script_cache: Mutex::new(HashMap::new()),
         python_sidecar: Mutex::new(None),
         python_port: AtomicU16::new(0),
-        analysis_cache: Mutex::new(std::collections::HashMap::new()),
+        analysis_cache: Mutex::new(HashMap::new()),
         agent_sidecar: Mutex::new(None),
         agent_port: AtomicU16::new(0),
         agent_session_id: Mutex::new(None),
         agent_display_messages: Mutex::new(Vec::new()),
         agent_chats: Mutex::new(vibe_lights::chat::AgentChatsData::default()),
-        cancellation: vibe_lights::state::CancellationRegistry::new(),
-        global_libraries: Mutex::new(Default::default()),
+        cancellation: CancellationRegistry::new(),
+        global_libraries: Mutex::new(global_libs),
     });
 
-    // Load global chat history
-    vibe_lights::chat::load_chat_history(&state);
+    // Load agent chat history
     vibe_lights::chat::load_agent_chats(&state);
 
-    // Open setup and sequence if specified
-    if let Some(ref setup_slug) = setup {
+    // Open setup if specified
+    if let Some(setup_s) = setup_slug {
         if let Some(ref settings) = loaded_settings {
-            match vibe_lights::setup::load_setup(&settings.data_dir, setup_slug) {
+            match vibe_lights::setup::load_setup(&settings.data_dir, setup_s) {
                 Ok(setup_data) => {
-                    *state.current_setup.lock() = Some(setup_slug.clone());
-                    eprintln!(
-                        "[VibeLights] Setup: {} ({setup_slug})",
-                        setup_data.name
-                    );
+                    *state.current_setup.lock() = Some(setup_s.to_string());
+                    eprintln!("[VibeLights] Setup: {} ({setup_s})", setup_data.name);
 
-                    if let Some(ref seq_slug) = sequence {
-                        match vibe_lights::setup::load_sequence(
-                            &settings.data_dir,
-                            setup_slug,
-                            seq_slug,
-                        ) {
+                    // Open sequence if specified
+                    if let Some(seq_s) = sequence_slug {
+                        match vibe_lights::setup::load_sequence(&settings.data_dir, setup_s, seq_s) {
                             Ok(seq_data) => {
                                 let assembled =
                                     vibe_lights::setup::assemble_show(&setup_data, &seq_data);
                                 *state.show.lock() = assembled;
-                                *state.current_sequence.lock() =
-                                    Some(seq_slug.clone());
-                                eprintln!(
-                                    "[VibeLights] Sequence: {} ({seq_slug})",
-                                    seq_data.name
-                                );
+                                *state.current_sequence.lock() = Some(seq_s.to_string());
+                                eprintln!("[VibeLights] Sequence: {} ({seq_s})", seq_data.name);
                             }
                             Err(e) => {
-                                eprintln!("[VibeLights] Failed to load sequence '{seq_slug}': {e}");
+                                eprintln!("[VibeLights] Failed to load sequence '{seq_s}': {e}");
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!(
-                        "[VibeLights] Failed to load setup '{setup_slug}': {e}"
-                    );
+                    eprintln!("[VibeLights] Failed to load setup '{setup_s}': {e}");
                 }
             }
         }
     }
 
-    // Determine port
-    let bind_port = if port == 0 {
-        // Use OS-assigned port — start server, then print
-        let actual_port = match api::start_api_server(state.clone()).await {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("[VibeLights] Failed to start API server: {e}");
-                std::process::exit(1);
-            }
-        };
-        state.api_port.store(actual_port, Ordering::Relaxed);
-        actual_port
-    } else {
-        state.api_port.store(port, Ordering::Relaxed);
-        port
-    };
+    state
+}
 
-    // Write port file
-    let port_file = app_config_dir.join(vibe_lights::paths::PORT_FILE);
-    let _ = std::fs::write(&port_file, bind_port.to_string());
+// ── Command building ─────────────────────────────────────────────
 
-    eprintln!("[VibeLights] API server: http://127.0.0.1:{bind_port}");
-    eprintln!("[VibeLights] Ready. Press Ctrl+C to stop.");
-
-    if port != 0 {
-        // If a specific port was requested, we need to start the server
-        // on that port and block until it exits.
-        if let Err(e) = api::start_api_server_on_port(state, port).await {
-            eprintln!("[VibeLights] API server error: {e}");
-            std::process::exit(1);
+fn build_command(cmd: &Commands) -> Command {
+    match cmd {
+        Commands::Play => Command::Play,
+        Commands::Pause => Command::Pause,
+        Commands::Seek { time } => {
+            let p: vibe_lights::registry::params::SeekParams =
+                serde_json::from_value(serde_json::json!({ "time": time })).unwrap();
+            Command::Seek(p)
         }
-    } else {
-        // Server is already running via start_api_server (spawned).
-        // Block until Ctrl+C.
-        tokio::signal::ctrl_c().await.ok();
-        eprintln!("\n[VibeLights] Shutting down.");
+        Commands::Undo => Command::Undo,
+        Commands::Redo => Command::Redo,
+        Commands::Save => Command::SaveCurrentSequence,
+        Commands::Show => Command::GetShow,
+        Commands::Describe => Command::DescribeShow,
+        Commands::Effects => Command::ListEffects,
+        Commands::UndoState => Command::GetUndoState,
+        Commands::Settings => Command::GetSettings,
+        Commands::ChatHistory => Command::GetAgentChatHistory,
+        Commands::Frame { time } => {
+            let p: vibe_lights::registry::params::GetFrameParams =
+                serde_json::from_value(serde_json::json!({ "time": time })).unwrap();
+            Command::GetFrame(p)
+        }
+        Commands::EffectDetail { seq, track, idx } => {
+            let p: vibe_lights::registry::params::GetEffectDetailParams =
+                serde_json::from_value(serde_json::json!({
+                    "sequence_index": seq,
+                    "track_index": track,
+                    "effect_index": idx,
+                }))
+                .unwrap();
+            Command::GetEffectDetail(p)
+        }
+        Commands::AddEffect { track, kind, start, end } => {
+            let p: vibe_lights::registry::params::AddEffectParams =
+                serde_json::from_value(serde_json::json!({
+                    "track_index": track,
+                    "kind": kind,
+                    "start": start,
+                    "end": end,
+                }))
+                .unwrap();
+            Command::AddEffect(p)
+        }
+        Commands::AddTrack { name, fixture } => {
+            let p: vibe_lights::registry::params::AddTrackParams =
+                serde_json::from_value(serde_json::json!({
+                    "name": name,
+                    "fixture_id": fixture,
+                }))
+                .unwrap();
+            Command::AddTrack(p)
+        }
+        Commands::DeleteEffects { targets } => {
+            let parsed: Vec<Value> = targets
+                .split(',')
+                .filter_map(|pair| {
+                    let parts: Vec<&str> = pair.trim().split(':').collect();
+                    if parts.len() == 2 {
+                        let t: usize = parts[0].parse().ok()?;
+                        let e: usize = parts[1].parse().ok()?;
+                        Some(serde_json::json!({"track_index": t, "effect_index": e}))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let p: vibe_lights::registry::params::DeleteEffectsParams =
+                serde_json::from_value(serde_json::json!({ "targets": parsed })).unwrap();
+            Command::DeleteEffects(p)
+        }
+        Commands::UpdateParam { track, effect, key, value } => {
+            let parsed_value: Value = serde_json::from_str(value)
+                .unwrap_or(Value::String(value.clone()));
+            let p: vibe_lights::registry::params::UpdateEffectParamParams =
+                serde_json::from_value(serde_json::json!({
+                    "track_index": track,
+                    "effect_index": effect,
+                    "key": key,
+                    "value": parsed_value,
+                }))
+                .unwrap();
+            Command::UpdateEffectParam(p)
+        }
+        Commands::UpdateTime { track, effect, start, end } => {
+            let p: vibe_lights::registry::params::UpdateEffectTimeRangeParams =
+                serde_json::from_value(serde_json::json!({
+                    "track_index": track,
+                    "effect_index": effect,
+                    "start": start,
+                    "end": end,
+                }))
+                .unwrap();
+            Command::UpdateEffectTimeRange(p)
+        }
+        Commands::MoveEffect { from_track, effect, to_track } => {
+            let p: vibe_lights::registry::params::MoveEffectToTrackParams =
+                serde_json::from_value(serde_json::json!({
+                    "from_track": from_track,
+                    "effect_index": effect,
+                    "to_track": to_track,
+                }))
+                .unwrap();
+            Command::MoveEffectToTrack(p)
+        }
+        Commands::Setups { action } => match action {
+            SetupAction::List => Command::ListSetups,
+            SetupAction::Create { name } => {
+                let p: vibe_lights::registry::params::CreateSetupParams =
+                    serde_json::from_value(serde_json::json!({ "name": name })).unwrap();
+                Command::CreateSetup(p)
+            }
+            SetupAction::Open { slug } => {
+                let p: vibe_lights::registry::params::SlugParams =
+                    serde_json::from_value(serde_json::json!({ "slug": slug })).unwrap();
+                Command::OpenSetup(p)
+            }
+            SetupAction::Delete { slug } => {
+                let p: vibe_lights::registry::params::SlugParams =
+                    serde_json::from_value(serde_json::json!({ "slug": slug })).unwrap();
+                Command::DeleteSetup(p)
+            }
+            SetupAction::Save => Command::SaveSetup,
+        },
+        Commands::Sequences { action } => match action {
+            SequenceAction::List => Command::ListSequences,
+            SequenceAction::Create { name } => {
+                let p: vibe_lights::registry::params::CreateSequenceParams =
+                    serde_json::from_value(serde_json::json!({ "name": name })).unwrap();
+                Command::CreateSequence(p)
+            }
+            SequenceAction::Open { slug } => {
+                let p: vibe_lights::registry::params::SlugParams =
+                    serde_json::from_value(serde_json::json!({ "slug": slug })).unwrap();
+                Command::OpenSequence(p)
+            }
+            SequenceAction::Delete { slug } => {
+                let p: vibe_lights::registry::params::SlugParams =
+                    serde_json::from_value(serde_json::json!({ "slug": slug })).unwrap();
+                Command::DeleteSequence(p)
+            }
+            SequenceAction::Save => Command::SaveCurrentSequence,
+        },
+        Commands::Chat { .. } => {
+            eprintln!("Error: Agent chat requires the VibeLights GUI.");
+            eprintln!("Use `pnpm tauri dev` to run the full application.");
+            process::exit(1);
+        }
+        Commands::ChatClear => Command::NewAgentConversation,
+        // Bench is handled separately before this function is called
+        Commands::Bench { .. } => unreachable!(),
+    }
+}
+
+// ── Output formatting ────────────────────────────────────────────
+
+fn print_output(output: &CommandOutput, raw_json: bool) {
+    if raw_json {
+        let json = serde_json::json!({
+            "message": output.message,
+            "result": output.result,
+        });
+        println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
+        return;
     }
 
-    // Clean up port file
-    let _ = std::fs::remove_file(&port_file);
+    println!("{}", output.message);
+
+    // For data commands, also print the data
+    let result_json = serde_json::to_value(&output.result).unwrap_or(Value::Null);
+    if let Some(data) = result_json.get("data") {
+        if !data.is_null() {
+            if data.is_string() {
+                println!("{}", data.as_str().unwrap());
+            } else if data.is_array() || data.is_object() {
+                println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
+            } else {
+                println!("{data}");
+            }
+        }
+    }
 }
 
 // ── Bench mode ──────────────────────────────────────────────────
@@ -484,385 +608,49 @@ fn run_bench(data_dir: &str, setup_slug: &str, sequence_slug: &str, time: f64, i
     eprintln!("  fps:    {:.1}", 1.0 / avg.as_secs_f64());
 }
 
-// ── Client mode helpers ──────────────────────────────────────────
-
-fn discover_port(cli_port: Option<u16>) -> u16 {
-    if let Some(p) = cli_port {
-        return p;
-    }
-
-    // Try .vibelights-port in config dir
-    let config_dir = dirs_config_dir();
-    let port_file = config_dir.join(vibe_lights::paths::PORT_FILE);
-    if let Ok(contents) = std::fs::read_to_string(&port_file) {
-        if let Ok(p) = contents.trim().parse::<u16>() {
-            return p;
-        }
-    }
-
-    eprintln!("Error: Could not discover VibeLights server port.");
-    eprintln!("Either start 'vibelights-cli serve' or use --port <PORT>.");
-    process::exit(1);
-}
-
-fn base_url(port: u16) -> String {
-    format!("http://127.0.0.1:{port}")
-}
-
-fn dirs_config_dir() -> PathBuf {
-    // Match Tauri's app config dir pattern: <config_dir>/com.vibelights.app
-    let base = if cfg!(target_os = "windows") {
-        std::env::var("APPDATA")
-            .map_or_else(|_| PathBuf::from("C:\\Users\\Default\\AppData\\Roaming"), PathBuf::from)
-    } else if cfg!(target_os = "macos") {
-        dirs_home().join("Library/Application Support")
-    } else {
-        std::env::var("XDG_CONFIG_HOME")
-            .map_or_else(|_| dirs_home().join(".config"), PathBuf::from)
-    };
-    base.join(vibe_lights::paths::APP_ID)
-}
-
-fn dirs_home() -> PathBuf {
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_or_else(|_| PathBuf::from("."), PathBuf::from)
-}
-
-// ── HTTP client helpers ──────────────────────────────────────────
-
-async fn http_get(url: &str) -> Result<Value, String> {
-    let resp = reqwest::get(url)
-        .await
-        .map_err(|e| format!("Request failed: {e}"))?;
-    resp.json()
-        .await
-        .map_err(|e| format!("Parse failed: {e}"))
-}
-
-async fn http_post(url: &str, body: Value) -> Result<Value, String> {
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {e}"))?;
-    resp.json()
-        .await
-        .map_err(|e| format!("Parse failed: {e}"))
-}
-
-async fn http_delete(url: &str) -> Result<Value, String> {
-    let client = reqwest::Client::new();
-    let resp = client
-        .delete(url)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {e}"))?;
-    resp.json()
-        .await
-        .map_err(|e| format!("Parse failed: {e}"))
-}
-
-// http_put available for future use (e.g., fixtures/setup endpoints)
-#[allow(dead_code)]
-async fn http_put(url: &str, body: Value) -> Result<Value, String> {
-    let client = reqwest::Client::new();
-    let resp = client
-        .put(url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {e}"))?;
-    resp.json()
-        .await
-        .map_err(|e| format!("Parse failed: {e}"))
-}
-
-fn check_response(json: &Value) -> Result<(), String> {
-    if json["ok"].as_bool() != Some(true) {
-        let err = json["error"].as_str().unwrap_or("Unknown error");
-        return Err(err.to_string());
-    }
-    Ok(())
-}
-
-fn print_result(json: &Value, raw_json: bool) {
-    if raw_json {
-        println!("{}", serde_json::to_string_pretty(json).unwrap_or_default());
-        return;
-    }
-
-    if let Err(e) = check_response(json) {
-        eprintln!("Error: {e}");
-        process::exit(1);
-    }
-
-    if let Some(desc) = json["description"].as_str() {
-        println!("{desc}");
-    }
-
-    let data = &json["data"];
-    if data.is_null() {
-        if json["description"].is_null() {
-            println!("OK");
-        }
-    } else if data.is_string() {
-        println!("{}", data.as_str().unwrap());
-    } else if data.is_array() || data.is_object() {
-        println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
-    } else {
-        println!("{data}");
-    }
-}
-
 // ── Main ─────────────────────────────────────────────────────────
 
 #[tokio::main]
-#[allow(clippy::too_many_lines)]
 async fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Serve {
-            data_dir,
-            setup,
-            sequence,
-            port,
-            api_key,
-        } => {
-            run_serve(data_dir, setup, sequence, port, api_key).await;
-        }
-        Commands::Bench {
-            data_dir,
-            setup,
-            sequence,
-            time,
-            iterations,
-        } => {
-            run_bench(&data_dir, &setup, &sequence, time, iterations);
-        }
-        cmd => {
-            let port = discover_port(cli.port);
-            let base = base_url(port);
-            let raw = cli.json;
+    // Handle bench separately (doesn't need full state)
+    if let Commands::Bench {
+        data_dir,
+        setup,
+        sequence,
+        time,
+        iterations,
+    } = &cli.command
+    {
+        run_bench(data_dir, setup, sequence, *time, *iterations);
+        return;
+    }
 
-            let result = match cmd {
-                Commands::Serve { .. } | Commands::Bench { .. } => unreachable!(),
+    // Initialize state from disk
+    let state = initialize_state(
+        cli.data_dir.as_deref(),
+        cli.setup.as_deref(),
+        cli.sequence.as_deref(),
+    );
 
-                Commands::Setups { action } => match action {
-                    SetupAction::List => http_get(&format!("{base}/api/setups")).await,
-                    SetupAction::Create { name } => {
-                        http_post(&format!("{base}/api/setups"), serde_json::json!({ "name": name })).await
-                    }
-                    SetupAction::Open { slug } => {
-                        http_get(&format!("{base}/api/setups/{slug}")).await
-                    }
-                    SetupAction::Delete { slug } => {
-                        http_delete(&format!("{base}/api/setups/{slug}")).await
-                    }
-                    SetupAction::Save => {
-                        http_post(&format!("{base}/api/save"), serde_json::json!({})).await
-                    }
-                },
+    // Build the command
+    let cmd = build_command(&cli.command);
+    let raw = cli.json;
 
-                Commands::Sequences { action } => {
-                    // We need the current setup slug for sequence operations.
-                    // First try to get it from the server's settings.
-                    let settings_json = http_get(&format!("{base}/api/settings")).await;
-                    let current_setup = settings_json
-                        .as_ref()
-                        .ok()
-                        .and_then(|j| j["data"]["last_setup"].as_str())
-                        .map_or_else(String::new, str::to_string);
+    // CLI only supports sync commands. Async commands (agent chat, audio analysis)
+    // require the Tauri GUI runtime.
+    if cmd.is_async() {
+        eprintln!("Error: This command requires the VibeLights GUI (async dispatch).");
+        eprintln!("Use `pnpm tauri dev` to run the full application.");
+        process::exit(1);
+    }
 
-                    if current_setup.is_empty() {
-                        eprintln!("Error: No setup is currently open. Open a setup first.");
-                        process::exit(1);
-                    }
-
-                    match action {
-                        SequenceAction::List => {
-                            http_get(&format!("{base}/api/setups/{current_setup}/sequences")).await
-                        }
-                        SequenceAction::Create { name } => {
-                            http_post(
-                                &format!("{base}/api/setups/{current_setup}/sequences"),
-                                serde_json::json!({ "name": name }),
-                            ).await
-                        }
-                        SequenceAction::Open { slug } => {
-                            http_get(&format!(
-                                "{base}/api/setups/{current_setup}/sequences/{slug}"
-                            )).await
-                        }
-                        SequenceAction::Delete { slug } => {
-                            http_delete(&format!(
-                                "{base}/api/setups/{current_setup}/sequences/{slug}"
-                            )).await
-                        }
-                        SequenceAction::Save => {
-                            http_post(&format!("{base}/api/save"), serde_json::json!({})).await
-                        }
-                    }
-                }
-
-                Commands::AddEffect { track, kind, start, end } => {
-                    http_post(
-                        &format!("{base}/api/command"),
-                        serde_json::json!({
-                            "AddEffect": {
-                                "sequence_index": 0,
-                                "track_index": track,
-                                "kind": kind,
-                                "start": start,
-                                "end": end
-                            }
-                        }),
-                    ).await
-                }
-
-                Commands::AddTrack { name, fixture } => {
-                    http_post(
-                        &format!("{base}/api/command"),
-                        serde_json::json!({
-                            "AddTrack": {
-                                "sequence_index": 0,
-                                "name": name,
-                                "target": { "Fixtures": [fixture] }
-                            }
-                        }),
-                    ).await
-                }
-
-                Commands::DeleteEffects { targets } => {
-                    let parsed: Vec<(usize, usize)> = targets
-                        .split(',')
-                        .filter_map(|pair| {
-                            let parts: Vec<&str> = pair.trim().split(':').collect();
-                            if parts.len() == 2 {
-                                Some((parts[0].parse().ok()?, parts[1].parse().ok()?))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    http_post(
-                        &format!("{base}/api/command"),
-                        serde_json::json!({
-                            "DeleteEffects": {
-                                "sequence_index": 0,
-                                "targets": parsed
-                            }
-                        }),
-                    ).await
-                }
-
-                Commands::UpdateParam { track, effect, key, value } => {
-                    let parsed_value: Value = serde_json::from_str(&value)
-                        .unwrap_or(Value::String(value));
-                    http_post(
-                        &format!("{base}/api/command"),
-                        serde_json::json!({
-                            "UpdateEffectParam": {
-                                "sequence_index": 0,
-                                "track_index": track,
-                                "effect_index": effect,
-                                "key": key,
-                                "value": parsed_value
-                            }
-                        }),
-                    ).await
-                }
-
-                Commands::UpdateTime { track, effect, start, end } => {
-                    http_post(
-                        &format!("{base}/api/command"),
-                        serde_json::json!({
-                            "UpdateEffectTimeRange": {
-                                "sequence_index": 0,
-                                "track_index": track,
-                                "effect_index": effect,
-                                "start": start,
-                                "end": end
-                            }
-                        }),
-                    ).await
-                }
-
-                Commands::MoveEffect { from_track, effect, to_track } => {
-                    http_post(
-                        &format!("{base}/api/command"),
-                        serde_json::json!({
-                            "MoveEffectToTrack": {
-                                "sequence_index": 0,
-                                "from_track": from_track,
-                                "effect_index": effect,
-                                "to_track": to_track
-                            }
-                        }),
-                    ).await
-                }
-
-                Commands::Play => http_post(&format!("{base}/api/play"), serde_json::json!({})).await,
-                Commands::Pause => http_post(&format!("{base}/api/pause"), serde_json::json!({})).await,
-                Commands::Seek { time } => {
-                    http_post(&format!("{base}/api/seek"), serde_json::json!({ "time": time })).await
-                }
-
-                Commands::Show => http_get(&format!("{base}/api/show")).await,
-                Commands::Describe { frame_time } => {
-                    let url = if let Some(t) = frame_time {
-                        format!("{base}/api/describe?frame_time={t}")
-                    } else {
-                        format!("{base}/api/describe")
-                    };
-                    http_get(&url).await
-                }
-                Commands::Frame { time } => {
-                    http_get(&format!("{base}/api/frame?time={time}")).await
-                }
-                Commands::Effects => http_get(&format!("{base}/api/effects")).await,
-                Commands::EffectDetail { seq, track, idx } => {
-                    http_get(&format!("{base}/api/effect/{seq}/{track}/{idx}")).await
-                }
-
-                Commands::Undo => http_post(&format!("{base}/api/undo"), serde_json::json!({})).await,
-                Commands::Redo => http_post(&format!("{base}/api/redo"), serde_json::json!({})).await,
-                Commands::UndoState => http_get(&format!("{base}/api/undo-state")).await,
-                Commands::Save => http_post(&format!("{base}/api/save"), serde_json::json!({})).await,
-
-                Commands::Chat { message } => {
-                    http_post(&format!("{base}/api/chat"), serde_json::json!({ "message": message })).await
-                }
-                Commands::ChatHistory => http_get(&format!("{base}/api/chat/history")).await,
-                Commands::ChatClear => {
-                    http_post(&format!("{base}/api/chat/clear"), serde_json::json!({})).await
-                }
-
-                Commands::VixenScan { vixen_dir } => {
-                    http_post(
-                        &format!("{base}/api/vixen/scan"),
-                        serde_json::json!({ "vixen_dir": vixen_dir }),
-                    ).await
-                }
-                Commands::VixenImport { config_json } => {
-                    let config: Value = serde_json::from_str(&config_json).unwrap_or_else(|e| {
-                        eprintln!("Error: Invalid JSON config: {e}");
-                        process::exit(1);
-                    });
-                    http_post(&format!("{base}/api/vixen/execute"), config).await
-                }
-            };
-
-            match result {
-                Ok(json) => print_result(&json, raw),
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    process::exit(1);
-                }
-            }
+    match registry::execute::execute(&state, cmd) {
+        Ok(output) => print_output(&output, raw),
+        Err(e) => {
+            eprintln!("Error: {e}");
+            process::exit(1);
         }
     }
 }

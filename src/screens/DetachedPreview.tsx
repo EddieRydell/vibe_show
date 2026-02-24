@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { cmd } from "../commands";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Frame, Show, TickResult } from "../types";
+import type { Frame, Show } from "../types";
 import { usePreviewRenderer } from "../hooks/usePreviewRenderer";
 import { usePreviewSettings } from "../hooks/usePreviewSettings";
 import { usePreviewCamera } from "../hooks/usePreviewCamera";
@@ -113,7 +112,7 @@ export function DetachedPreview() {
 
     const loop = () => {
       if (cancelled) return;
-      invoke<TickResult | null>("tick", { dt: 0 })
+      cmd.tick(0)
         .then((result) => {
           if (cancelled) return;
           if (result) {
@@ -125,7 +124,7 @@ export function DetachedPreview() {
           return cmd.getPlayback().then((pb) => {
             if (cancelled) return;
             setMainPlaying(pb.playing);
-            return invoke<Frame>("get_frame", { time: pb.current_time });
+            return cmd.getFrame(pb.current_time);
           }).then((f) => {
             if (f && !cancelled) setFrame(f);
           });
@@ -179,7 +178,7 @@ export function DetachedPreview() {
 
       const t = currentTime;
 
-      invoke<Frame>("get_frame_filtered", { time: t, effects: selectionEffectsRef.current })
+      cmd.getFrameFiltered(t, selectionEffectsRef.current)
         .then((f) => {
           if (!cancelled) setSelectionFrame(f);
         })

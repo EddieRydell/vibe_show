@@ -39,7 +39,6 @@ export type { Layout } from "../src-tauri/bindings/Layout";
 export type { LayoutShape } from "../src-tauri/bindings/LayoutShape";
 export type { LlmConfigInfo } from "../src-tauri/bindings/LlmConfigInfo";
 export type { LlmProvider } from "../src-tauri/bindings/LlmProvider";
-export type { ChatMode } from "../src-tauri/bindings/ChatMode";
 export type { LlmProviderConfig } from "../src-tauri/bindings/LlmProviderConfig";
 export type { MediaFile } from "../src-tauri/bindings/MediaFile";
 export type { OutputMapping } from "../src-tauri/bindings/OutputMapping";

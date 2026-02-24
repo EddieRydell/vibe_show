@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import type { AnalysisFeatures, AudioAnalysis, PythonEnvStatus } from "../types";
 import { cmd } from "../commands";
 import { formatTimeTransport } from "../utils/formatTime";
@@ -42,13 +41,13 @@ export function AnalysisScreen({ filename, onBack }: Props) {
   // ── Python check on mount + load cached analysis ──────────────────
 
   const checkPython = useCallback(async () => {
-    const status = await invoke<PythonEnvStatus>("get_python_status");
+    const status = await cmd.getPythonStatus();
     setPythonStatus(status);
     return status;
   }, []);
 
   const setupPython = useCallback(async () => {
-    await invoke("setup_python_env");
+    await cmd.setupPythonEnv();
     await checkPython();
   }, [checkPython]);
 
@@ -131,9 +130,7 @@ export function AnalysisScreen({ filename, onBack }: Props) {
 
   const handleAnalyze = useCallback(
     async (features: AnalysisFeatures): Promise<AudioAnalysis> => {
-      const result = await invoke<AudioAnalysis>("analyze_audio", {
-        features,
-      });
+      const result = await cmd.analyzeAudio(features);
       setAnalysis(result);
       return result;
     },

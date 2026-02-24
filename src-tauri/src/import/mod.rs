@@ -8,7 +8,7 @@ use std::fmt;
 use crate::model::color::Color;
 
 // ── Shared Vixen format constants ──────────────────────────────────
-// Centralized so that callers (api.rs, commands.rs, registry handlers)
+// Centralized so that callers (registry handlers, CLI)
 // don't hard-code file/directory names.
 
 /// Directory inside a Vixen 3 project containing system configuration.

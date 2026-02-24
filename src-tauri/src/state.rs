@@ -8,7 +8,6 @@ use parking_lot::Mutex;
 
 use serde::Serialize;
 
-use crate::chat::ChatManager;
 use crate::dispatcher::CommandDispatcher;
 use crate::dsl::compiler::CompiledScript;
 use crate::effects;
@@ -99,8 +98,6 @@ pub struct AppState {
     pub show: Mutex<Show>,
     pub playback: Mutex<PlaybackState>,
     pub dispatcher: Mutex<CommandDispatcher>,
-    pub chat: Mutex<ChatManager>,
-    pub api_port: AtomicU16,
     pub app_config_dir: PathBuf,
     pub settings: Mutex<Option<AppSettings>>,
     pub current_setup: Mutex<Option<String>>,

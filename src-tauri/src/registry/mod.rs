@@ -8,24 +8,27 @@ use serde::{Deserialize, Serialize};
 
 // ── Param types (used in Command enum) ──────────────────────────
 use params::{
-    AddEffectParams, AddTrackParams, BatchEditParams, CheckVixenPreviewFileParams,
-    CompileScriptParams, CompileScriptPreviewParams, ConversationIdParams, CreateSequenceParams,
-    CreateSetupParams, DeleteEffectsParams, DeleteTrackParams, GetAnalysisDetailParams,
-    GetBeatsInRangeParams, GetEffectDetailParams, ImportMediaParams, ImportVixenParams,
-    ImportVixenSequenceParams, ImportVixenSetupParams, InitializeDataDirParams,
-    MoveEffectToTrackParams, NameParams, RenameParams, ScanVixenDirectoryParams, SeekParams,
-    SetGlobalCurveParams, SetGlobalGradientParams, SetLlmConfigParams, SetLoopingParams,
-    SetRegionParams, SlugParams, UpdateEffectParamParams, UpdateEffectTimeRangeParams,
-    UpdateSequenceSettingsParams, UpdateSetupFixturesParams, UpdateSetupLayoutParams,
-    UpdateSetupOutputsParams, WriteScriptParams,
+    AddEffectParams, AddTrackParams, AnalyzeAudioParams, BatchEditParams,
+    CancelOperationParams, CheckVixenPreviewFileParams, CompileScriptParams,
+    CompileScriptPreviewParams, ConversationIdParams, CreateSequenceParams, CreateSetupParams,
+    DeleteEffectsParams, DeleteTrackParams, GetAnalysisDetailParams, GetBeatsInRangeParams,
+    GetEffectDetailParams, GetFrameFilteredParams, GetFrameParams, ImportMediaParams,
+    ImportVixenParams, ImportVixenSequenceParams, ImportVixenSetupParams, InitializeDataDirParams,
+    MoveEffectToTrackParams, NameParams, PreviewScriptFrameParams, PreviewScriptParams,
+    RenameParams, RenderEffectThumbnailParams, ScanVixenDirectoryParams, SeekParams,
+    SendAgentMessageParams, SetGlobalCurveParams, SetGlobalGradientParams,
+    SetLlmConfigParams, SetLoopingParams, SetRegionParams, SlugParams, TickParams,
+    UpdateEffectParamParams, UpdateEffectTimeRangeParams, UpdateSequenceSettingsParams,
+    UpdateSetupFixturesParams, UpdateSetupLayoutParams, UpdateSetupOutputsParams, WriteScriptParams,
 };
 
 // ── Return types (used in CommandResult enum) ───────────────────
 use crate::chat::{ChatHistoryEntry, ConversationSummary};
-use crate::commands::{ScriptCompileResult, ScriptParamInfo};
+use crate::commands::{EffectThumbnail, ScriptCompileResult, ScriptParamInfo, ScriptPreviewData, TickResult};
 use crate::dispatcher::UndoState;
-use crate::import::vixen::VixenDiscovery;
-use crate::model::{AudioAnalysis, ColorGradient, Curve, Show, SongSection};
+use crate::engine::Frame;
+use crate::import::vixen::{VixenDiscovery, VixenImportResult};
+use crate::model::{AudioAnalysis, ColorGradient, Curve, PythonEnvStatus, Show, SongSection};
 use crate::settings::{AppSettings, LlmConfigInfo};
 use crate::setup::{MediaFile, SequenceSummary, Setup, SetupSummary};
 use crate::state::{EffectDetail, EffectInfo, PlaybackInfo};
@@ -37,8 +40,8 @@ use handlers::query::EffectCatalogEntry;
 
 // ── Handler modules (dispatch targets) ──────────────────────────
 use handlers::{
-    analysis, chat, edit, global_lib, import, media, playback, query, script, sequence, settings,
-    setup,
+    agent, analysis, chat, common, edit, global_lib, hot, import, media, playback, python, query,
+    script, sequence, settings, setup,
 };
 
 // ── JsonValue newtype ───────────────────────────────────────────
@@ -71,6 +74,8 @@ pub enum CommandCategory {
     Media,
     Chat,
     Import,
+    Python,
+    Agent,
 }
 
 pub struct CommandInfo {
@@ -108,13 +113,15 @@ impl CommandOutput {
 
 // ── define_commands! macro ──────────────────────────────────────
 
-/// Single source of truth for all commands. Generates 6 artifacts:
+/// Single source of truth for all commands. Generates 8 artifacts:
 /// 1. `Command` enum (serde-tagged, ts-rs exported)
 /// 2. `CommandResult` enum (serde-tagged, ts-rs exported)
 /// 3. `Command::info()` — metadata (name, description, category, undoable)
-/// 4. `Command::dispatch()` — execute against AppState
+/// 4. `Command::dispatch()` — execute sync variants; errors on async
 /// 5. `Command::registry_entries()` — catalog entries with JSON schemas
 /// 6. `Command::from_tool_call()` — deserialize from (name, JSON) pair
+/// 7. `Command::dispatch_async()` — execute ALL variants (feature-gated `tauri-app`)
+/// 8. `Command::is_async()` — returns true for async variants
 macro_rules! define_commands {
     (
         params {
@@ -131,6 +138,20 @@ macro_rules! define_commands {
                 => $nh:path, $nn:literal : $nd:literal ;
             )*
         }
+        async_params {
+            $(
+                [ $apc:expr $(, $apf:ident)? ]
+                $apv:ident ( $app:ty ) $( -> $apr:ty )?
+                => $aph:path, $apn:literal : $apd:literal ;
+            )*
+        }
+        async_no_params {
+            $(
+                [ $anc:expr $(, $anf:ident)? ]
+                $anv:ident $( -> $anr:ty )?
+                => $anh:path, $ann:literal : $and:literal ;
+            )*
+        }
     ) => {
         // ── 1. Command enum ──
         /// Unified command type. Every surface (GUI, CLI, AI, REST, MCP) dispatches
@@ -143,6 +164,8 @@ macro_rules! define_commands {
         pub enum Command {
             $( $pv($pp), )*
             $( $nv, )*
+            $( $apv($app), )*
+            $( $anv, )*
         }
 
         // ── 2. CommandResult enum ──
@@ -155,6 +178,8 @@ macro_rules! define_commands {
         pub enum CommandResult {
             $( $pv $( ($pr) )?, )*
             $( $nv $( ($nr) )?, )*
+            $( $apv $( ($apr) )?, )*
+            $( $anv $( ($anr) )?, )*
         }
 
         // ── 3. Command::info() ──
@@ -173,11 +198,23 @@ macro_rules! define_commands {
                         category: $nc,
                         undoable: define_commands!(@flag $($nf)?),
                     }, )*
+                    $( Command::$apv(_) => CommandInfo {
+                        name: $apn,
+                        description: $apd,
+                        category: $apc,
+                        undoable: define_commands!(@flag $($apf)?),
+                    }, )*
+                    $( Command::$anv => CommandInfo {
+                        name: $ann,
+                        description: $and,
+                        category: $anc,
+                        undoable: define_commands!(@flag $($anf)?),
+                    }, )*
                 }
             }
         }
 
-        // ── 4. Command::dispatch() ──
+        // ── 4. Command::dispatch() — sync only ──
         impl Command {
             pub(crate) fn dispatch(
                 self,
@@ -186,6 +223,18 @@ macro_rules! define_commands {
                 match self {
                     $( Command::$pv(p) => $ph(state, p), )*
                     $( Command::$nv => $nh(state), )*
+                    $( Command::$apv(_) => Err(crate::error::AppError::ApiError {
+                        message: format!(
+                            "Command '{}' requires async dispatch",
+                            $apn,
+                        ),
+                    }), )*
+                    $( Command::$anv => Err(crate::error::AppError::ApiError {
+                        message: format!(
+                            "Command '{}' requires async dispatch",
+                            $ann,
+                        ),
+                    }), )*
                 }
             }
         }
@@ -212,6 +261,24 @@ macro_rules! define_commands {
                         },
                         catalog::empty_object_schema(),
                     ), )*
+                    $( catalog::entry(
+                        CommandInfo {
+                            name: $apn,
+                            description: $apd,
+                            category: $apc,
+                            undoable: define_commands!(@flag $($apf)?),
+                        },
+                        catalog::schema_value::<$app>(),
+                    ), )*
+                    $( catalog::entry(
+                        CommandInfo {
+                            name: $ann,
+                            description: $and,
+                            category: $anc,
+                            undoable: define_commands!(@flag $($anf)?),
+                        },
+                        catalog::empty_object_schema(),
+                    ), )*
                 ]
             }
         }
@@ -225,7 +292,42 @@ macro_rules! define_commands {
                 match name {
                     $( $pn => Ok(Command::$pv(catalog::de(input)?)), )*
                     $( $nn => Ok(Command::$nv), )*
+                    $( $apn => Ok(Command::$apv(catalog::de(input)?)), )*
+                    $( $ann => Ok(Command::$anv), )*
                     _ => Err(format!("Unknown command: {name}")),
+                }
+            }
+        }
+
+        // ── 7. Command::dispatch_async() — all variants (feature-gated) ──
+        #[cfg(feature = "tauri-app")]
+        impl Command {
+            pub(crate) async fn dispatch_async(
+                self,
+                state: std::sync::Arc<crate::state::AppState>,
+                app: Option<tauri::AppHandle>,
+            ) -> Result<CommandOutput, crate::error::AppError> {
+                match self {
+                    // Sync params — run inline
+                    $( Command::$pv(p) => $ph(&state, p), )*
+                    // Sync no_params — run inline
+                    $( Command::$nv => $nh(&state), )*
+                    // Async params — .await
+                    $( Command::$apv(p) => $aph(state, app, p).await, )*
+                    // Async no_params — .await
+                    $( Command::$anv => $anh(state, app).await, )*
+                }
+            }
+        }
+
+        // ── 8. Command::is_async() ──
+        impl Command {
+            pub fn is_async(&self) -> bool {
+                match self {
+                    $( Command::$pv(_) => false, )*
+                    $( Command::$nv => false, )*
+                    $( Command::$apv(_) => true, )*
+                    $( Command::$anv => true, )*
                 }
             }
         }
@@ -406,7 +508,7 @@ define_commands! {
         => sequence::create_sequence, "create_sequence": "Create a new sequence in the current setup.";
 
         [CommandCategory::Sequence]
-        OpenSequence(SlugParams)
+        OpenSequence(SlugParams) -> Box<Show>
         => sequence::open_sequence, "open_sequence": "Open a sequence by slug. Loads it into the editor.";
 
         [CommandCategory::Sequence]
@@ -455,6 +557,36 @@ define_commands! {
         [CommandCategory::Import]
         CheckVixenPreviewFile(CheckVixenPreviewFileParams) -> usize
         => import::check_vixen_preview_file, "check_vixen_preview_file": "Validate a Vixen preview file and return item count.";
+
+        // ── Hot-path (7) ────────────────────────────────────────
+        [CommandCategory::Playback]
+        Tick(TickParams) -> Option<TickResult>
+        => hot::tick, "tick": "Advance playback by one frame tick. Returns frame if playing.";
+
+        [CommandCategory::Query]
+        GetFrame(GetFrameParams) -> Frame
+        => hot::get_frame, "get_frame": "Evaluate and return a single frame at the given time.";
+
+        [CommandCategory::Query]
+        GetFrameFiltered(GetFrameFilteredParams) -> Frame
+        => hot::get_frame_filtered, "get_frame_filtered": "Evaluate a frame rendering only specified effects.";
+
+        [CommandCategory::Query]
+        RenderEffectThumbnail(RenderEffectThumbnailParams) -> Option<EffectThumbnail>
+        => hot::render_effect_thumbnail, "render_effect_thumbnail": "Pre-render an effect as a thumbnail for the timeline.";
+
+        [CommandCategory::Script]
+        PreviewScript(PreviewScriptParams) -> ScriptPreviewData
+        => hot::preview_script, "preview_script": "Generate a spacetime heatmap preview for a compiled script.";
+
+        [CommandCategory::Script]
+        PreviewScriptFrame(PreviewScriptFrameParams) -> Vec<[u8; 4]>
+        => hot::preview_script_frame, "preview_script_frame": "Evaluate a single frame of a compiled script.";
+
+        // ── Cancellation (1) ────────────────────────────────────
+        [CommandCategory::Settings]
+        CancelOperation(CancelOperationParams) -> bool
+        => common::cancel_operation, "cancel_operation": "Cancel a long-running operation by name.";
     }
     no_params {
         // ── Playback (6) ────────────────────────────────────────
@@ -494,6 +626,10 @@ define_commands! {
         [CommandCategory::Query]
         ListEffects -> Vec<EffectInfo>
         => query::list_effects, "list_effects": "List all available effect types with parameter schemas.";
+
+        [CommandCategory::Query]
+        DescribeShow -> String
+        => query::describe_show, "describe_show": "Get a human-readable description of the current show and sequence.";
 
         // ── Analysis (3) ────────────────────────────────────────
         [CommandCategory::Analysis]
@@ -536,10 +672,6 @@ define_commands! {
         => settings::get_settings, "get_settings": "Get the application settings.";
 
         [CommandCategory::Settings]
-        GetApiPort -> u16
-        => settings::get_api_port, "get_api_port": "Get the HTTP API server port.";
-
-        [CommandCategory::Settings]
         GetLlmConfig -> LlmConfigInfo
         => settings::get_llm_config, "get_llm_config": "Get the current LLM configuration (key is masked).";
 
@@ -565,20 +697,10 @@ define_commands! {
         ListMedia -> Vec<MediaFile>
         => media::list_media, "list_media": "List all media files in the current setup.";
 
-        // ── Chat (6) ────────────────────────────────────────────
-        [CommandCategory::Chat]
-        GetChatHistory -> Vec<ChatHistoryEntry>
-        => chat::get_chat_history, "get_chat_history": "Get the chat history for the current sequence.";
-
+        // ── Chat (4) ────────────────────────────────────────────
         [CommandCategory::Chat]
         GetAgentChatHistory -> Vec<ChatHistoryEntry>
         => chat::get_agent_chat_history, "get_agent_chat_history": "Get the agent chat history for the current sequence.";
-
-        [CommandCategory::Chat]
-        ClearChat => chat::clear_chat, "clear_chat": "Clear the chat history.";
-
-        [CommandCategory::Chat]
-        StopChat => chat::stop_chat, "stop_chat": "Cancel the in-flight chat request.";
 
         [CommandCategory::Chat]
         ListAgentConversations -> Vec<ConversationSummary>
@@ -587,5 +709,48 @@ define_commands! {
         [CommandCategory::Chat]
         NewAgentConversation -> NewConversationResult
         => chat::new_agent_conversation, "new_agent_conversation": "Archive the current agent conversation and start a new one.";
+    }
+    async_params {
+        // ── Import (1) ──────────────────────────────────────────
+        [CommandCategory::Import]
+        ExecuteVixenImport(crate::import::vixen::VixenImportConfig) -> VixenImportResult
+        => import::execute_vixen_import, "execute_vixen_import": "Execute a full Vixen import from wizard configuration.";
+
+        // ── Analysis (1) ────────────────────────────────────────
+        [CommandCategory::Analysis]
+        AnalyzeAudio(AnalyzeAudioParams) -> Box<AudioAnalysis>
+        => analysis::analyze_audio, "analyze_audio": "Run audio analysis on the current sequence's audio file.";
+
+        // ── Agent (1) ───────────────────────────────────────────
+        [CommandCategory::Agent]
+        SendAgentMessage(SendAgentMessageParams)
+        => agent::send_agent_message, "send_agent_message": "Send a message to the agent sidecar.";
+    }
+    async_no_params {
+        // ── Python (4) ──────────────────────────────────────────
+        [CommandCategory::Python]
+        GetPythonStatus -> PythonEnvStatus
+        => python::get_python_status, "get_python_status": "Check the Python analysis environment status.";
+
+        [CommandCategory::Python]
+        SetupPythonEnv
+        => python::setup_python_env, "setup_python_env": "Bootstrap the Python environment.";
+
+        [CommandCategory::Python]
+        StartPythonSidecar -> u16
+        => python::start_python_sidecar, "start_python_sidecar": "Start the Python analysis sidecar. Returns port.";
+
+        [CommandCategory::Python]
+        StopPythonSidecar
+        => python::stop_python_sidecar, "stop_python_sidecar": "Stop the Python analysis sidecar.";
+
+        // ── Agent (2) ───────────────────────────────────────────
+        [CommandCategory::Agent]
+        CancelAgentMessage
+        => agent::cancel_agent_message, "cancel_agent_message": "Cancel the in-flight agent query.";
+
+        [CommandCategory::Agent]
+        ClearAgentSession
+        => agent::clear_agent_session, "clear_agent_session": "Clear the agent session and reset conversation context.";
     }
 }

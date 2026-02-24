@@ -42,7 +42,7 @@ pub struct VixenMediaInfo {
 }
 
 /// What the user selected for import (sent from frontend).
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[ts(export)]
 pub struct VixenImportConfig {
     pub vixen_dir: String,

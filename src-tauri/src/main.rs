@@ -8,8 +8,6 @@ use parking_lot::Mutex;
 
 use tauri::Manager;
 
-use vibe_lights::api;
-use vibe_lights::chat::ChatManager;
 use vibe_lights::commands;
 use vibe_lights::dispatcher::CommandDispatcher;
 use vibe_lights::model::Show;
@@ -53,8 +51,6 @@ fn main() {
                     looping: false,
                 }),
                 dispatcher: Mutex::new(CommandDispatcher::new()),
-                chat: Mutex::new(ChatManager::new()),
-                api_port: AtomicU16::new(0),
                 app_config_dir: app_config_dir.clone(),
                 settings: Mutex::new(loaded_settings),
                 current_setup: Mutex::new(None),
@@ -72,56 +68,14 @@ fn main() {
                 cancellation: CancellationRegistry::new(),
             });
 
-            // Load global chat history
-            vibe_lights::chat::load_chat_history(&state);
+            // Load agent chat history
             vibe_lights::chat::load_agent_chats(&state);
 
             app.manage(state.clone());
 
-            // Start the HTTP API server on a background task
-            let api_state = state.clone();
-            tauri::async_runtime::spawn(async move {
-                match api::start_api_server(api_state.clone()).await {
-                    Ok(port) => {
-                        api_state.api_port.store(port, Ordering::Relaxed);
-
-                        // Write port file to app config dir for external tool discovery
-                        let port_file = vibe_lights::paths::port_file_path(&app_config_dir);
-                        let _ = std::fs::write(&port_file, port.to_string());
-
-                        eprintln!("[VibeLights] API server listening on http://127.0.0.1:{port}");
-                    }
-                    Err(e) => {
-                        eprintln!("[VibeLights] Failed to start API server: {e}");
-                    }
-                }
-            });
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // Async commands
-            commands::send_chat_message,
-            commands::send_agent_message,
-            commands::cancel_agent_message,
-            commands::clear_agent_session,
-            commands::open_sequence,
-            commands::scan_vixen_directory,
-            commands::execute_vixen_import,
-            commands::analyze_audio,
-            commands::get_python_status,
-            commands::setup_python_env,
-            commands::cancel_operation,
-            commands::start_python_sidecar,
-            commands::stop_python_sidecar,
-            // Binary/hot-path commands
-            commands::tick,
-            commands::get_frame,
-            commands::get_frame_filtered,
-            commands::render_effect_thumbnail,
-            commands::preview_script,
-            commands::preview_script_frame,
-            // Unified registry
             commands::exec,
             commands::get_command_registry,
         ])
@@ -131,9 +85,8 @@ fn main() {
             if let tauri::RunEvent::Exit = event {
                 let state = app.state::<Arc<AppState>>();
 
-                // Persist chat history before shutdown
+                // Persist agent chat history before shutdown
                 vibe_lights::chat::save_agent_chats(&state);
-                vibe_lights::chat::save_chat_history(&state);
 
                 // Stop Python sidecar on app exit
                 let port = state.python_port.load(Ordering::Relaxed);

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type { EffectThumbnail } from "../types";
+import { cmd } from "../commands";
 
 interface EffectBlockProps {
   sequenceIndex: number;
@@ -47,13 +46,13 @@ export function EffectBlock({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    invoke<EffectThumbnail | null>("render_effect_thumbnail", {
+    cmd.renderEffectThumbnail(
       sequenceIndex,
       trackIndex,
       effectIndex,
-      timeSamples: THUMBNAIL_TIME_SAMPLES,
-      pixelRows: THUMBNAIL_PIXEL_ROWS,
-    })
+      THUMBNAIL_TIME_SAMPLES,
+      THUMBNAIL_PIXEL_ROWS,
+    )
       .then((thumb) => {
         if (!thumb) return;
         const ctx = canvas.getContext("2d");

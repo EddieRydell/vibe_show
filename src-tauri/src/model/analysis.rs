@@ -30,7 +30,7 @@ pub struct AudioAnalysis {
 // ── Feature flags ─────────────────────────────────────────────────
 
 /// Boolean flags for which analysis features to run or were completed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[cfg_attr(feature = "tauri-app", derive(TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
 pub struct AnalysisFeatures {

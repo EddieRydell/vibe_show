@@ -1,11 +1,14 @@
+pub mod agent;
 pub mod analysis;
 pub mod chat;
 pub mod common;
 pub mod edit;
 pub mod global_lib;
+pub mod hot;
 pub mod import;
 pub mod media;
 pub mod playback;
+pub mod python;
 pub mod setup;
 pub mod query;
 pub mod script;
