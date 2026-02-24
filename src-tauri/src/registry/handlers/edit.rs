@@ -10,7 +10,7 @@ use crate::registry::params::{
     MoveEffectToTrackParams, UpdateEffectParamParams, UpdateEffectTimeRangeParams,
     UpdateSequenceSettingsParams,
 };
-use crate::registry::CommandOutput;
+use crate::registry::{CommandOutput, CommandResult};
 use crate::state::AppState;
 
 // ── Validation helpers ──────────────────────────────────────────
@@ -91,17 +91,21 @@ pub fn add_effect(state: &Arc<AppState>, p: AddEffectParams) -> Result<CommandOu
         opacity: p.opacity,
     };
     let result = dispatcher.execute(&mut show, &cmd)?;
+    let index = match result {
+        crate::dispatcher::CommandResult::Index(i) => i,
+        _ => 0,
+    };
     let track_name = show
         .sequences
         .get(seq_idx)
         .and_then(|s| s.tracks.get(p.track_index))
         .map_or("unknown", |t| t.name.as_str());
-    Ok(CommandOutput::data(
+    Ok(CommandOutput::new(
         format!(
-            "Added {:?} effect to track {} (\"{}\") at {:.1}s-{:.1}s. Result: {:?}.",
-            p.kind, p.track_index, track_name, p.start, p.end, result
+            "Added {:?} effect to track {} (\"{}\") at {:.1}s-{:.1}s (index {index}).",
+            p.kind, p.track_index, track_name, p.start, p.end
         ),
-        serde_json::json!({ "result": format!("{result:?}") }),
+        CommandResult::AddEffect(index),
     ))
 }
 
@@ -123,7 +127,7 @@ pub fn delete_effects(
         targets,
     };
     dispatcher.execute(&mut show, &cmd)?;
-    Ok(CommandOutput::unit(format!("Deleted {n} effect(s).")))
+    Ok(CommandOutput::new(format!("Deleted {n} effect(s)."), CommandResult::DeleteEffects))
 }
 
 pub fn update_effect_param(
@@ -142,7 +146,7 @@ pub fn update_effect_param(
         value: p.value,
     };
     dispatcher.execute(&mut show, &cmd)?;
-    Ok(CommandOutput::unit(format!("Updated param \"{key_str}\".")))
+    Ok(CommandOutput::new(format!("Updated param \"{key_str}\"."), CommandResult::UpdateEffectParam))
 }
 
 pub fn update_effect_time_range(
@@ -162,10 +166,10 @@ pub fn update_effect_time_range(
         end: p.end,
     };
     dispatcher.execute(&mut show, &cmd)?;
-    Ok(CommandOutput::unit(format!(
-        "Updated time range to {:.1}s-{:.1}s.",
-        p.start, p.end
-    )))
+    Ok(CommandOutput::new(
+        format!("Updated time range to {:.1}s-{:.1}s.", p.start, p.end),
+        CommandResult::UpdateEffectTimeRange,
+    ))
 }
 
 pub fn add_track(state: &Arc<AppState>, p: AddTrackParams) -> Result<CommandOutput, AppError> {
@@ -189,12 +193,16 @@ pub fn add_track(state: &Arc<AppState>, p: AddTrackParams) -> Result<CommandOutp
         target: EffectTarget::Fixtures(vec![FixtureId(p.fixture_id)]),
     };
     let result = dispatcher.execute(&mut show, &cmd)?;
-    Ok(CommandOutput::data(
+    let index = match result {
+        crate::dispatcher::CommandResult::Index(i) => i,
+        _ => 0,
+    };
+    Ok(CommandOutput::new(
         format!(
-            "Created track \"{}\" targeting {}. Result: {:?}.",
-            p.name, fixture_name, result
+            "Created track \"{}\" targeting {} (index {index}).",
+            p.name, fixture_name
         ),
-        serde_json::json!({ "result": format!("{result:?}") }),
+        CommandResult::AddTrack(index),
     ))
 }
 
@@ -210,10 +218,10 @@ pub fn delete_track(
         track_index: p.track_index,
     };
     dispatcher.execute(&mut show, &cmd)?;
-    Ok(CommandOutput::unit(format!(
-        "Deleted track {}.",
-        p.track_index
-    )))
+    Ok(CommandOutput::new(
+        format!("Deleted track {}.", p.track_index),
+        CommandResult::DeleteTrack,
+    ))
 }
 
 pub fn move_effect_to_track(
@@ -230,12 +238,16 @@ pub fn move_effect_to_track(
         to_track: p.to_track,
     };
     let result = dispatcher.execute(&mut show, &cmd)?;
-    Ok(CommandOutput::data(
+    let index = match result {
+        crate::dispatcher::CommandResult::Index(i) => i,
+        _ => 0,
+    };
+    Ok(CommandOutput::new(
         format!(
-            "Moved effect from track {} to track {}. Result: {:?}.",
-            p.from_track, p.to_track, result
+            "Moved effect from track {} to track {} (index {index}).",
+            p.from_track, p.to_track
         ),
-        serde_json::json!({ "result": format!("{result:?}") }),
+        CommandResult::MoveEffectToTrack(index),
     ))
 }
 
@@ -261,7 +273,7 @@ pub fn update_sequence_settings(
         frame_rate: p.frame_rate,
     };
     dispatcher.execute(&mut show, &cmd)?;
-    Ok(CommandOutput::unit("Updated sequence settings."))
+    Ok(CommandOutput::new("Updated sequence settings.", CommandResult::UpdateSequenceSettings))
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -337,9 +349,10 @@ pub fn batch_edit(state: &Arc<AppState>, p: BatchEditParams) -> Result<CommandOu
     let mut dispatcher = state.dispatcher.lock();
     let mut show = state.show.lock();
     dispatcher.execute(&mut show, &batch)?;
-    Ok(CommandOutput::unit(format!(
-        "Executed {n} operations as single undoable batch: \"{description}\"."
-    )))
+    Ok(CommandOutput::new(
+        format!("Executed {n} operations as single undoable batch: \"{description}\"."),
+        CommandResult::BatchEdit,
+    ))
 }
 
 /// Parse a single command from a batch_edit entry into an EditCommand.

@@ -6,7 +6,7 @@ pub mod global_lib;
 pub mod import;
 pub mod media;
 pub mod playback;
-pub mod profile;
+pub mod setup;
 pub mod query;
 pub mod script;
 pub mod sequence;

@@ -6,6 +6,6 @@ import type { Layout } from "./Layout";
 import type { Patch } from "./Patch";
 
 /**
- * Full profile data loaded into memory.
+ * Full setup data loaded into memory.
  */
-export type Profile = { name: string, slug: string, fixtures: Array<FixtureDef>, groups: Array<FixtureGroup>, controllers: Array<Controller>, patches: Array<Patch>, layout: Layout, };
+export type Setup = { name: string, slug: string, fixtures: Array<FixtureDef>, groups: Array<FixtureGroup>, controllers: Array<Controller>, patches: Array<Patch>, layout: Layout, };

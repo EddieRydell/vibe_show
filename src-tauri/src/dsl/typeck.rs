@@ -470,7 +470,7 @@ impl TypeContext {
                 for (i, arg) in args.iter().enumerate() {
                     let mut typed_arg = self.check_expr(arg)?;
                     // Auto-promote int to float for builtin params
-                    if builtin.params[i] == TypeName::Float && typed_arg.ty == TypeName::Int {
+                    if builtin.params[i].1 == TypeName::Float && typed_arg.ty == TypeName::Int {
                         typed_arg = Self::coerce_to_float(typed_arg);
                     }
                     typed_args.push(typed_arg);

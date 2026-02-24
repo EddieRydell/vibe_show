@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { cmd, type ConversationSummary } from "../commands";
+import { cmd } from "../commands";
+import type { ConversationSummary } from "../types";
 import { MessageSquare, Send, X, Trash2, Loader2, Key, Check, History, Plus } from "lucide-react";
 import { useAppShell } from "./ScreenShell";
 import Markdown from "react-markdown";
@@ -31,13 +32,11 @@ interface ChatPanelProps {
 function buildScreenContext(screen: AppScreen): string {
   switch (screen.kind) {
     case "editor":
-      return `editor (profile: "${screen.profileSlug}", sequence: "${screen.sequenceSlug}")`;
+      return `editor (setup: "${screen.setupSlug}", sequence: "${screen.sequenceSlug}")`;
     case "script":
-      return `script editor (profile: "${screen.profileSlug}", script: "${screen.scriptName ?? "new"}")`;
+      return `script editor (script: "${screen.scriptName ?? "new"}")`;
     case "analysis":
-      return `analysis (profile: "${screen.profileSlug}", file: "${screen.filename}")`;
-    case "profile":
-      return `profile browser (profile: "${screen.slug}")`;
+      return `analysis (setup: "${screen.setupSlug}", file: "${screen.filename}")`;
     case "home":
       return "home screen";
     case "settings":
@@ -73,7 +72,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
   }, [open]);
 
   // Load persisted chat history on mount and when chat mode changes.
-  // Chat is global — not tied to sequences or profiles.
+  // Chat is global — not tied to sequences or setups.
   useEffect(() => {
     refreshConversations();
     if (chatMode === "Agent") {

@@ -2,13 +2,25 @@
 
 use std::sync::Arc;
 
+use serde::Serialize;
+use ts_rs::TS;
+
 use crate::error::AppError;
-use crate::profile;
+use crate::setup;
 use crate::registry::params::{
     NameParams, RenameParams, SetGlobalCurveParams, SetGlobalGradientParams, WriteScriptParams,
 };
-use crate::registry::CommandOutput;
+use crate::registry::{CommandOutput, CommandResult};
 use crate::state::{get_data_dir, AppState};
+
+/// Typed return for ListGlobalLibrary.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct GlobalLibrarySummary {
+    pub gradients: Vec<String>,
+    pub curves: Vec<String>,
+    pub scripts: Vec<String>,
+}
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -16,7 +28,7 @@ use crate::state::{get_data_dir, AppState};
 pub(crate) fn persist_inner(state: &Arc<AppState>) {
     if let Ok(data_dir) = get_data_dir(state) {
         let libs = state.global_libraries.lock();
-        let _ = profile::save_global_libraries(&data_dir, &libs);
+        let _ = setup::save_global_libraries(&data_dir, &libs);
     }
 }
 
@@ -25,9 +37,9 @@ pub(crate) fn persist_inner(state: &Arc<AppState>) {
 pub fn list_global_gradients(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let libs = state.global_libraries.lock();
     let gradients: Vec<_> = libs.gradients.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    Ok(CommandOutput::json(
+    Ok(CommandOutput::new(
         format!("{} gradients.", gradients.len()),
-        &gradients,
+        CommandResult::ListGlobalGradients(gradients),
     ))
 }
 
@@ -37,10 +49,10 @@ pub fn set_global_gradient(
 ) -> Result<CommandOutput, AppError> {
     state.global_libraries.lock().gradients.insert(p.name.clone(), p.gradient);
     persist_inner(state);
-    Ok(CommandOutput::unit(format!(
-        "Gradient \"{}\" saved.",
-        p.name
-    )))
+    Ok(CommandOutput::new(
+        format!("Gradient \"{}\" saved.", p.name),
+        CommandResult::SetGlobalGradient,
+    ))
 }
 
 pub fn delete_global_gradient(
@@ -49,10 +61,10 @@ pub fn delete_global_gradient(
 ) -> Result<CommandOutput, AppError> {
     state.global_libraries.lock().gradients.remove(&p.name);
     persist_inner(state);
-    Ok(CommandOutput::unit(format!(
-        "Gradient \"{}\" deleted.",
-        p.name
-    )))
+    Ok(CommandOutput::new(
+        format!("Gradient \"{}\" deleted.", p.name),
+        CommandResult::DeleteGlobalGradient,
+    ))
 }
 
 pub fn rename_global_gradient(
@@ -66,10 +78,10 @@ pub fn rename_global_gradient(
         }
     }
     persist_inner(state);
-    Ok(CommandOutput::unit(format!(
-        "Gradient renamed to \"{}\".",
-        p.new_name
-    )))
+    Ok(CommandOutput::new(
+        format!("Gradient renamed to \"{}\".", p.new_name),
+        CommandResult::RenameGlobalGradient,
+    ))
 }
 
 // ── Curves ───────────────────────────────────────────────────────
@@ -77,9 +89,9 @@ pub fn rename_global_gradient(
 pub fn list_global_curves(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let libs = state.global_libraries.lock();
     let curves: Vec<_> = libs.curves.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    Ok(CommandOutput::json(
+    Ok(CommandOutput::new(
         format!("{} curves.", curves.len()),
-        &curves,
+        CommandResult::ListGlobalCurves(curves),
     ))
 }
 
@@ -89,10 +101,10 @@ pub fn set_global_curve(
 ) -> Result<CommandOutput, AppError> {
     state.global_libraries.lock().curves.insert(p.name.clone(), p.curve);
     persist_inner(state);
-    Ok(CommandOutput::unit(format!(
-        "Curve \"{}\" saved.",
-        p.name
-    )))
+    Ok(CommandOutput::new(
+        format!("Curve \"{}\" saved.", p.name),
+        CommandResult::SetGlobalCurve,
+    ))
 }
 
 pub fn delete_global_curve(
@@ -101,10 +113,10 @@ pub fn delete_global_curve(
 ) -> Result<CommandOutput, AppError> {
     state.global_libraries.lock().curves.remove(&p.name);
     persist_inner(state);
-    Ok(CommandOutput::unit(format!(
-        "Curve \"{}\" deleted.",
-        p.name
-    )))
+    Ok(CommandOutput::new(
+        format!("Curve \"{}\" deleted.", p.name),
+        CommandResult::DeleteGlobalCurve,
+    ))
 }
 
 pub fn rename_global_curve(
@@ -118,10 +130,10 @@ pub fn rename_global_curve(
         }
     }
     persist_inner(state);
-    Ok(CommandOutput::unit(format!(
-        "Curve renamed to \"{}\".",
-        p.new_name
-    )))
+    Ok(CommandOutput::new(
+        format!("Curve renamed to \"{}\".", p.new_name),
+        CommandResult::RenameGlobalCurve,
+    ))
 }
 
 // ── Scripts ──────────────────────────────────────────────────────
@@ -132,10 +144,10 @@ pub fn set_global_script(
 ) -> Result<CommandOutput, AppError> {
     state.global_libraries.lock().scripts.insert(p.name.clone(), p.source);
     persist_inner(state);
-    Ok(CommandOutput::unit(format!(
-        "Script \"{}\" saved.",
-        p.name
-    )))
+    Ok(CommandOutput::new(
+        format!("Script \"{}\" saved.", p.name),
+        CommandResult::SetGlobalScript,
+    ))
 }
 
 pub fn compile_global_script(
@@ -147,22 +159,20 @@ pub fn compile_global_script(
         state.global_libraries.lock().scripts.insert(p.name, p.source);
         persist_inner(state);
     }
-    Ok(super::common::compile_result_output(&result))
+    let msg = if result.success { "Compiled and saved." } else { "Compile failed." };
+    Ok(CommandOutput::new(msg, CommandResult::CompileGlobalScript(result)))
 }
 
 /// List all gradients, curves, and scripts in the global library.
 pub fn list_global_library(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let libs = state.global_libraries.lock();
-    let gradients: Vec<&String> = libs.gradients.keys().collect();
-    let curves: Vec<&String> = libs.curves.keys().collect();
-    let scripts: Vec<&String> = libs.scripts.keys().collect();
-    let data = serde_json::json!({
-        "gradients": gradients,
-        "curves": curves,
-        "scripts": scripts,
-    });
-    Ok(CommandOutput::data(
-        serde_json::to_string(&data).unwrap_or_default(),
-        data,
+    let summary = GlobalLibrarySummary {
+        gradients: libs.gradients.keys().cloned().collect(),
+        curves: libs.curves.keys().cloned().collect(),
+        scripts: libs.scripts.keys().cloned().collect(),
+    };
+    Ok(CommandOutput::new(
+        serde_json::to_string(&summary).unwrap_or_default(),
+        CommandResult::ListGlobalLibrary(summary),
     ))
 }

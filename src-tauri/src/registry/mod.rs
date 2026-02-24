@@ -6,137 +6,52 @@ pub mod reference;
 
 use serde::{Deserialize, Serialize};
 
+// ── Param types (used in Command enum) ──────────────────────────
 use params::{
     AddEffectParams, AddTrackParams, BatchEditParams, CheckVixenPreviewFileParams,
-    CompileScriptParams, CompileScriptPreviewParams, ConversationIdParams, CreateProfileParams,
-    CreateSequenceParams, DeleteEffectsParams, DeleteTrackParams, GetAnalysisDetailParams,
+    CompileScriptParams, CompileScriptPreviewParams, ConversationIdParams, CreateSequenceParams,
+    CreateSetupParams, DeleteEffectsParams, DeleteTrackParams, GetAnalysisDetailParams,
     GetBeatsInRangeParams, GetEffectDetailParams, ImportMediaParams, ImportVixenParams,
-    ImportVixenProfileParams, ImportVixenSequenceParams, InitializeDataDirParams,
-    MoveEffectToTrackParams, NameParams, RenameParams,
-    ScanVixenDirectoryParams, SeekParams,
-    SetLlmConfigParams, SetLoopingParams, SetGlobalCurveParams, SetGlobalGradientParams,
+    ImportVixenSequenceParams, ImportVixenSetupParams, InitializeDataDirParams,
+    MoveEffectToTrackParams, NameParams, RenameParams, ScanVixenDirectoryParams, SeekParams,
+    SetGlobalCurveParams, SetGlobalGradientParams, SetLlmConfigParams, SetLoopingParams,
     SetRegionParams, SlugParams, UpdateEffectParamParams, UpdateEffectTimeRangeParams,
-    UpdateProfileFixturesParams, UpdateProfileLayoutParams, UpdateProfileSetupParams,
-    UpdateSequenceSettingsParams, WriteScriptParams,
+    UpdateSequenceSettingsParams, UpdateSetupFixturesParams, UpdateSetupLayoutParams,
+    UpdateSetupOutputsParams, WriteScriptParams,
 };
 
-// ── Command enum ────────────────────────────────────────────────
+// ── Return types (used in CommandResult enum) ───────────────────
+use crate::chat::{ChatHistoryEntry, ConversationSummary};
+use crate::commands::{ScriptCompileResult, ScriptParamInfo};
+use crate::dispatcher::UndoState;
+use crate::import::vixen::VixenDiscovery;
+use crate::model::{AudioAnalysis, ColorGradient, Curve, Show, SongSection};
+use crate::settings::{AppSettings, LlmConfigInfo};
+use crate::setup::{MediaFile, SequenceSummary, Setup, SetupSummary};
+use crate::state::{EffectDetail, EffectInfo, PlaybackInfo};
 
-/// Unified command type. Every surface (GUI, CLI, AI, REST, MCP) dispatches
-/// through the same executor. Adding a variant causes compiler errors until
-/// it's fully handled.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+use handlers::analysis::{AnalysisSummary, BeatsInRange};
+use handlers::chat::NewConversationResult;
+use handlers::global_lib::GlobalLibrarySummary;
+use handlers::query::EffectCatalogEntry;
+
+// ── Handler modules (dispatch targets) ──────────────────────────
+use handlers::{
+    analysis, chat, edit, global_lib, import, media, playback, query, script, sequence, settings,
+    setup,
+};
+
+// ── JsonValue newtype ───────────────────────────────────────────
+
+/// Transparent newtype for `serde_json::Value` with a ts-rs override.
+/// Used for `GetAnalysisDetail` which returns dynamic JSON.
+#[derive(Debug, Clone, Serialize)]
+#[serde(transparent)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
-#[cfg_attr(feature = "tauri-app", ts(export))]
-#[serde(tag = "command", content = "params")]
-pub enum Command {
-    // ── Edit (undoable) ─────────────────────────────────────
-    AddEffect(AddEffectParams),
-    DeleteEffects(DeleteEffectsParams),
-    UpdateEffectParam(UpdateEffectParamParams),
-    UpdateEffectTimeRange(UpdateEffectTimeRangeParams),
-    AddTrack(AddTrackParams),
-    DeleteTrack(DeleteTrackParams),
-    MoveEffectToTrack(MoveEffectToTrackParams),
-    UpdateSequenceSettings(UpdateSequenceSettingsParams),
-    BatchEdit(BatchEditParams),
-
-    // ── Playback ────────────────────────────────────────────
-    Play,
-    Pause,
-    Seek(SeekParams),
-    Undo,
-    Redo,
-    GetPlayback,
-    SetRegion(SetRegionParams),
-    SetLooping(SetLoopingParams),
-    GetUndoState,
-
-    // ── Query ───────────────────────────────────────────────
-    GetShow,
-    GetEffectCatalog,
-    GetDesignGuide,
-    ListEffects,
-    GetEffectDetail(GetEffectDetailParams),
-
-    // ── Analysis ────────────────────────────────────────────
-    GetAnalysisSummary,
-    GetBeatsInRange(GetBeatsInRangeParams),
-    GetSections,
-    GetAnalysisDetail(GetAnalysisDetailParams),
-    GetAnalysis,
-
-    // ── Library (global) ────────────────────────────────────
-    ListGlobalLibrary,
-    ListGlobalGradients,
-    SetGlobalGradient(SetGlobalGradientParams),
-    DeleteGlobalGradient(NameParams),
-    RenameGlobalGradient(RenameParams),
-    ListGlobalCurves,
-    SetGlobalCurve(SetGlobalCurveParams),
-    DeleteGlobalCurve(NameParams),
-    RenameGlobalCurve(RenameParams),
-
-    // ── Script (global) ────────────────────────────────────
-    GetDslReference,
-    WriteGlobalScript(WriteScriptParams),
-    SetGlobalScript(WriteScriptParams),
-    CompileGlobalScript(WriteScriptParams),
-    ListGlobalScripts,
-    GetGlobalScriptSource(NameParams),
-    DeleteGlobalScript(NameParams),
-    CompileScript(CompileScriptParams),
-    CompileScriptPreview(CompileScriptPreviewParams),
-    RenameGlobalScript(RenameParams),
-    GetScriptParams(NameParams),
-
-    // ── Settings ────────────────────────────────────────────
-    GetSettings,
-    GetApiPort,
-    InitializeDataDir(InitializeDataDirParams),
-    SetLlmConfig(SetLlmConfigParams),
-    GetLlmConfig,
-
-    // ── Profile CRUD ────────────────────────────────────────
-    ListProfiles,
-    CreateProfile(CreateProfileParams),
-    OpenProfile(SlugParams),
-    DeleteProfile(SlugParams),
-    SaveProfile,
-    UpdateProfileFixtures(UpdateProfileFixturesParams),
-    UpdateProfileSetup(UpdateProfileSetupParams),
-    UpdateProfileLayout(UpdateProfileLayoutParams),
-
-    // ── Sequence CRUD ───────────────────────────────────────
-    ListSequences,
-    CreateSequence(CreateSequenceParams),
-    OpenSequence(SlugParams),
-    DeleteSequence(SlugParams),
-    SaveCurrentSequence,
-
-    // ── Media ───────────────────────────────────────────────
-    ListMedia,
-    ImportMedia(ImportMediaParams),
-    DeleteMedia(NameParams),
-    ResolveMediaPath(NameParams),
-
-    // ── Chat ────────────────────────────────────────────────
-    GetChatHistory,
-    GetAgentChatHistory,
-    ClearChat,
-    StopChat,
-    ListAgentConversations,
-    NewAgentConversation,
-    SwitchAgentConversation(ConversationIdParams),
-    DeleteAgentConversation(ConversationIdParams),
-
-    // ── Vixen Import (sync) ─────────────────────────────────
-    ImportVixen(ImportVixenParams),
-    ImportVixenProfile(ImportVixenProfileParams),
-    ImportVixenSequence(ImportVixenSequenceParams),
-    ScanVixenDirectory(ScanVixenDirectoryParams),
-    CheckVixenPreviewFile(CheckVixenPreviewFileParams),
-}
+pub struct JsonValue(
+    #[cfg_attr(feature = "tauri-app", ts(type = "unknown"))]
+    pub serde_json::Value,
+);
 
 // ── Command metadata ────────────────────────────────────────────
 
@@ -151,7 +66,7 @@ pub enum CommandCategory {
     Library,
     Script,
     Settings,
-    Profile,
+    Setup,
     Sequence,
     Media,
     Chat,
@@ -167,575 +82,510 @@ pub struct CommandInfo {
 
 impl CommandInfo {
     /// Whether this command should be hidden from the LLM help system.
-    /// Almost everything is visible. Only commands that could break the
-    /// LLM's own configuration are excluded.
     pub fn is_llm_hidden(&self) -> bool {
         matches!(self.name, "set_llm_config" | "get_llm_config")
     }
 }
 
-impl Command {
-    /// Metadata for this command. Exhaustive match ensures compiler errors
-    /// if a new variant is added without providing metadata.
-    pub fn info(&self) -> CommandInfo {
-        match self {
-            // ── Edit ────────────────────────────────────────
-            Command::AddEffect(_) => CommandInfo {
-                name: "add_effect",
-                description: "Add an effect to a track. Returns the new effect index.",
-                category: CommandCategory::Edit,
-                undoable: true,
-            },
-            Command::DeleteEffects(_) => CommandInfo {
-                name: "delete_effects",
-                description: "Delete effects by (track_index, effect_index) pairs.",
-                category: CommandCategory::Edit,
-                undoable: true,
-            },
-            Command::UpdateEffectParam(_) => CommandInfo {
-                name: "update_effect_param",
-                description: "Set a parameter on an effect.",
-                category: CommandCategory::Edit,
-                undoable: true,
-            },
-            Command::UpdateEffectTimeRange(_) => CommandInfo {
-                name: "update_effect_time_range",
-                description: "Change the start/end time of an effect.",
-                category: CommandCategory::Edit,
-                undoable: true,
-            },
-            Command::AddTrack(_) => CommandInfo {
-                name: "add_track",
-                description: "Create a new track targeting a fixture. Returns the new track index.",
-                category: CommandCategory::Edit,
-                undoable: true,
-            },
-            Command::DeleteTrack(_) => CommandInfo {
-                name: "delete_track",
-                description: "Delete a track and all its effects by track index.",
-                category: CommandCategory::Edit,
-                undoable: true,
-            },
-            Command::MoveEffectToTrack(_) => CommandInfo {
-                name: "move_effect_to_track",
-                description: "Move an effect from one track to another.",
-                category: CommandCategory::Edit,
-                undoable: true,
-            },
-            Command::UpdateSequenceSettings(_) => CommandInfo {
-                name: "update_sequence_settings",
-                description: "Update sequence name, audio file, duration, or frame rate.",
-                category: CommandCategory::Edit,
-                undoable: true,
-            },
-            Command::BatchEdit(_) => CommandInfo {
-                name: "batch_edit",
-                description: "Execute multiple edit commands as a single undoable operation.",
-                category: CommandCategory::Edit,
-                undoable: true,
-            },
-
-            // ── Playback ────────────────────────────────────
-            Command::Play => CommandInfo {
-                name: "play",
-                description: "Start playback.",
-                category: CommandCategory::Playback,
-                undoable: false,
-            },
-            Command::Pause => CommandInfo {
-                name: "pause",
-                description: "Pause playback.",
-                category: CommandCategory::Playback,
-                undoable: false,
-            },
-            Command::Seek(_) => CommandInfo {
-                name: "seek",
-                description: "Seek to a time in seconds.",
-                category: CommandCategory::Playback,
-                undoable: false,
-            },
-            Command::Undo => CommandInfo {
-                name: "undo",
-                description: "Undo the last editing action.",
-                category: CommandCategory::Playback,
-                undoable: false,
-            },
-            Command::Redo => CommandInfo {
-                name: "redo",
-                description: "Redo the last undone action.",
-                category: CommandCategory::Playback,
-                undoable: false,
-            },
-            Command::GetPlayback => CommandInfo {
-                name: "get_playback",
-                description: "Get playback state: playing, current time, duration, region, looping.",
-                category: CommandCategory::Playback,
-                undoable: false,
-            },
-            Command::SetRegion(_) => CommandInfo {
-                name: "set_region",
-                description: "Set or clear the playback region.",
-                category: CommandCategory::Playback,
-                undoable: false,
-            },
-            Command::SetLooping(_) => CommandInfo {
-                name: "set_looping",
-                description: "Enable or disable playback looping.",
-                category: CommandCategory::Playback,
-                undoable: false,
-            },
-            Command::GetUndoState => CommandInfo {
-                name: "get_undo_state",
-                description: "Get undo/redo availability and descriptions.",
-                category: CommandCategory::Playback,
-                undoable: false,
-            },
-
-            // ── Query ───────────────────────────────────────
-            Command::GetShow => CommandInfo {
-                name: "get_show",
-                description: "Get the full show model including fixtures, tracks, and effects.",
-                category: CommandCategory::Query,
-                undoable: false,
-            },
-            Command::GetEffectCatalog => CommandInfo {
-                name: "get_effect_catalog",
-                description: "Get all available effect types with their parameter schemas.",
-                category: CommandCategory::Query,
-                undoable: false,
-            },
-            Command::GetDesignGuide => CommandInfo {
-                name: "get_design_guide",
-                description: "Get best practices for light show design.",
-                category: CommandCategory::Query,
-                undoable: false,
-            },
-            Command::ListEffects => CommandInfo {
-                name: "list_effects",
-                description: "List all available effect types with parameter schemas.",
-                category: CommandCategory::Query,
-                undoable: false,
-            },
-            Command::GetEffectDetail(_) => CommandInfo {
-                name: "get_effect_detail",
-                description: "Get schema and current params for a placed effect.",
-                category: CommandCategory::Query,
-                undoable: false,
-            },
-
-            // ── Analysis ────────────────────────────────────
-            Command::GetAnalysisSummary => CommandInfo {
-                name: "get_analysis_summary",
-                description: "Get a lightweight summary of the audio analysis: tempo, key, mood, energy.",
-                category: CommandCategory::Analysis,
-                undoable: false,
-            },
-            Command::GetBeatsInRange(_) => CommandInfo {
-                name: "get_beats_in_range",
-                description: "Get beat timestamps within a time range.",
-                category: CommandCategory::Analysis,
-                undoable: false,
-            },
-            Command::GetSections => CommandInfo {
-                name: "get_sections",
-                description: "Get all structural sections with time ranges and labels.",
-                category: CommandCategory::Analysis,
-                undoable: false,
-            },
-            Command::GetAnalysisDetail(_) => CommandInfo {
-                name: "get_analysis_detail",
-                description: "Get full detail for one analysis feature.",
-                category: CommandCategory::Analysis,
-                undoable: false,
-            },
-            Command::GetAnalysis => CommandInfo {
-                name: "get_analysis",
-                description: "Get the cached audio analysis for the current sequence.",
-                category: CommandCategory::Analysis,
-                undoable: false,
-            },
-
-            // ── Library (global) ────────────────────────────
-            Command::ListGlobalLibrary => CommandInfo {
-                name: "list_global_library",
-                description: "List all gradients, curves, and scripts in the global library.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-            Command::ListGlobalGradients => CommandInfo {
-                name: "list_global_gradients",
-                description: "List all gradients in the global library with their data.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-            Command::SetGlobalGradient(_) => CommandInfo {
-                name: "set_global_gradient",
-                description: "Create or update a named gradient in the global library.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-            Command::DeleteGlobalGradient(_) => CommandInfo {
-                name: "delete_global_gradient",
-                description: "Delete a gradient from the global library.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-            Command::RenameGlobalGradient(_) => CommandInfo {
-                name: "rename_global_gradient",
-                description: "Rename a gradient in the global library.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-            Command::ListGlobalCurves => CommandInfo {
-                name: "list_global_curves",
-                description: "List all curves in the global library with their data.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-            Command::SetGlobalCurve(_) => CommandInfo {
-                name: "set_global_curve",
-                description: "Create or update a named curve in the global library.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-            Command::DeleteGlobalCurve(_) => CommandInfo {
-                name: "delete_global_curve",
-                description: "Delete a curve from the global library.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-            Command::RenameGlobalCurve(_) => CommandInfo {
-                name: "rename_global_curve",
-                description: "Rename a curve in the global library.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-
-            // ── Script (global) ────────────────────────────
-            Command::GetDslReference => CommandInfo {
-                name: "get_dsl_reference",
-                description: "Get the complete DSL language reference.",
-                category: CommandCategory::Script,
-                undoable: false,
-            },
-            Command::WriteGlobalScript(_) => CommandInfo {
-                name: "write_global_script",
-                description: "Compile and save a DSL script to the global library.",
-                category: CommandCategory::Script,
-                undoable: false,
-            },
-            Command::SetGlobalScript(_) => CommandInfo {
-                name: "set_global_script",
-                description: "Save a script to the global library without compiling.",
-                category: CommandCategory::Script,
-                undoable: false,
-            },
-            Command::CompileGlobalScript(_) => CommandInfo {
-                name: "compile_global_script",
-                description: "Compile and save a script to the global library.",
-                category: CommandCategory::Script,
-                undoable: false,
-            },
-            Command::ListGlobalScripts => CommandInfo {
-                name: "list_global_scripts",
-                description: "List all script names in the global library.",
-                category: CommandCategory::Script,
-                undoable: false,
-            },
-            Command::GetGlobalScriptSource(_) => CommandInfo {
-                name: "get_global_script_source",
-                description: "Get the source code of a named script from the global library.",
-                category: CommandCategory::Script,
-                undoable: false,
-            },
-            Command::DeleteGlobalScript(_) => CommandInfo {
-                name: "delete_global_script",
-                description: "Delete a script from the global library.",
-                category: CommandCategory::Script,
-                undoable: false,
-            },
-            Command::CompileScript(_) => CommandInfo {
-                name: "compile_script",
-                description: "Compile and save a DSL script to the global library.",
-                category: CommandCategory::Script,
-                undoable: false,
-            },
-            Command::CompileScriptPreview(_) => CommandInfo {
-                name: "compile_script_preview",
-                description: "Compile a DSL script without saving. Returns compile result.",
-                category: CommandCategory::Script,
-                undoable: false,
-            },
-            Command::RenameGlobalScript(_) => CommandInfo {
-                name: "rename_global_script",
-                description: "Rename a script in the global library.",
-                category: CommandCategory::Script,
-                undoable: false,
-            },
-            Command::GetScriptParams(_) => CommandInfo {
-                name: "get_script_params",
-                description: "Get the parameter definitions for a compiled script.",
-                category: CommandCategory::Script,
-                undoable: false,
-            },
-
-            // ── Settings ─────────────────────────────────────
-            Command::GetSettings => CommandInfo {
-                name: "get_settings",
-                description: "Get the application settings.",
-                category: CommandCategory::Settings,
-                undoable: false,
-            },
-            Command::GetApiPort => CommandInfo {
-                name: "get_api_port",
-                description: "Get the HTTP API server port.",
-                category: CommandCategory::Settings,
-                undoable: false,
-            },
-            Command::InitializeDataDir(_) => CommandInfo {
-                name: "initialize_data_dir",
-                description: "Initialize the data directory on first launch.",
-                category: CommandCategory::Settings,
-                undoable: false,
-            },
-            Command::SetLlmConfig(_) => CommandInfo {
-                name: "set_llm_config",
-                description: "Configure the LLM provider, API key, and model.",
-                category: CommandCategory::Settings,
-                undoable: false,
-            },
-            Command::GetLlmConfig => CommandInfo {
-                name: "get_llm_config",
-                description: "Get the current LLM configuration (key is masked).",
-                category: CommandCategory::Settings,
-                undoable: false,
-            },
-
-            // ── Profile CRUD ─────────────────────────────────
-            Command::ListProfiles => CommandInfo {
-                name: "list_profiles",
-                description: "List all profiles.",
-                category: CommandCategory::Profile,
-                undoable: false,
-            },
-            Command::CreateProfile(_) => CommandInfo {
-                name: "create_profile",
-                description: "Create a new profile.",
-                category: CommandCategory::Profile,
-                undoable: false,
-            },
-            Command::OpenProfile(_) => CommandInfo {
-                name: "open_profile",
-                description: "Open a profile by slug, set as current.",
-                category: CommandCategory::Profile,
-                undoable: false,
-            },
-            Command::DeleteProfile(_) => CommandInfo {
-                name: "delete_profile",
-                description: "Delete a profile by slug.",
-                category: CommandCategory::Profile,
-                undoable: false,
-            },
-            Command::SaveProfile => CommandInfo {
-                name: "save_profile",
-                description: "Save the current profile to disk.",
-                category: CommandCategory::Profile,
-                undoable: false,
-            },
-            Command::UpdateProfileFixtures(_) => CommandInfo {
-                name: "update_profile_fixtures",
-                description: "Update fixtures and groups in the current profile.",
-                category: CommandCategory::Profile,
-                undoable: false,
-            },
-            Command::UpdateProfileSetup(_) => CommandInfo {
-                name: "update_profile_setup",
-                description: "Update controllers and patches in the current profile.",
-                category: CommandCategory::Profile,
-                undoable: false,
-            },
-            Command::UpdateProfileLayout(_) => CommandInfo {
-                name: "update_profile_layout",
-                description: "Update the layout in the current profile.",
-                category: CommandCategory::Profile,
-                undoable: false,
-            },
-
-            // ── Sequence CRUD ────────────────────────────────
-            Command::ListSequences => CommandInfo {
-                name: "list_sequences",
-                description: "List all sequences in the current profile.",
-                category: CommandCategory::Sequence,
-                undoable: false,
-            },
-            Command::CreateSequence(_) => CommandInfo {
-                name: "create_sequence",
-                description: "Create a new sequence in the current profile.",
-                category: CommandCategory::Sequence,
-                undoable: false,
-            },
-            Command::OpenSequence(_) => CommandInfo {
-                name: "open_sequence",
-                description: "Open a sequence by slug. Loads it into the editor.",
-                category: CommandCategory::Sequence,
-                undoable: false,
-            },
-            Command::DeleteSequence(_) => CommandInfo {
-                name: "delete_sequence",
-                description: "Delete a sequence by slug.",
-                category: CommandCategory::Sequence,
-                undoable: false,
-            },
-            Command::SaveCurrentSequence => CommandInfo {
-                name: "save_current_sequence",
-                description: "Save the current sequence to disk.",
-                category: CommandCategory::Sequence,
-                undoable: false,
-            },
-
-            // ── Media ────────────────────────────────────────
-            Command::ListMedia => CommandInfo {
-                name: "list_media",
-                description: "List all media files in the current profile.",
-                category: CommandCategory::Media,
-                undoable: false,
-            },
-            Command::ImportMedia(_) => CommandInfo {
-                name: "import_media",
-                description: "Import a media file into the current profile.",
-                category: CommandCategory::Media,
-                undoable: false,
-            },
-            Command::DeleteMedia(_) => CommandInfo {
-                name: "delete_media",
-                description: "Delete a media file from the current profile.",
-                category: CommandCategory::Media,
-                undoable: false,
-            },
-            Command::ResolveMediaPath(_) => CommandInfo {
-                name: "resolve_media_path",
-                description: "Get the absolute path for a media filename.",
-                category: CommandCategory::Media,
-                undoable: false,
-            },
-
-            // ── Chat ─────────────────────────────────────────
-            Command::GetChatHistory => CommandInfo {
-                name: "get_chat_history",
-                description: "Get the chat history for the current sequence.",
-                category: CommandCategory::Chat,
-                undoable: false,
-            },
-            Command::GetAgentChatHistory => CommandInfo {
-                name: "get_agent_chat_history",
-                description: "Get the agent chat history for the current sequence.",
-                category: CommandCategory::Chat,
-                undoable: false,
-            },
-            Command::ClearChat => CommandInfo {
-                name: "clear_chat",
-                description: "Clear the chat history.",
-                category: CommandCategory::Chat,
-                undoable: false,
-            },
-            Command::StopChat => CommandInfo {
-                name: "stop_chat",
-                description: "Cancel the in-flight chat request.",
-                category: CommandCategory::Chat,
-                undoable: false,
-            },
-            Command::ListAgentConversations => CommandInfo {
-                name: "list_agent_conversations",
-                description: "List all agent conversations for the current sequence.",
-                category: CommandCategory::Chat,
-                undoable: false,
-            },
-            Command::NewAgentConversation => CommandInfo {
-                name: "new_agent_conversation",
-                description: "Archive the current agent conversation and start a new one.",
-                category: CommandCategory::Chat,
-                undoable: false,
-            },
-            Command::SwitchAgentConversation(_) => CommandInfo {
-                name: "switch_agent_conversation",
-                description: "Switch to a different agent conversation by ID.",
-                category: CommandCategory::Chat,
-                undoable: false,
-            },
-            Command::DeleteAgentConversation(_) => CommandInfo {
-                name: "delete_agent_conversation",
-                description: "Delete an agent conversation by ID.",
-                category: CommandCategory::Chat,
-                undoable: false,
-            },
-
-            // ── Vixen Import ─────────────────────────────────
-            Command::ImportVixen(_) => CommandInfo {
-                name: "import_vixen",
-                description: "Import a Vixen 3 project (profile + sequences).",
-                category: CommandCategory::Import,
-                undoable: false,
-            },
-            Command::ImportVixenProfile(_) => CommandInfo {
-                name: "import_vixen_profile",
-                description: "Import only the profile from a Vixen 3 project.",
-                category: CommandCategory::Import,
-                undoable: false,
-            },
-            Command::ImportVixenSequence(_) => CommandInfo {
-                name: "import_vixen_sequence",
-                description: "Import a single Vixen .tim sequence into an existing profile.",
-                category: CommandCategory::Import,
-                undoable: false,
-            },
-            Command::ScanVixenDirectory(_) => CommandInfo {
-                name: "scan_vixen_directory",
-                description: "Scan a Vixen 3 directory and return discovery info.",
-                category: CommandCategory::Import,
-                undoable: false,
-            },
-            Command::CheckVixenPreviewFile(_) => CommandInfo {
-                name: "check_vixen_preview_file",
-                description: "Validate a Vixen preview file and return item count.",
-                category: CommandCategory::Import,
-                undoable: false,
-            },
-        }
-    }
-}
-
 // ── Command output ──────────────────────────────────────────────
 
-/// Result of executing a Command. Dual output serves both audiences:
-/// LLM/CLI gets `message`, frontend/API gets `data`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
-#[cfg_attr(feature = "tauri-app", ts(export))]
+/// Internal result of executing a Command.
+/// `message` serves LLM/CLI, `result` carries typed data for the frontend.
+#[derive(Debug, Clone, Serialize)]
 pub struct CommandOutput {
     pub message: String,
-    #[cfg_attr(feature = "tauri-app", ts(type = "any"))]
-    pub data: serde_json::Value,
+    pub result: CommandResult,
 }
 
 impl CommandOutput {
-    pub fn unit(message: impl Into<String>) -> Self {
+    pub fn new(message: impl Into<String>, result: CommandResult) -> Self {
         Self {
             message: message.into(),
-            data: serde_json::Value::Null,
+            result,
         }
     }
+}
 
-    pub fn data(message: impl Into<String>, data: serde_json::Value) -> Self {
-        Self {
-            message: message.into(),
-            data,
+// ── define_commands! macro ──────────────────────────────────────
+
+/// Single source of truth for all commands. Generates 6 artifacts:
+/// 1. `Command` enum (serde-tagged, ts-rs exported)
+/// 2. `CommandResult` enum (serde-tagged, ts-rs exported)
+/// 3. `Command::info()` — metadata (name, description, category, undoable)
+/// 4. `Command::dispatch()` — execute against AppState
+/// 5. `Command::registry_entries()` — catalog entries with JSON schemas
+/// 6. `Command::from_tool_call()` — deserialize from (name, JSON) pair
+macro_rules! define_commands {
+    (
+        params {
+            $(
+                [ $pc:expr $(, $pf:ident)? ]
+                $pv:ident ( $pp:ty ) $( -> $pr:ty )?
+                => $ph:path, $pn:literal : $pd:literal ;
+            )*
         }
+        no_params {
+            $(
+                [ $nc:expr $(, $nf:ident)? ]
+                $nv:ident $( -> $nr:ty )?
+                => $nh:path, $nn:literal : $nd:literal ;
+            )*
+        }
+    ) => {
+        // ── 1. Command enum ──
+        /// Unified command type. Every surface (GUI, CLI, AI, REST, MCP) dispatches
+        /// through the same executor. Adding a variant causes compiler errors until
+        /// it's fully handled.
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+        #[cfg_attr(feature = "tauri-app", ts(export))]
+        #[serde(tag = "command", content = "params")]
+        pub enum Command {
+            $( $pv($pp), )*
+            $( $nv, )*
+        }
+
+        // ── 2. CommandResult enum ──
+        /// Typed result for every command. ts-rs generates a discriminated union
+        /// that TypeScript can narrow by `command`.
+        #[derive(Debug, Clone, Serialize)]
+        #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+        #[cfg_attr(feature = "tauri-app", ts(export))]
+        #[serde(tag = "command", content = "data")]
+        pub enum CommandResult {
+            $( $pv $( ($pr) )?, )*
+            $( $nv $( ($nr) )?, )*
+        }
+
+        // ── 3. Command::info() ──
+        impl Command {
+            pub fn info(&self) -> CommandInfo {
+                match self {
+                    $( Command::$pv(_) => CommandInfo {
+                        name: $pn,
+                        description: $pd,
+                        category: $pc,
+                        undoable: define_commands!(@flag $($pf)?),
+                    }, )*
+                    $( Command::$nv => CommandInfo {
+                        name: $nn,
+                        description: $nd,
+                        category: $nc,
+                        undoable: define_commands!(@flag $($nf)?),
+                    }, )*
+                }
+            }
+        }
+
+        // ── 4. Command::dispatch() ──
+        impl Command {
+            pub(crate) fn dispatch(
+                self,
+                state: &std::sync::Arc<crate::state::AppState>,
+            ) -> Result<CommandOutput, crate::error::AppError> {
+                match self {
+                    $( Command::$pv(p) => $ph(state, p), )*
+                    $( Command::$nv => $nh(state), )*
+                }
+            }
+        }
+
+        // ── 5. Command::registry_entries() ──
+        impl Command {
+            pub(crate) fn registry_entries() -> Vec<catalog::CommandRegistryEntry> {
+                vec![
+                    $( catalog::entry(
+                        CommandInfo {
+                            name: $pn,
+                            description: $pd,
+                            category: $pc,
+                            undoable: define_commands!(@flag $($pf)?),
+                        },
+                        catalog::schema_value::<$pp>(),
+                    ), )*
+                    $( catalog::entry(
+                        CommandInfo {
+                            name: $nn,
+                            description: $nd,
+                            category: $nc,
+                            undoable: define_commands!(@flag $($nf)?),
+                        },
+                        catalog::empty_object_schema(),
+                    ), )*
+                ]
+            }
+        }
+
+        // ── 6. Command::from_tool_call() ──
+        impl Command {
+            pub(crate) fn from_tool_call(
+                name: &str,
+                input: &serde_json::Value,
+            ) -> Result<Command, String> {
+                match name {
+                    $( $pn => Ok(Command::$pv(catalog::de(input)?)), )*
+                    $( $nn => Ok(Command::$nv), )*
+                    _ => Err(format!("Unknown command: {name}")),
+                }
+            }
+        }
+    };
+
+    // Flag helpers
+    (@flag undoable) => { true };
+    (@flag) => { false };
+}
+
+// ── Command definitions ─────────────────────────────────────────
+
+define_commands! {
+    params {
+        // ── Edit (9, all undoable) ──────────────────────────────
+        [CommandCategory::Edit, undoable]
+        AddEffect(AddEffectParams) -> usize
+        => edit::add_effect, "add_effect": "Add an effect to a track. Returns the new effect index.";
+
+        [CommandCategory::Edit, undoable]
+        DeleteEffects(DeleteEffectsParams)
+        => edit::delete_effects, "delete_effects": "Delete effects by (track_index, effect_index) pairs.";
+
+        [CommandCategory::Edit, undoable]
+        UpdateEffectParam(UpdateEffectParamParams)
+        => edit::update_effect_param, "update_effect_param": "Set a parameter on an effect.";
+
+        [CommandCategory::Edit, undoable]
+        UpdateEffectTimeRange(UpdateEffectTimeRangeParams)
+        => edit::update_effect_time_range, "update_effect_time_range": "Change the start/end time of an effect.";
+
+        [CommandCategory::Edit, undoable]
+        AddTrack(AddTrackParams) -> usize
+        => edit::add_track, "add_track": "Create a new track targeting a fixture. Returns the new track index.";
+
+        [CommandCategory::Edit, undoable]
+        DeleteTrack(DeleteTrackParams)
+        => edit::delete_track, "delete_track": "Delete a track and all its effects by track index.";
+
+        [CommandCategory::Edit, undoable]
+        MoveEffectToTrack(MoveEffectToTrackParams) -> usize
+        => edit::move_effect_to_track, "move_effect_to_track": "Move an effect from one track to another.";
+
+        [CommandCategory::Edit, undoable]
+        UpdateSequenceSettings(UpdateSequenceSettingsParams)
+        => edit::update_sequence_settings, "update_sequence_settings": "Update sequence name, audio file, duration, or frame rate.";
+
+        [CommandCategory::Edit, undoable]
+        BatchEdit(BatchEditParams)
+        => edit::batch_edit, "batch_edit": "Execute multiple edit commands as a single undoable operation.";
+
+        // ── Playback (3) ────────────────────────────────────────
+        [CommandCategory::Playback]
+        Seek(SeekParams)
+        => playback::seek, "seek": "Seek to a time in seconds.";
+
+        [CommandCategory::Playback]
+        SetRegion(SetRegionParams)
+        => playback::set_region, "set_region": "Set or clear the playback region.";
+
+        [CommandCategory::Playback]
+        SetLooping(SetLoopingParams)
+        => playback::set_looping, "set_looping": "Enable or disable playback looping.";
+
+        // ── Query (1) ───────────────────────────────────────────
+        [CommandCategory::Query]
+        GetEffectDetail(GetEffectDetailParams) -> EffectDetail
+        => query::get_effect_detail, "get_effect_detail": "Get schema and current params for a placed effect.";
+
+        // ── Analysis (2) ────────────────────────────────────────
+        [CommandCategory::Analysis]
+        GetBeatsInRange(GetBeatsInRangeParams) -> BeatsInRange
+        => analysis::get_beats_in_range, "get_beats_in_range": "Get beat timestamps within a time range.";
+
+        [CommandCategory::Analysis]
+        GetAnalysisDetail(GetAnalysisDetailParams) -> JsonValue
+        => analysis::get_analysis_detail, "get_analysis_detail": "Get full detail for one analysis feature.";
+
+        // ── Library (6) ─────────────────────────────────────────
+        [CommandCategory::Library]
+        SetGlobalGradient(SetGlobalGradientParams)
+        => global_lib::set_global_gradient, "set_global_gradient": "Create or update a named gradient in the global library.";
+
+        [CommandCategory::Library]
+        DeleteGlobalGradient(NameParams)
+        => global_lib::delete_global_gradient, "delete_global_gradient": "Delete a gradient from the global library.";
+
+        [CommandCategory::Library]
+        RenameGlobalGradient(RenameParams)
+        => global_lib::rename_global_gradient, "rename_global_gradient": "Rename a gradient in the global library.";
+
+        [CommandCategory::Library]
+        SetGlobalCurve(SetGlobalCurveParams)
+        => global_lib::set_global_curve, "set_global_curve": "Create or update a named curve in the global library.";
+
+        [CommandCategory::Library]
+        DeleteGlobalCurve(NameParams)
+        => global_lib::delete_global_curve, "delete_global_curve": "Delete a curve from the global library.";
+
+        [CommandCategory::Library]
+        RenameGlobalCurve(RenameParams)
+        => global_lib::rename_global_curve, "rename_global_curve": "Rename a curve in the global library.";
+
+        // ── Script (9) ──────────────────────────────────────────
+        [CommandCategory::Script]
+        WriteGlobalScript(WriteScriptParams)
+        => script::write_global_script, "write_global_script": "Compile and save a DSL script to the global library.";
+
+        [CommandCategory::Script]
+        SetGlobalScript(WriteScriptParams)
+        => global_lib::set_global_script, "set_global_script": "Save a script to the global library without compiling.";
+
+        [CommandCategory::Script]
+        CompileGlobalScript(WriteScriptParams) -> ScriptCompileResult
+        => global_lib::compile_global_script, "compile_global_script": "Compile and save a script to the global library.";
+
+        [CommandCategory::Script]
+        GetGlobalScriptSource(NameParams) -> String
+        => script::get_global_script_source, "get_global_script_source": "Get the source code of a named script from the global library.";
+
+        [CommandCategory::Script]
+        DeleteGlobalScript(NameParams)
+        => script::delete_global_script, "delete_global_script": "Delete a script from the global library.";
+
+        [CommandCategory::Script]
+        CompileScript(CompileScriptParams) -> ScriptCompileResult
+        => script::compile_global_script, "compile_script": "Compile and save a DSL script to the global library.";
+
+        [CommandCategory::Script]
+        CompileScriptPreview(CompileScriptPreviewParams) -> ScriptCompileResult
+        => script::compile_script_preview, "compile_script_preview": "Compile a DSL script without saving. Returns compile result.";
+
+        [CommandCategory::Script]
+        RenameGlobalScript(RenameParams)
+        => script::rename_global_script, "rename_global_script": "Rename a script in the global library.";
+
+        [CommandCategory::Script]
+        GetScriptParams(NameParams) -> Vec<ScriptParamInfo>
+        => script::get_script_params, "get_script_params": "Get the parameter definitions for a compiled script.";
+
+        // ── Settings (2) ────────────────────────────────────────
+        [CommandCategory::Settings]
+        InitializeDataDir(InitializeDataDirParams) -> AppSettings
+        => settings::initialize_data_dir, "initialize_data_dir": "Initialize the data directory on first launch.";
+
+        [CommandCategory::Settings]
+        SetLlmConfig(SetLlmConfigParams)
+        => settings::set_llm_config, "set_llm_config": "Configure the LLM provider, API key, and model.";
+
+        // ── Setup (6) ───────────────────────────────────────────
+        [CommandCategory::Setup]
+        CreateSetup(CreateSetupParams) -> SetupSummary
+        => setup::create_setup, "create_setup": "Create a new setup.";
+
+        [CommandCategory::Setup]
+        OpenSetup(SlugParams) -> Box<Setup>
+        => setup::open_setup, "open_setup": "Open a setup by slug, set as current.";
+
+        [CommandCategory::Setup]
+        DeleteSetup(SlugParams)
+        => setup::delete_setup, "delete_setup": "Delete a setup by slug.";
+
+        [CommandCategory::Setup]
+        UpdateSetupFixtures(UpdateSetupFixturesParams)
+        => setup::update_setup_fixtures, "update_setup_fixtures": "Update fixtures and groups in the current setup.";
+
+        [CommandCategory::Setup]
+        UpdateSetupOutputs(UpdateSetupOutputsParams)
+        => setup::update_setup_outputs, "update_setup_outputs": "Update controllers and patches in the current setup.";
+
+        [CommandCategory::Setup]
+        UpdateSetupLayout(UpdateSetupLayoutParams)
+        => setup::update_setup_layout, "update_setup_layout": "Update the layout in the current setup.";
+
+        // ── Sequence (3) ────────────────────────────────────────
+        [CommandCategory::Sequence]
+        CreateSequence(CreateSequenceParams) -> SequenceSummary
+        => sequence::create_sequence, "create_sequence": "Create a new sequence in the current setup.";
+
+        [CommandCategory::Sequence]
+        OpenSequence(SlugParams)
+        => sequence::open_sequence, "open_sequence": "Open a sequence by slug. Loads it into the editor.";
+
+        [CommandCategory::Sequence]
+        DeleteSequence(SlugParams)
+        => sequence::delete_sequence, "delete_sequence": "Delete a sequence by slug.";
+
+        // ── Media (3) ───────────────────────────────────────────
+        [CommandCategory::Media]
+        ImportMedia(ImportMediaParams) -> MediaFile
+        => media::import_media, "import_media": "Import a media file into the current setup.";
+
+        [CommandCategory::Media]
+        DeleteMedia(NameParams)
+        => media::delete_media, "delete_media": "Delete a media file from the current setup.";
+
+        [CommandCategory::Media]
+        ResolveMediaPath(NameParams) -> String
+        => media::resolve_media_path, "resolve_media_path": "Get the absolute path for a media filename.";
+
+        // ── Chat (2) ────────────────────────────────────────────
+        [CommandCategory::Chat]
+        SwitchAgentConversation(ConversationIdParams)
+        => chat::switch_agent_conversation, "switch_agent_conversation": "Switch to a different agent conversation by ID.";
+
+        [CommandCategory::Chat]
+        DeleteAgentConversation(ConversationIdParams)
+        => chat::delete_agent_conversation, "delete_agent_conversation": "Delete an agent conversation by ID.";
+
+        // ── Import (5) ──────────────────────────────────────────
+        [CommandCategory::Import]
+        ImportVixen(ImportVixenParams) -> SetupSummary
+        => import::import_vixen, "import_vixen": "Import a Vixen 3 project (setup + sequences).";
+
+        [CommandCategory::Import]
+        ImportVixenSetup(ImportVixenSetupParams) -> SetupSummary
+        => import::import_vixen_setup, "import_vixen_setup": "Import only the setup from a Vixen 3 project.";
+
+        [CommandCategory::Import]
+        ImportVixenSequence(ImportVixenSequenceParams) -> SequenceSummary
+        => import::import_vixen_sequence, "import_vixen_sequence": "Import a single Vixen .tim sequence into an existing setup.";
+
+        [CommandCategory::Import]
+        ScanVixenDirectory(ScanVixenDirectoryParams) -> Box<VixenDiscovery>
+        => import::scan_vixen_directory, "scan_vixen_directory": "Scan a Vixen 3 directory and return discovery info.";
+
+        [CommandCategory::Import]
+        CheckVixenPreviewFile(CheckVixenPreviewFileParams) -> usize
+        => import::check_vixen_preview_file, "check_vixen_preview_file": "Validate a Vixen preview file and return item count.";
     }
+    no_params {
+        // ── Playback (6) ────────────────────────────────────────
+        [CommandCategory::Playback]
+        Play => playback::play, "play": "Start playback.";
 
-    pub fn json(message: impl Into<String>, value: &impl Serialize) -> Self {
-        Self {
-            message: message.into(),
-            data: serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
-        }
+        [CommandCategory::Playback]
+        Pause => playback::pause, "pause": "Pause playback.";
+
+        [CommandCategory::Playback]
+        Undo => playback::undo, "undo": "Undo the last editing action.";
+
+        [CommandCategory::Playback]
+        Redo => playback::redo, "redo": "Redo the last undone action.";
+
+        [CommandCategory::Playback]
+        GetPlayback -> PlaybackInfo
+        => playback::get_playback, "get_playback": "Get playback state: playing, current time, duration, region, looping.";
+
+        [CommandCategory::Playback]
+        GetUndoState -> UndoState
+        => playback::get_undo_state, "get_undo_state": "Get undo/redo availability and descriptions.";
+
+        // ── Query (4) ───────────────────────────────────────────
+        [CommandCategory::Query]
+        GetShow -> Box<Show>
+        => query::get_show, "get_show": "Get the full show model including fixtures, tracks, and effects.";
+
+        [CommandCategory::Query]
+        GetEffectCatalog -> Vec<EffectCatalogEntry>
+        => query::get_effect_catalog, "get_effect_catalog": "Get all available effect types with their parameter schemas.";
+
+        [CommandCategory::Query]
+        GetDesignGuide -> String
+        => query::get_design_guide, "get_design_guide": "Get best practices for light show design.";
+
+        [CommandCategory::Query]
+        ListEffects -> Vec<EffectInfo>
+        => query::list_effects, "list_effects": "List all available effect types with parameter schemas.";
+
+        // ── Analysis (3) ────────────────────────────────────────
+        [CommandCategory::Analysis]
+        GetAnalysisSummary -> AnalysisSummary
+        => analysis::get_analysis_summary, "get_analysis_summary": "Get a lightweight summary of the audio analysis: tempo, key, mood, energy.";
+
+        [CommandCategory::Analysis]
+        GetSections -> Vec<SongSection>
+        => analysis::get_sections, "get_sections": "Get all structural sections with time ranges and labels.";
+
+        [CommandCategory::Analysis]
+        GetAnalysis -> Option<Box<AudioAnalysis>>
+        => analysis::get_analysis, "get_analysis": "Get the cached audio analysis for the current sequence.";
+
+        // ── Library (3) ─────────────────────────────────────────
+        [CommandCategory::Library]
+        ListGlobalLibrary -> GlobalLibrarySummary
+        => global_lib::list_global_library, "list_global_library": "List all gradients, curves, and scripts in the global library.";
+
+        [CommandCategory::Library]
+        ListGlobalGradients -> Vec<(String, ColorGradient)>
+        => global_lib::list_global_gradients, "list_global_gradients": "List all gradients in the global library with their data.";
+
+        [CommandCategory::Library]
+        ListGlobalCurves -> Vec<(String, Curve)>
+        => global_lib::list_global_curves, "list_global_curves": "List all curves in the global library with their data.";
+
+        // ── Script (2) ──────────────────────────────────────────
+        [CommandCategory::Script]
+        GetDslReference -> String
+        => script::get_dsl_reference, "get_dsl_reference": "Get the complete DSL language reference.";
+
+        [CommandCategory::Script]
+        ListGlobalScripts -> Vec<(String, String)>
+        => script::list_global_scripts, "list_global_scripts": "List all script names in the global library.";
+
+        // ── Settings (3) ────────────────────────────────────────
+        [CommandCategory::Settings]
+        GetSettings -> Option<AppSettings>
+        => settings::get_settings, "get_settings": "Get the application settings.";
+
+        [CommandCategory::Settings]
+        GetApiPort -> u16
+        => settings::get_api_port, "get_api_port": "Get the HTTP API server port.";
+
+        [CommandCategory::Settings]
+        GetLlmConfig -> LlmConfigInfo
+        => settings::get_llm_config, "get_llm_config": "Get the current LLM configuration (key is masked).";
+
+        // ── Setup (2) ───────────────────────────────────────────
+        [CommandCategory::Setup]
+        ListSetups -> Vec<SetupSummary>
+        => setup::list_setups, "list_setups": "List all setups.";
+
+        [CommandCategory::Setup]
+        SaveSetup => setup::save_setup, "save_setup": "Save the current setup to disk.";
+
+        // ── Sequence (2) ────────────────────────────────────────
+        [CommandCategory::Sequence]
+        ListSequences -> Vec<SequenceSummary>
+        => sequence::list_sequences, "list_sequences": "List all sequences in the current setup.";
+
+        [CommandCategory::Sequence]
+        SaveCurrentSequence
+        => sequence::save_current_sequence, "save_current_sequence": "Save the current sequence to disk.";
+
+        // ── Media (1) ───────────────────────────────────────────
+        [CommandCategory::Media]
+        ListMedia -> Vec<MediaFile>
+        => media::list_media, "list_media": "List all media files in the current setup.";
+
+        // ── Chat (6) ────────────────────────────────────────────
+        [CommandCategory::Chat]
+        GetChatHistory -> Vec<ChatHistoryEntry>
+        => chat::get_chat_history, "get_chat_history": "Get the chat history for the current sequence.";
+
+        [CommandCategory::Chat]
+        GetAgentChatHistory -> Vec<ChatHistoryEntry>
+        => chat::get_agent_chat_history, "get_agent_chat_history": "Get the agent chat history for the current sequence.";
+
+        [CommandCategory::Chat]
+        ClearChat => chat::clear_chat, "clear_chat": "Clear the chat history.";
+
+        [CommandCategory::Chat]
+        StopChat => chat::stop_chat, "stop_chat": "Cancel the in-flight chat request.";
+
+        [CommandCategory::Chat]
+        ListAgentConversations -> Vec<ConversationSummary>
+        => chat::list_agent_conversations, "list_agent_conversations": "List all agent conversations for the current sequence.";
+
+        [CommandCategory::Chat]
+        NewAgentConversation -> NewConversationResult
+        => chat::new_agent_conversation, "new_agent_conversation": "Archive the current agent conversation and start a new one.";
     }
 }

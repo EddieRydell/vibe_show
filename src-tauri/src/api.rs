@@ -13,7 +13,7 @@ use crate::dispatcher::{CommandResult, EditCommand, UndoState};
 use crate::effects::resolve_effect;
 use crate::engine::{self, Frame};
 use crate::model::Show;
-use crate::profile::{self, MediaFile, ProfileSummary, SequenceSummary, MEDIA_EXTENSIONS};
+use crate::setup::{self, MediaFile, SetupSummary, SequenceSummary, MEDIA_EXTENSIONS};
 use crate::settings::{self, AppSettings};
 use crate::state::{self, AppState, EffectDetail, EffectInfo, PlaybackInfo};
 use crate::registry;
@@ -69,12 +69,12 @@ fn get_data_dir(state: &AppState) -> Result<std::path::PathBuf, (StatusCode, Jso
     state::get_data_dir(state).map_err(error_response)
 }
 
-fn require_profile(state: &AppState) -> Result<String, (StatusCode, Json<ApiResponse<()>>)> {
+fn require_setup(state: &AppState) -> Result<String, (StatusCode, Json<ApiResponse<()>>)> {
     state
-        .current_profile
+        .current_setup
         .lock()
         .clone()
-        .ok_or_else(|| error_response("No profile open".into()))
+        .ok_or_else(|| error_response("No setup open".into()))
 }
 
 fn require_sequence(state: &AppState) -> Result<String, (StatusCode, Json<ApiResponse<()>>)> {
@@ -218,14 +218,14 @@ async fn post_seek(
 
 async fn post_save(AxumState(state): AppArc) -> ApiResult<()> {
     let data_dir = get_data_dir(&state)?;
-    let profile_slug = require_profile(&state)?;
+    let setup_slug = require_setup(&state)?;
     let seq_slug = require_sequence(&state)?;
     let show = state.show.lock();
     let sequence = show
         .sequences
         .first()
         .ok_or_else(|| error_response("No sequence in show".into()))?;
-    profile::save_sequence(&data_dir, &profile_slug, &seq_slug, sequence)
+    setup::save_sequence(&data_dir, &setup_slug, &seq_slug, sequence)
         .map_err(|e| error_response(e.to_string()))?;
     Ok(ApiResponse::success(()))
 }
@@ -249,7 +249,7 @@ async fn post_initialize(
     Json(body): Json<InitBody>,
 ) -> ApiResult<AppSettings> {
     let data_path = std::path::PathBuf::from(&body.data_dir);
-    std::fs::create_dir_all(data_path.join("profiles")).map_err(|e| error_response(e.to_string()))?;
+    std::fs::create_dir_all(data_path.join("setups")).map_err(|e| error_response(e.to_string()))?;
     let new_settings = AppSettings::new(data_path);
     settings::save_settings(&state.app_config_dir, &new_settings)
         .map_err(|e| error_response(e.to_string()))?;
@@ -258,42 +258,42 @@ async fn post_initialize(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Profile endpoints
+// Setup endpoints
 // ══════════════════════════════════════════════════════════════════
 
-async fn get_profiles(AxumState(state): AppArc) -> ApiResult<Vec<ProfileSummary>> {
+async fn get_setups(AxumState(state): AppArc) -> ApiResult<Vec<SetupSummary>> {
     let data_dir = get_data_dir(&state)?;
-    let profiles = profile::list_profiles(&data_dir).map_err(|e| error_response(e.to_string()))?;
-    Ok(ApiResponse::success(profiles))
+    let setups = setup::list_setups(&data_dir).map_err(|e| error_response(e.to_string()))?;
+    Ok(ApiResponse::success(setups))
 }
 
 #[derive(Deserialize)]
-struct CreateProfileBody {
+struct CreateSetupBody {
     name: String,
 }
 
-async fn post_profiles(
+async fn post_setups(
     AxumState(state): AppArc,
-    Json(body): Json<CreateProfileBody>,
-) -> ApiResult<ProfileSummary> {
+    Json(body): Json<CreateSetupBody>,
+) -> ApiResult<SetupSummary> {
     let data_dir = get_data_dir(&state)?;
-    let summary = profile::create_profile(&data_dir, &body.name).map_err(|e| error_response(e.to_string()))?;
+    let summary = setup::create_setup(&data_dir, &body.name).map_err(|e| error_response(e.to_string()))?;
     Ok(ApiResponse::success(summary))
 }
 
-async fn get_profile(
+async fn get_setup(
     AxumState(state): AppArc,
     Path(slug): Path<String>,
-) -> ApiResult<crate::profile::Profile> {
+) -> ApiResult<crate::setup::Setup> {
     let data_dir = get_data_dir(&state)?;
-    let loaded = profile::load_profile(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
-    *state.current_profile.lock() = Some(slug.clone());
+    let loaded = setup::load_setup(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
+    *state.current_setup.lock() = Some(slug.clone());
     *state.current_sequence.lock() = None;
 
-    // Update last_profile
+    // Update last_setup
     let mut settings_guard = state.settings.lock();
     if let Some(ref mut s) = *settings_guard {
-        s.last_profile = Some(slug);
+        s.last_setup = Some(slug);
         if let Err(e) = settings::save_settings(&state.app_config_dir, s) {
             eprintln!("[VibeLights] Failed to save settings: {e}");
         }
@@ -302,14 +302,14 @@ async fn get_profile(
     Ok(ApiResponse::success(loaded))
 }
 
-async fn delete_profile_handler(
+async fn delete_setup_handler(
     AxumState(state): AppArc,
     Path(slug): Path<String>,
 ) -> ApiResult<()> {
     let data_dir = get_data_dir(&state)?;
-    profile::delete_profile(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
+    setup::delete_setup(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
 
-    let mut current = state.current_profile.lock();
+    let mut current = state.current_setup.lock();
     if current.as_deref() == Some(&slug) {
         *current = None;
         *state.current_sequence.lock() = None;
@@ -318,13 +318,13 @@ async fn delete_profile_handler(
     Ok(ApiResponse::success(()))
 }
 
-async fn post_profile_save(
+async fn post_setup_save(
     AxumState(state): AppArc,
     Path(slug): Path<String>,
 ) -> ApiResult<()> {
     let data_dir = get_data_dir(&state)?;
-    let loaded = profile::load_profile(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
-    profile::save_profile(&data_dir, &slug, &loaded).map_err(|e| error_response(e.to_string()))?;
+    let loaded = setup::load_setup(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
+    setup::save_setup(&data_dir, &slug, &loaded).map_err(|e| error_response(e.to_string()))?;
     Ok(ApiResponse::success(()))
 }
 
@@ -334,16 +334,16 @@ struct UpdateFixturesBody {
     groups: Vec<crate::model::FixtureGroup>,
 }
 
-async fn put_profile_fixtures(
+async fn put_setup_fixtures(
     AxumState(state): AppArc,
     Path(slug): Path<String>,
     Json(body): Json<UpdateFixturesBody>,
 ) -> ApiResult<()> {
     let data_dir = get_data_dir(&state)?;
-    let mut loaded = profile::load_profile(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
+    let mut loaded = setup::load_setup(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
     loaded.fixtures = body.fixtures;
     loaded.groups = body.groups;
-    profile::save_profile(&data_dir, &slug, &loaded).map_err(|e| error_response(e.to_string()))?;
+    setup::save_setup(&data_dir, &slug, &loaded).map_err(|e| error_response(e.to_string()))?;
     Ok(ApiResponse::success(()))
 }
 
@@ -353,16 +353,16 @@ struct UpdateSetupBody {
     patches: Vec<crate::model::fixture::Patch>,
 }
 
-async fn put_profile_setup(
+async fn put_setup_outputs(
     AxumState(state): AppArc,
     Path(slug): Path<String>,
     Json(body): Json<UpdateSetupBody>,
 ) -> ApiResult<()> {
     let data_dir = get_data_dir(&state)?;
-    let mut loaded = profile::load_profile(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
+    let mut loaded = setup::load_setup(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
     loaded.controllers = body.controllers;
     loaded.patches = body.patches;
-    profile::save_profile(&data_dir, &slug, &loaded).map_err(|e| error_response(e.to_string()))?;
+    setup::save_setup(&data_dir, &slug, &loaded).map_err(|e| error_response(e.to_string()))?;
     Ok(ApiResponse::success(()))
 }
 
@@ -375,7 +375,7 @@ async fn get_sequences(
     Path(slug): Path<String>,
 ) -> ApiResult<Vec<SequenceSummary>> {
     let data_dir = get_data_dir(&state)?;
-    let seqs = profile::list_sequences(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
+    let seqs = setup::list_sequences(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
     Ok(ApiResponse::success(seqs))
 }
 
@@ -390,21 +390,21 @@ async fn post_sequences(
     Json(body): Json<CreateSequenceBody>,
 ) -> ApiResult<SequenceSummary> {
     let data_dir = get_data_dir(&state)?;
-    let summary = profile::create_sequence(&data_dir, &slug, &body.name)
+    let summary = setup::create_sequence(&data_dir, &slug, &body.name)
         .map_err(|e| error_response(e.to_string()))?;
     Ok(ApiResponse::success(summary))
 }
 
 async fn get_sequence(
     AxumState(state): AppArc,
-    Path((profile_slug, seq_slug)): Path<(String, String)>,
+    Path((setup_slug, seq_slug)): Path<(String, String)>,
 ) -> ApiResult<Show> {
     let data_dir = get_data_dir(&state)?;
-    let profile_data = profile::load_profile(&data_dir, &profile_slug)
+    let setup_data = setup::load_setup(&data_dir, &setup_slug)
         .map_err(|e| error_response(e.to_string()))?;
-    let sequence = profile::load_sequence(&data_dir, &profile_slug, &seq_slug)
+    let sequence = setup::load_sequence(&data_dir, &setup_slug, &seq_slug)
         .map_err(|e| error_response(e.to_string()))?;
-    let assembled = profile::assemble_show(&profile_data, &sequence);
+    let assembled = setup::assemble_show(&setup_data, &sequence);
 
     *state.show.lock() = assembled.clone();
     state.dispatcher.lock().clear();
@@ -414,7 +414,7 @@ async fn get_sequence(
         playback.current_time = 0.0;
         playback.sequence_index = 0;
     }
-    *state.current_profile.lock() = Some(profile_slug);
+    *state.current_setup.lock() = Some(setup_slug);
     *state.current_sequence.lock() = Some(seq_slug);
 
     Ok(ApiResponse::success(assembled))
@@ -422,10 +422,10 @@ async fn get_sequence(
 
 async fn delete_sequence_handler(
     AxumState(state): AppArc,
-    Path((profile_slug, seq_slug)): Path<(String, String)>,
+    Path((setup_slug, seq_slug)): Path<(String, String)>,
 ) -> ApiResult<()> {
     let data_dir = get_data_dir(&state)?;
-    profile::delete_sequence(&data_dir, &profile_slug, &seq_slug)
+    setup::delete_sequence(&data_dir, &setup_slug, &seq_slug)
         .map_err(|e| error_response(e.to_string()))?;
 
     let mut current = state.current_sequence.lock();
@@ -445,7 +445,7 @@ async fn get_media(
     Path(slug): Path<String>,
 ) -> ApiResult<Vec<MediaFile>> {
     let data_dir = get_data_dir(&state)?;
-    let files = profile::list_media(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
+    let files = setup::list_media(&data_dir, &slug).map_err(|e| error_response(e.to_string()))?;
     Ok(ApiResponse::success(files))
 }
 
@@ -460,7 +460,7 @@ async fn post_media(
     Json(body): Json<ImportMediaBody>,
 ) -> ApiResult<MediaFile> {
     let data_dir = get_data_dir(&state)?;
-    let file = profile::import_media(&data_dir, &slug, std::path::Path::new(&body.source_path))
+    let file = setup::import_media(&data_dir, &slug, std::path::Path::new(&body.source_path))
         .map_err(|e| error_response(e.to_string()))?;
     Ok(ApiResponse::success(file))
 }
@@ -470,7 +470,7 @@ async fn delete_media_handler(
     Path((slug, filename)): Path<(String, String)>,
 ) -> ApiResult<()> {
     let data_dir = get_data_dir(&state)?;
-    profile::delete_media(&data_dir, &slug, &filename).map_err(|e| error_response(e.to_string()))?;
+    setup::delete_media(&data_dir, &slug, &filename).map_err(|e| error_response(e.to_string()))?;
     Ok(ApiResponse::success(()))
 }
 
@@ -753,12 +753,12 @@ async fn post_vixen_execute(
         let controllers_imported = if config.import_controllers { show.controllers.len() } else { 0 };
         let layout_items_imported = layout_items.len();
 
-        let profile_name = if config.profile_name.trim().is_empty() {
+        let setup_name = if config.setup_name.trim().is_empty() {
             "Vixen Import".to_string()
         } else {
-            config.profile_name.trim().to_string()
+            config.setup_name.trim().to_string()
         };
-        let summary = profile::create_profile(&data_dir, &profile_name).map_err(|e| e.to_string())?;
+        let summary = setup::create_setup(&data_dir, &setup_name).map_err(|e| e.to_string())?;
 
         let layout = if layout_items.is_empty() {
             show.layout.clone()
@@ -766,8 +766,8 @@ async fn post_vixen_execute(
             crate::model::show::Layout { fixtures: layout_items }
         };
 
-        let prof = crate::profile::Profile {
-            name: profile_name,
+        let prof = crate::setup::Setup {
+            name: setup_name,
             slug: summary.slug.clone(),
             fixtures: show.fixtures.clone(),
             groups: show.groups.clone(),
@@ -775,15 +775,15 @@ async fn post_vixen_execute(
             patches: if config.import_controllers { show.patches.clone() } else { Vec::new() },
             layout,
         };
-        profile::save_profile(&data_dir, &summary.slug, &prof).map_err(|e| e.to_string())?;
-        profile::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map).map_err(|e| e.to_string())?;
+        setup::save_setup(&data_dir, &summary.slug, &prof).map_err(|e| e.to_string())?;
+        setup::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map).map_err(|e| e.to_string())?;
 
         // Copy media first so audio_file remapping can reference imported files
         let mut media_imported = 0usize;
         for media_filename in &config.media_filenames {
             let source = vixen_path.join("Media").join(media_filename);
             if source.exists()
-                && profile::import_media(&data_dir, &summary.slug, &source).is_ok()
+                && setup::import_media(&data_dir, &summary.slug, &source).is_ok()
             {
                 media_imported += 1;
             }
@@ -804,13 +804,13 @@ async fn post_vixen_execute(
                     }
                 }
             }
-            let _ = profile::create_sequence(&data_dir, &summary.slug, &seq.name);
+            let _ = setup::create_sequence(&data_dir, &summary.slug, &seq.name);
             let seq_slug = crate::project::slugify(&seq.name);
-            profile::save_sequence(&data_dir, &summary.slug, &seq_slug, &seq).map_err(|e| e.to_string())?;
+            setup::save_sequence(&data_dir, &summary.slug, &seq_slug, &seq).map_err(|e| e.to_string())?;
         }
 
         Ok::<_, String>(crate::import::vixen::VixenImportResult {
-            profile_slug: summary.slug,
+            setup_slug: summary.slug,
             fixtures_imported,
             groups_imported,
             controllers_imported,
@@ -978,7 +978,7 @@ async fn post_script(
             // Persist to disk
             if let Ok(data_dir) = crate::state::get_data_dir(&state) {
                 let libs = state.global_libraries.lock();
-                let _ = profile::save_global_libraries(&data_dir, &libs);
+                let _ = setup::save_global_libraries(&data_dir, &libs);
             }
             Ok(ApiResponse::success(format!("Script \"{}\" compiled and saved", body.name)))
         }
@@ -998,7 +998,7 @@ async fn delete_script_handler(
     // Persist to disk
     if let Ok(data_dir) = crate::state::get_data_dir(&state) {
         let libs = state.global_libraries.lock();
-        let _ = profile::save_global_libraries(&data_dir, &libs);
+        let _ = setup::save_global_libraries(&data_dir, &libs);
     }
     Ok(ApiResponse::success(()))
 }
@@ -1029,7 +1029,7 @@ async fn post_library_gradient(
     state.global_libraries.lock().gradients.insert(body.name, gradient);
     if let Ok(data_dir) = crate::state::get_data_dir(&state) {
         let libs = state.global_libraries.lock();
-        let _ = profile::save_global_libraries(&data_dir, &libs);
+        let _ = setup::save_global_libraries(&data_dir, &libs);
     }
     Ok(ApiResponse::success(()))
 }
@@ -1041,7 +1041,7 @@ async fn delete_library_gradient_handler(
     state.global_libraries.lock().gradients.remove(&name);
     if let Ok(data_dir) = crate::state::get_data_dir(&state) {
         let libs = state.global_libraries.lock();
-        let _ = profile::save_global_libraries(&data_dir, &libs);
+        let _ = setup::save_global_libraries(&data_dir, &libs);
     }
     Ok(ApiResponse::success(()))
 }
@@ -1068,7 +1068,7 @@ async fn post_library_curve(
     state.global_libraries.lock().curves.insert(body.name, curve);
     if let Ok(data_dir) = crate::state::get_data_dir(&state) {
         let libs = state.global_libraries.lock();
-        let _ = profile::save_global_libraries(&data_dir, &libs);
+        let _ = setup::save_global_libraries(&data_dir, &libs);
     }
     Ok(ApiResponse::success(()))
 }
@@ -1080,7 +1080,7 @@ async fn delete_library_curve_handler(
     state.global_libraries.lock().curves.remove(&name);
     if let Ok(data_dir) = crate::state::get_data_dir(&state) {
         let libs = state.global_libraries.lock();
-        let _ = profile::save_global_libraries(&data_dir, &libs);
+        let _ = setup::save_global_libraries(&data_dir, &libs);
     }
     Ok(ApiResponse::success(()))
 }
@@ -1152,18 +1152,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         // Settings
         .route("/api/settings", get(get_settings))
         .route("/api/settings/initialize", post(post_initialize))
-        // Profiles
-        .route("/api/profiles", get(get_profiles).post(post_profiles))
-        .route("/api/profiles/{slug}", get(get_profile).delete(delete_profile_handler))
-        .route("/api/profiles/{slug}/save", post(post_profile_save))
-        .route("/api/profiles/{slug}/fixtures", put(put_profile_fixtures))
-        .route("/api/profiles/{slug}/setup", put(put_profile_setup))
+        // Setups
+        .route("/api/setups", get(get_setups).post(post_setups))
+        .route("/api/setups/{slug}", get(get_setup).delete(delete_setup_handler))
+        .route("/api/setups/{slug}/save", post(post_setup_save))
+        .route("/api/setups/{slug}/fixtures", put(put_setup_fixtures))
+        .route("/api/setups/{slug}/setup", put(put_setup_outputs))
         // Sequences
-        .route("/api/profiles/{slug}/sequences", get(get_sequences).post(post_sequences))
-        .route("/api/profiles/{profile_slug}/sequences/{seq_slug}", get(get_sequence).delete(delete_sequence_handler))
+        .route("/api/setups/{slug}/sequences", get(get_sequences).post(post_sequences))
+        .route("/api/setups/{setup_slug}/sequences/{seq_slug}", get(get_sequence).delete(delete_sequence_handler))
         // Media
-        .route("/api/profiles/{slug}/media", get(get_media).post(post_media))
-        .route("/api/profiles/{slug}/media/{filename}", delete(delete_media_handler))
+        .route("/api/setups/{slug}/media", get(get_media).post(post_media))
+        .route("/api/setups/{slug}/media/{filename}", delete(delete_media_handler))
         // Rendering & describe
         .route("/api/frame", get(get_frame))
         .route("/api/describe", get(get_describe))

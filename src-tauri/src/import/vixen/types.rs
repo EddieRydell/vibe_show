@@ -46,7 +46,7 @@ pub struct VixenMediaInfo {
 #[ts(export)]
 pub struct VixenImportConfig {
     pub vixen_dir: String,
-    pub profile_name: String,
+    pub setup_name: String,
     pub import_controllers: bool,
     pub import_layout: bool,
     /// Optional user-provided path to the file containing preview/layout data.
@@ -60,7 +60,7 @@ pub struct VixenImportConfig {
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 pub struct VixenImportResult {
-    pub profile_slug: String,
+    pub setup_slug: String,
     pub fixtures_imported: usize,
     pub groups_imported: usize,
     pub controllers_imported: usize,

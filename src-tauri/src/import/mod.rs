@@ -11,7 +11,7 @@ use crate::model::color::Color;
 // Centralized so that callers (api.rs, commands.rs, registry handlers)
 // don't hard-code file/directory names.
 
-/// Directory inside a Vixen 3 profile containing system configuration.
+/// Directory inside a Vixen 3 project containing system configuration.
 pub const VIXEN_SYSTEM_DATA_DIR: &str = "SystemData";
 
 /// Main Vixen system-config filename.

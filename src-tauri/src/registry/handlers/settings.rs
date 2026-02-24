@@ -6,18 +6,18 @@ use std::sync::Arc;
 
 use crate::error::AppError;
 use crate::registry::params::{InitializeDataDirParams, SetLlmConfigParams};
-use crate::registry::CommandOutput;
+use crate::registry::{CommandOutput, CommandResult};
 use crate::settings::{self, AppSettings, ChatMode, LlmConfigInfo, LlmProvider, LlmProviderConfig};
 use crate::state::AppState;
 
 pub fn get_settings(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let settings = state.settings.lock().clone();
-    Ok(CommandOutput::json("Settings", &settings))
+    Ok(CommandOutput::new("Settings", CommandResult::GetSettings(settings)))
 }
 
 pub fn get_api_port(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let port = state.api_port.load(Ordering::Relaxed);
-    Ok(CommandOutput::json("API port", &port))
+    Ok(CommandOutput::new("API port", CommandResult::GetApiPort(port)))
 }
 
 pub fn initialize_data_dir(
@@ -25,7 +25,7 @@ pub fn initialize_data_dir(
     p: InitializeDataDirParams,
 ) -> Result<CommandOutput, AppError> {
     let data_path = PathBuf::from(&p.data_dir);
-    std::fs::create_dir_all(data_path.join("profiles"))?;
+    std::fs::create_dir_all(data_path.join("setups"))?;
 
     let new_settings = AppSettings::new(data_path);
     settings::save_settings(&state.app_config_dir, &new_settings)
@@ -34,7 +34,7 @@ pub fn initialize_data_dir(
         })?;
 
     *state.settings.lock() = Some(new_settings.clone());
-    Ok(CommandOutput::json("Data directory initialized.", &new_settings))
+    Ok(CommandOutput::new("Data directory initialized.", CommandResult::InitializeDataDir(new_settings)))
 }
 
 pub fn set_llm_config(
@@ -69,7 +69,7 @@ pub fn set_llm_config(
             state.agent_port.store(0, std::sync::atomic::Ordering::Relaxed);
         }
     }
-    Ok(CommandOutput::unit("LLM config updated."))
+    Ok(CommandOutput::new("LLM config updated.", CommandResult::SetLlmConfig))
 }
 
 pub fn get_llm_config(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
@@ -83,5 +83,5 @@ pub fn get_llm_config(state: &Arc<AppState>) -> Result<CommandOutput, AppError> 
         },
         |s| LlmConfigInfo::from_config(&s.llm, s.chat_mode),
     );
-    Ok(CommandOutput::json("LLM config", &info))
+    Ok(CommandOutput::new("LLM config", CommandResult::GetLlmConfig(info)))
 }

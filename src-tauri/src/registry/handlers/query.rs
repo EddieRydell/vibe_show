@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde::Serialize;
+use ts_rs::TS;
 
 use crate::describe;
 use crate::effects::{self, resolve_effect};
@@ -10,40 +11,62 @@ use crate::error::AppError;
 use crate::model::EffectKind;
 use crate::registry::params::GetEffectDetailParams;
 use crate::registry::reference;
-use crate::registry::CommandOutput;
+use crate::registry::{CommandOutput, CommandResult};
 use crate::state::{AppState, EffectDetail, EffectInfo};
+
+/// A single entry in the effect catalog.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct EffectCatalogEntry {
+    pub kind: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub effect_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<Vec<EffectCatalogParam>>,
+}
+
+/// A parameter in an effect catalog entry.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct EffectCatalogParam {
+    pub key: String,
+    pub label: String,
+    #[serde(rename = "type")]
+    pub param_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<crate::model::ParamValue>,
+}
 
 pub fn get_show(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let show = state.show.lock();
     let summary = describe::summarize_show(&show);
-    Ok(CommandOutput::data(summary, serde_json::to_value(&*show).unwrap_or_default()))
+    Ok(CommandOutput::new(summary, CommandResult::GetShow(Box::new(show.clone()))))
 }
 
 pub fn get_effect_catalog(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let _show = state.show.lock();
-    let mut catalog = Vec::new();
+    let mut catalog: Vec<EffectCatalogEntry> = Vec::new();
 
     // Built-in effects
     for kind in EffectKind::all_builtin() {
         if let Some(effect) = effects::resolve_effect(kind) {
-            let schemas = effect.param_schema();
-            let params: Vec<Value> = schemas
+            let params: Vec<EffectCatalogParam> = effect
+                .param_schema()
                 .iter()
-                .map(|s| {
-                    serde_json::json!({
-                        "key": format!("{:?}", s.key),
-                        "label": s.label,
-                        "type": format!("{:?}", s.param_type),
-                        "default": s.default,
-                    })
+                .map(|s| EffectCatalogParam {
+                    key: format!("{:?}", s.key),
+                    label: s.label.clone(),
+                    param_type: format!("{:?}", s.param_type),
+                    default: Some(s.default.clone()),
                 })
                 .collect();
-            catalog.push(serde_json::json!({
-                "kind": format!("{kind:?}"),
-                "name": effect.name(),
-                "type": "builtin",
-                "params": params,
-            }));
+            catalog.push(EffectCatalogEntry {
+                kind: format!("{kind:?}"),
+                name: effect.name().to_string(),
+                effect_type: "builtin".to_string(),
+                params: Some(params),
+            });
         }
     }
 
@@ -51,46 +74,39 @@ pub fn get_effect_catalog(state: &Arc<AppState>) -> Result<CommandOutput, AppErr
     {
         let libs = state.global_libraries.lock();
         for (script_name, source) in &libs.scripts {
-            let mut entry = serde_json::json!({
-                "kind": format!("Script(\"{script_name}\")"),
-                "name": script_name,
-                "type": "script",
-            });
-            if let Ok(compiled) = crate::dsl::compile_source(source) {
-                let params: Vec<Value> = compiled
+            let params = crate::dsl::compile_source(source).ok().map(|compiled| {
+                compiled
                     .params
                     .iter()
-                    .map(|p| {
-                        serde_json::json!({
-                            "key": format!("Custom(\"{}\")", p.name),
-                            "label": p.name,
-                            "type": format!("{:?}", p.ty),
-                        })
+                    .map(|p| EffectCatalogParam {
+                        key: format!("Custom(\"{}\")", p.name),
+                        label: p.name.clone(),
+                        param_type: format!("{:?}", p.ty),
+                        default: None,
                     })
-                    .collect();
-                if let Some(obj) = entry.as_object_mut() {
-                    obj.insert("params".to_string(), Value::Array(params));
-                }
-            }
-            catalog.push(entry);
+                    .collect()
+            });
+            catalog.push(EffectCatalogEntry {
+                kind: format!("Script(\"{script_name}\")"),
+                name: script_name.clone(),
+                effect_type: "script".to_string(),
+                params,
+            });
         }
     }
 
-    Ok(CommandOutput::data(
+    Ok(CommandOutput::new(
         serde_json::to_string_pretty(&catalog).unwrap_or_default(),
-        Value::Array(catalog),
+        CommandResult::GetEffectCatalog(catalog),
     ))
 }
 
-pub fn get_design_guide() -> Result<CommandOutput, AppError> {
+pub fn get_design_guide(_state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let guide = reference::design_guide();
-    Ok(CommandOutput::data(
-        guide.clone(),
-        serde_json::json!(guide),
-    ))
+    Ok(CommandOutput::new(guide.clone(), CommandResult::GetDesignGuide(guide)))
 }
 
-pub fn list_effects() -> Result<CommandOutput, AppError> {
+pub fn list_effects(_state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let effects: Vec<EffectInfo> = crate::state::all_effect_info();
     let mut lines = vec![format!("{} effect types available:", effects.len())];
     for e in &effects {
@@ -102,7 +118,7 @@ pub fn list_effects() -> Result<CommandOutput, AppError> {
             if param_names.is_empty() { "none".to_string() } else { param_names.join(", ") }
         ));
     }
-    Ok(CommandOutput::data(lines.join("\n"), serde_json::to_value(&effects).unwrap_or_default()))
+    Ok(CommandOutput::new(lines.join("\n"), CommandResult::ListEffects(effects)))
 }
 
 pub fn get_effect_detail(
@@ -151,5 +167,5 @@ pub fn get_effect_detail(
         "Effect on track \"{}\" [{}:{}]: {}",
         track.name, p.track_index, p.effect_index, effect_desc
     );
-    Ok(CommandOutput::data(message, serde_json::to_value(&detail).unwrap_or_default()))
+    Ok(CommandOutput::new(message, CommandResult::GetEffectDetail(detail)))
 }

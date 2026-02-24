@@ -2,4 +2,4 @@
 import type { Controller } from "./Controller";
 import type { Patch } from "./Patch";
 
-export type UpdateProfileSetupParams = { controllers: Array<Controller>, patches: Array<Patch>, };
+export type UpdateSetupOutputsParams = { controllers: Array<Controller>, patches: Array<Patch>, };

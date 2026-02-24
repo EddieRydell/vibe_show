@@ -25,7 +25,7 @@ import { deduplicateEffectKeys, makeEffectKey } from "../utils/effectKey";
 import type { InteractionMode } from "../types";
 
 interface Props {
-  profileSlug: string;
+  setupSlug: string;
   sequenceSlug: string;
   onBack: () => void;
   onOpenScript?: (name: string | null) => void;

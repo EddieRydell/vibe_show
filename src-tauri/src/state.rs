@@ -16,7 +16,7 @@ use crate::error::AppError;
 use crate::model::analysis::AudioAnalysis;
 use crate::model::show::Show;
 use crate::model::{BlendMode, EffectKind, EffectParams, ParamSchema, TimeRange};
-use crate::profile::LibrariesFile;
+use crate::setup::LibrariesFile;
 use crate::settings::AppSettings;
 
 // ── Cancellation Registry ──────────────────────────────────────────
@@ -103,7 +103,7 @@ pub struct AppState {
     pub api_port: AtomicU16,
     pub app_config_dir: PathBuf,
     pub settings: Mutex<Option<AppSettings>>,
-    pub current_profile: Mutex<Option<String>>,
+    pub current_setup: Mutex<Option<String>>,
     pub current_sequence: Mutex<Option<String>>,
     /// Cache of compiled DSL scripts. Key is script name, value is compiled bytecode.
     pub script_cache: Mutex<HashMap<String, Arc<CompiledScript>>>,
@@ -123,7 +123,7 @@ pub struct AppState {
     pub agent_display_messages: Mutex<Vec<crate::chat::ChatHistoryEntry>>,
     /// Multi-conversation agent chat data.
     pub agent_chats: Mutex<crate::chat::AgentChatsData>,
-    /// Global libraries (gradients, curves, scripts). Shared across all profiles/sequences.
+    /// Global libraries (gradients, curves, scripts). Shared across all setups/sequences.
     pub global_libraries: Mutex<LibrariesFile>,
     /// Cancellation flags for long-running operations.
     pub cancellation: CancellationRegistry,
@@ -184,9 +184,9 @@ impl AppState {
         f(&mut guard)
     }
 
-    /// Get the current profile slug, or error if none is loaded.
-    pub fn require_profile(&self) -> Result<String, AppError> {
-        self.current_profile.lock().clone().ok_or(AppError::NoProfile)
+    /// Get the current setup slug, or error if none is loaded.
+    pub fn require_setup(&self) -> Result<String, AppError> {
+        self.current_setup.lock().clone().ok_or(AppError::NoSetup)
     }
 
     /// Get the current sequence slug, or error if none is loaded.
@@ -246,7 +246,7 @@ pub struct PlaybackState {
     pub looping: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
 pub struct PlaybackInfo {
@@ -258,7 +258,7 @@ pub struct PlaybackInfo {
     pub looping: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
 pub struct EffectDetail {
@@ -271,7 +271,7 @@ pub struct EffectDetail {
     pub opacity: f64,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
 pub struct EffectInfo {

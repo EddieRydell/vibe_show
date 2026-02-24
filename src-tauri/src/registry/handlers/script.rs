@@ -7,17 +7,14 @@ use crate::registry::params::{
     CompileScriptParams, CompileScriptPreviewParams, NameParams, RenameParams, WriteScriptParams,
 };
 use crate::registry::reference;
-use crate::registry::CommandOutput;
+use crate::registry::{CommandOutput, CommandResult};
 use crate::state::AppState;
 
 use super::global_lib;
 
-pub fn get_dsl_reference() -> Result<CommandOutput, AppError> {
+pub fn get_dsl_reference(_state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let reference = reference::dsl_reference();
-    Ok(CommandOutput::data(
-        reference.clone(),
-        serde_json::json!(reference),
-    ))
+    Ok(CommandOutput::new(reference.clone(), CommandResult::GetDslReference(reference)))
 }
 
 pub fn write_global_script(
@@ -38,16 +35,19 @@ pub fn write_global_script(
             state.global_libraries.lock().scripts.insert(p.name.clone(), p.source);
             global_lib::persist_inner(state);
             if params_desc.is_empty() {
-                Ok(CommandOutput::unit(format!(
-                    "Compiled \"{}\" (no params).",
-                    p.name
-                )))
+                Ok(CommandOutput::new(
+                    format!("Compiled \"{}\" (no params).", p.name),
+                    CommandResult::WriteGlobalScript,
+                ))
             } else {
-                Ok(CommandOutput::unit(format!(
-                    "Compiled \"{}\" with params: {}.",
-                    p.name,
-                    params_desc.join(", ")
-                )))
+                Ok(CommandOutput::new(
+                    format!(
+                        "Compiled \"{}\" with params: {}.",
+                        p.name,
+                        params_desc.join(", ")
+                    ),
+                    CommandResult::WriteGlobalScript,
+                ))
             }
         }
         Err(errors) => {
@@ -71,10 +71,7 @@ pub fn get_global_script_source(
         .ok_or_else(|| AppError::NotFound {
             what: format!("Script \"{}\"", p.name),
         })?;
-    Ok(CommandOutput::data(
-        source.clone(),
-        serde_json::json!(source),
-    ))
+    Ok(CommandOutput::new(source.clone(), CommandResult::GetGlobalScriptSource(source)))
 }
 
 pub fn delete_global_script(
@@ -84,18 +81,18 @@ pub fn delete_global_script(
     state.global_libraries.lock().scripts.remove(&p.name);
     state.script_cache.lock().remove(&p.name);
     global_lib::persist_inner(state);
-    Ok(CommandOutput::unit(format!(
-        "Script \"{}\" deleted.",
-        p.name
-    )))
+    Ok(CommandOutput::new(
+        format!("Script \"{}\" deleted.", p.name),
+        CommandResult::DeleteGlobalScript,
+    ))
 }
 
 pub fn list_global_scripts(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let libs = state.global_libraries.lock();
-    let names: Vec<&String> = libs.scripts.keys().collect();
-    Ok(CommandOutput::json(
-        serde_json::to_string(&names).unwrap_or_default(),
-        &names,
+    let pairs: Vec<(String, String)> = libs.scripts.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    Ok(CommandOutput::new(
+        serde_json::to_string(&pairs).unwrap_or_default(),
+        CommandResult::ListGlobalScripts(pairs),
     ))
 }
 
@@ -108,14 +105,17 @@ pub fn compile_global_script(
         state.global_libraries.lock().scripts.insert(p.name, p.source);
         global_lib::persist_inner(state);
     }
-    Ok(super::common::compile_result_output(&result))
+    let msg = if result.success { "Compiled and saved." } else { "Compile failed." };
+    Ok(CommandOutput::new(msg, CommandResult::CompileScript(result)))
 }
 
 pub fn compile_script_preview(
+    _state: &Arc<AppState>,
     p: CompileScriptPreviewParams,
 ) -> Result<CommandOutput, AppError> {
     let result = super::common::compile_preview(String::new(), &p.source);
-    Ok(super::common::compile_result_output(&result))
+    let msg = if result.success { "Compiled and saved." } else { "Compile failed." };
+    Ok(CommandOutput::new(msg, CommandResult::CompileScriptPreview(result)))
 }
 
 pub fn rename_global_script(
@@ -135,10 +135,10 @@ pub fn rename_global_script(
         }
     }
     global_lib::persist_inner(state);
-    Ok(CommandOutput::unit(format!(
-        "Script renamed to \"{}\".",
-        p.new_name
-    )))
+    Ok(CommandOutput::new(
+        format!("Script renamed to \"{}\".", p.new_name),
+        CommandResult::RenameGlobalScript,
+    ))
 }
 
 pub fn get_script_params(
@@ -150,8 +150,8 @@ pub fn get_script_params(
         message: format!("Script '{}' not found in cache", p.name),
     })?;
     let params = crate::commands::extract_script_params(compiled);
-    Ok(CommandOutput::json(
+    Ok(CommandOutput::new(
         format!("{} params.", params.len()),
-        &params,
+        CommandResult::GetScriptParams(params),
     ))
 }

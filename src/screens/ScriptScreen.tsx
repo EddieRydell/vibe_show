@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { cmd } from "../commands";
 import { Save, Sparkles, MessageSquare } from "lucide-react";
@@ -19,20 +18,10 @@ import type {
 type ScriptParams = Record<string, ParamValue>;
 
 interface Props {
-  profileSlug: string;
   initialScriptName: string | null;
   onBack: () => void;
   onOpenScript: (name: string) => void;
 }
-
-const PROMPT_SUGGESTIONS = [
-  { label: "Rainbow chase", prompt: "Create a rainbow chase effect that smoothly cycles through the color spectrum across pixels" },
-  { label: "Fire flicker", prompt: "Create a realistic fire flicker effect with warm orange, red, and yellow colors" },
-  { label: "Sparkle twinkle", prompt: "Create a twinkling sparkle effect with random white stars on a dark background" },
-  { label: "Ocean waves", prompt: "Create a calming ocean wave effect with blues and teals that slowly move" },
-  { label: "Strobe pulse", prompt: "Create a strobe/pulse effect with a speed parameter" },
-  { label: "Color breathe", prompt: "Create a breathing/pulsing effect that fades a color in and out smoothly" },
-];
 
 export function ScriptScreen({
   initialScriptName,
@@ -203,15 +192,7 @@ export function ScriptScreen({
     }
   }, [currentScript]);
 
-  const handleNewScript = useCallback(async () => {
-    const scripts = await cmd.listGlobalScripts();
-    const existingNames = scripts.map(([n]) => n);
-    let name = "new_script";
-    let counter = 1;
-    while (existingNames.includes(name)) {
-      name = `new_script_${counter}`;
-      counter++;
-    }
+  const handleNewScript = useCallback(async (name: string) => {
     const defaultSource = `@name "${name}"\n\nlet c = hsv(t * 360.0, 1.0, 1.0)\nc\n`;
     await cmd.compileGlobalScript(name, defaultSource);
     setBrowserRefreshKey((k) => k + 1);
@@ -225,16 +206,6 @@ export function ScriptScreen({
   const handleParamChange = useCallback((values: ScriptParams) => {
     setParamValues(values);
   }, []);
-
-  const handlePromptSend = useCallback(async (prompt: string) => {
-    // Ensure chat is open, then send the prompt
-    if (!chatOpen) toggleChat();
-    try {
-      await invoke("send_chat_message", { message: prompt });
-    } catch {
-      // ChatPanel will show the error
-    }
-  }, [chatOpen, toggleChat]);
 
   const subtitle = currentScript
     ? `: ${currentScript}${dirty ? " *" : ""}`
@@ -279,7 +250,6 @@ export function ScriptScreen({
           ) : (
             <WelcomePanel
               onNewScript={handleNewScript}
-              onPromptSend={handlePromptSend}
               chatOpen={chatOpen}
               onOpenChat={toggleChat}
             />
@@ -349,15 +319,33 @@ export function ScriptScreen({
 /** Welcome panel shown when no script is selected — AI-first experience. */
 function WelcomePanel({
   onNewScript,
-  onPromptSend,
   chatOpen,
   onOpenChat,
 }: {
-  onNewScript: () => void;
-  onPromptSend: (prompt: string) => void;
+  onNewScript: (name: string) => void;
   chatOpen: boolean;
   onOpenChat: () => void;
 }) {
+  const [showNameInput, setShowNameInput] = useState(false);
+  const [nameValue, setNameValue] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (showNameInput) inputRef.current?.focus();
+  }, [showNameInput]);
+
+  const commit = useCallback(() => {
+    const trimmed = nameValue.trim();
+    if (!trimmed) {
+      setShowNameInput(false);
+      setNameValue("");
+      return;
+    }
+    setShowNameInput(false);
+    setNameValue("");
+    onNewScript(trimmed);
+  }, [nameValue, onNewScript]);
+
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 p-8">
       <div className="flex flex-col items-center gap-2">
@@ -369,46 +357,41 @@ function WelcomePanel({
         </p>
       </div>
 
-      {/* Quick prompt suggestions */}
-      <div className="flex max-w-lg flex-col gap-3">
-        <span className="text-text-2 text-center text-[11px] font-medium uppercase tracking-wide">
-          Quick start — click to generate
-        </span>
-        <div className="flex flex-wrap justify-center gap-2">
-          {PROMPT_SUGGESTIONS.map((s) => (
-            <button
-              key={s.label}
-              onClick={() => {
-                if (!chatOpen) onOpenChat();
-                // Small delay to let chat panel open
-                setTimeout(() => onPromptSend(s.prompt), 100);
-              }}
-              className="border-border bg-surface hover:border-primary hover:text-primary rounded-full border px-3 py-1.5 text-xs transition-colors"
-            >
-              {s.label}
-            </button>
-          ))}
+      {showNameInput ? (
+        <div className="flex items-center gap-2">
+          <input
+            ref={inputRef}
+            type="text"
+            value={nameValue}
+            onChange={(e) => setNameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit();
+              if (e.key === "Escape") { setShowNameInput(false); setNameValue(""); }
+            }}
+            onBlur={commit}
+            placeholder="Script name"
+            className="border-border bg-surface-2 text-text placeholder:text-text-2 rounded border px-3 py-1.5 text-sm outline-none focus:border-primary"
+          />
         </div>
-      </div>
-
-      {/* Manual options */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={onNewScript}
-          className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-4 py-2 text-xs transition-colors"
-        >
-          New blank script
-        </button>
-        {!chatOpen && (
+      ) : (
+        <div className="flex items-center gap-3">
           <button
-            onClick={onOpenChat}
-            className="bg-primary hover:bg-primary/90 flex items-center gap-1.5 rounded px-4 py-2 text-xs text-white transition-colors"
+            onClick={() => setShowNameInput(true)}
+            className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-4 py-2 text-xs transition-colors"
           >
-            <MessageSquare size={12} />
-            Open AI Chat
+            New blank script
           </button>
-        )}
-      </div>
+          {!chatOpen && (
+            <button
+              onClick={onOpenChat}
+              className="bg-primary hover:bg-primary/90 flex items-center gap-1.5 rounded px-4 py-2 text-xs text-white transition-colors"
+            >
+              <MessageSquare size={12} />
+              Open AI Chat
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

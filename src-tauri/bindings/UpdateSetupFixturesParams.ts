@@ -2,4 +2,4 @@
 import type { FixtureDef } from "./FixtureDef";
 import type { FixtureGroup } from "./FixtureGroup";
 
-export type UpdateProfileFixturesParams = { fixtures: Array<FixtureDef>, groups: Array<FixtureGroup>, };
+export type UpdateSetupFixturesParams = { fixtures: Array<FixtureDef>, groups: Array<FixtureGroup>, };

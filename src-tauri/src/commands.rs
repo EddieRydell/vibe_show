@@ -17,7 +17,7 @@ use crate::engine::{self, Frame};
 use crate::error::AppError;
 use crate::import::vixen::{VixenImportConfig, VixenImportResult};
 use crate::model::{AnalysisFeatures, AudioAnalysis, PythonEnvStatus, Show};
-use crate::profile::{self, Profile};
+use crate::setup::{self, Setup};
 use crate::progress::emit_progress;
 use crate::python;
 use crate::state::{self, check_cancelled, AppState};
@@ -54,23 +54,23 @@ pub async fn open_sequence(
     slug: String,
 ) -> Result<Show, AppError> {
     let data_dir = get_data_dir(&state)?;
-    let profile_slug = state.require_profile()?;
+    let setup_slug = state.require_setup()?;
     let state_arc = (*state).clone();
     let app = app_handle.clone();
 
     let result = tokio::time::timeout(
         tokio::time::Duration::from_secs(30),
         tokio::task::spawn_blocking(move || {
-            emit_progress(&app, "open_sequence", "Loading profile...", 0.1, None);
-            let profile_data =
-                profile::load_profile(&data_dir, &profile_slug).map_err(AppError::from)?;
+            emit_progress(&app, "open_sequence", "Loading setup...", 0.1, None);
+            let setup_data =
+                setup::load_setup(&data_dir, &setup_slug).map_err(AppError::from)?;
 
             emit_progress(&app, "open_sequence", "Loading sequence...", 0.4, None);
             let sequence =
-                profile::load_sequence(&data_dir, &profile_slug, &slug).map_err(AppError::from)?;
+                setup::load_sequence(&data_dir, &setup_slug, &slug).map_err(AppError::from)?;
 
             emit_progress(&app, "open_sequence", "Assembling show...", 0.7, None);
-            let assembled = profile::assemble_show(&profile_data, &sequence);
+            let assembled = setup::assemble_show(&setup_data, &sequence);
 
             *state_arc.show.lock() = assembled.clone();
             state_arc.dispatcher.lock().clear();
@@ -105,6 +105,159 @@ pub async fn open_sequence(
             emit_progress(&app_handle, "open_sequence", "Timed out", 1.0, None);
             Err(AppError::ApiError {
                 message: "Opening sequence timed out after 30 seconds".into(),
+            })
+        }
+    }
+}
+
+/// Scan a Vixen 3 directory to discover fixtures, sequences, media, and preview data.
+/// Runs on a blocking thread with progress events so the UI stays responsive.
+#[tauri::command]
+pub async fn scan_vixen_directory(
+    app_handle: tauri::AppHandle,
+    vixen_dir: String,
+) -> Result<crate::import::vixen::VixenDiscovery, AppError> {
+    use crate::import::vixen_preview;
+    use crate::import::vixen::{VixenDiscovery, VixenMediaInfo, VixenSequenceInfo};
+
+    let app = app_handle.clone();
+
+    let result = tokio::time::timeout(
+        tokio::time::Duration::from_secs(120),
+        tokio::task::spawn_blocking(move || {
+            let vixen_path = std::path::Path::new(&vixen_dir);
+            let config_path = vixen_path
+                .join(crate::import::VIXEN_SYSTEM_DATA_DIR)
+                .join(crate::import::VIXEN_SYSTEM_CONFIG_FILE);
+            if !config_path.exists() {
+                return Err(AppError::ImportError {
+                    message: format!(
+                        "Not a valid Vixen 3 directory: SystemData/SystemConfig.xml not found in {vixen_dir}",
+                    ),
+                });
+            }
+
+            // Phase 1: Parse SystemConfig
+            emit_progress(&app, "scan", "Reading system config...", 0.1, None);
+            let mut importer = crate::import::vixen::VixenImporter::new();
+            importer
+                .parse_system_config(&config_path)
+                .map_err(|e| AppError::ImportError { message: e.to_string() })?;
+
+            let fixtures_found = importer.fixture_count();
+            let groups_found = importer.group_count();
+            let controllers_found = importer.controller_count();
+
+            // Phase 2: Find and parse preview file
+            emit_progress(&app, "scan", "Searching for preview layout...", 0.4, None);
+            let preview_file = vixen_preview::find_preview_file(vixen_path);
+            let (preview_available, preview_item_count) = if let Some(ref pf) = preview_file {
+                emit_progress(
+                    &app,
+                    "scan",
+                    "Parsing preview layout...",
+                    0.6,
+                    pf.file_name()
+                        .and_then(|n| n.to_str()),
+                );
+                match vixen_preview::parse_preview_file(pf) {
+                    Ok(data) => (!data.display_items.is_empty(), data.display_items.len()),
+                    Err(_) => (false, 0),
+                }
+            } else {
+                (false, 0)
+            };
+            let preview_file_path = preview_file.map(|p| p.to_string_lossy().to_string());
+
+            // Phase 3: List sequences
+            emit_progress(&app, "scan", "Listing sequences...", 0.8, None);
+            let mut sequences = Vec::new();
+            let seq_dir = vixen_path.join("Sequence");
+            if seq_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&seq_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() {
+                            let ext = path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            if ext == crate::import::VIXEN_SEQUENCE_EXT {
+                                let filename = path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string();
+                                let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                                sequences.push(VixenSequenceInfo {
+                                    filename,
+                                    path: path.to_string_lossy().to_string(),
+                                    size_bytes,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            sequences.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+            // Phase 4: List media
+            emit_progress(&app, "scan", "Listing media files...", 0.9, None);
+            let mut media_files = Vec::new();
+            let media_dir = vixen_path.join("Media");
+            if media_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&media_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() {
+                            let ext = path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            if setup::MEDIA_EXTENSIONS.contains(&ext.as_str()) {
+                                let filename = path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string();
+                                let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                                media_files.push(VixenMediaInfo {
+                                    filename,
+                                    path: path.to_string_lossy().to_string(),
+                                    size_bytes,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            media_files.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+            emit_progress(&app, "scan", "Scan complete", 1.0, None);
+
+            Ok(VixenDiscovery {
+                vixen_dir,
+                fixtures_found,
+                groups_found,
+                controllers_found,
+                preview_available,
+                preview_item_count,
+                preview_file_path,
+                sequences,
+                media_files,
+            })
+        }),
+    )
+    .await;
+
+    match result {
+        Ok(join_result) => join_result.map_err(|e| AppError::ApiError { message: e.to_string() })?,
+        Err(_elapsed) => {
+            emit_progress(&app_handle, "scan", "Scan timed out", 1.0, None);
+            Err(AppError::ImportError {
+                message: "Directory scan timed out after 2 minutes".into(),
             })
         }
     }
@@ -199,16 +352,16 @@ pub async fn execute_vixen_import(
             };
             let layout_items_imported = layout_items.len();
 
-            // Phase 4: Save profile
+            // Phase 4: Save setup
             check_cancelled(&cancel_flag, "import")?;
-            emit_progress(&app, "import", "Saving profile...", 0.65, None);
-            let profile_name = if config.profile_name.trim().is_empty() {
+            emit_progress(&app, "import", "Saving setup...", 0.65, None);
+            let setup_name = if config.setup_name.trim().is_empty() {
                 "Vixen Import".to_string()
             } else {
-                config.profile_name.trim().to_string()
+                config.setup_name.trim().to_string()
             };
             let summary =
-                profile::create_profile(&data_dir, &profile_name).map_err(AppError::from)?;
+                setup::create_setup(&data_dir, &setup_name).map_err(AppError::from)?;
 
             let layout = if layout_items.is_empty() {
                 show.layout.clone()
@@ -218,8 +371,8 @@ pub async fn execute_vixen_import(
                 }
             };
 
-            let prof = Profile {
-                name: profile_name,
+            let prof = Setup {
+                name: setup_name,
                 slug: summary.slug.clone(),
                 fixtures: show.fixtures.clone(),
                 groups: show.groups.clone(),
@@ -235,9 +388,9 @@ pub async fn execute_vixen_import(
                 },
                 layout,
             };
-            profile::save_profile(&data_dir, &summary.slug, &prof).map_err(AppError::from)?;
+            setup::save_setup(&data_dir, &summary.slug, &prof).map_err(AppError::from)?;
 
-            profile::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map)
+            setup::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map)
                 .map_err(AppError::from)?;
 
             // Phase 5: Copy media (before saving sequences so audio_file can be remapped)
@@ -249,7 +402,7 @@ pub async fn execute_vixen_import(
                     check_cancelled(&cancel_flag, "import")?;
                     let source = vixen_path.join("Media").join(media_filename);
                     if source.exists() {
-                        match profile::import_media(&data_dir, &summary.slug, &source) {
+                        match setup::import_media(&data_dir, &summary.slug, &source) {
                             Ok(_) => media_imported += 1,
                             Err(e) => {
                                 eprintln!("[VibeLights] Media import warning: {e}");
@@ -290,11 +443,11 @@ pub async fn execute_vixen_import(
                         }
                     }
                 }
-                if let Err(e) = profile::create_sequence(&data_dir, &summary.slug, &seq.name) {
+                if let Err(e) = setup::create_sequence(&data_dir, &summary.slug, &seq.name) {
                     eprintln!("[VibeLights] Failed to create sequence entry: {e}");
                 }
                 let seq_slug = crate::project::slugify(&seq.name);
-                profile::save_sequence(&data_dir, &summary.slug, &seq_slug, &seq)
+                setup::save_sequence(&data_dir, &summary.slug, &seq_slug, &seq)
                     .map_err(AppError::from)?;
             }
 
@@ -302,7 +455,7 @@ pub async fn execute_vixen_import(
             emit_progress(&app, "import", "Import complete", 1.0, None);
 
             Ok(VixenImportResult {
-                profile_slug: summary.slug,
+                setup_slug: summary.slug,
                 fixtures_imported,
                 groups_imported,
                 controllers_imported,
@@ -349,13 +502,13 @@ pub async fn analyze_audio(
         })?;
 
     // Validate audio filename to prevent path traversal
-    profile::validate_filename(&audio_file).map_err(|_| AppError::ValidationError {
+    setup::validate_filename(&audio_file).map_err(|_| AppError::ValidationError {
         message: format!("Invalid audio filename: {audio_file}"),
     })?;
 
     let data_dir = state::get_data_dir(&state).map_err(|_| AppError::NoSettings)?;
-    let profile_slug = state.require_profile()?;
-    let media_dir = crate::paths::media_dir(&data_dir, &profile_slug);
+    let setup_slug = state.require_setup()?;
+    let media_dir = crate::paths::media_dir(&data_dir, &setup_slug);
     let audio_path = media_dir.join(&audio_file);
 
     if !audio_path.exists() {
@@ -774,12 +927,15 @@ pub async fn clear_agent_session(
 // ── Unified command registry ─────────────────────────────────────
 
 /// Execute any Command through the unified registry.
+/// Returns the typed `CommandResult` directly — the frontend doesn't need
+/// the `message` field (that's for LLM/CLI paths).
 #[tauri::command]
 pub fn exec(
     state: State<Arc<AppState>>,
     cmd: crate::registry::Command,
-) -> Result<crate::registry::CommandOutput, AppError> {
-    crate::registry::execute::execute(&state, cmd)
+) -> Result<crate::registry::CommandResult, AppError> {
+    let output = crate::registry::execute::execute(&state, cmd)?;
+    Ok(output.result)
 }
 
 /// Get the full command registry with schemas.
@@ -792,7 +948,7 @@ pub fn get_command_registry() -> serde_json::Value {
 
 pub use crate::state::EffectDetail;
 
-#[derive(serde::Serialize, ts_rs::TS)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[ts(export)]
 pub struct ScriptCompileResult {
     pub success: bool,
@@ -802,7 +958,7 @@ pub struct ScriptCompileResult {
     pub params: Option<Vec<ScriptParamInfo>>,
 }
 
-#[derive(serde::Serialize, ts_rs::TS)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[ts(export)]
 pub struct ScriptParamInfo {
     pub name: String,
@@ -818,7 +974,7 @@ pub struct ScriptPreviewData {
     pub pixels: Vec<u8>,
 }
 
-#[derive(serde::Serialize, ts_rs::TS)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[ts(export)]
 pub struct ScriptError {
     pub message: String,

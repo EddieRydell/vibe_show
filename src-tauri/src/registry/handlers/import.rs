@@ -3,12 +3,12 @@
 use std::sync::Arc;
 
 use crate::error::AppError;
-use crate::profile::{self, MEDIA_EXTENSIONS};
+use crate::setup::{self, MEDIA_EXTENSIONS};
 use crate::registry::params::{
-    CheckVixenPreviewFileParams, ImportVixenParams, ImportVixenProfileParams,
+    CheckVixenPreviewFileParams, ImportVixenParams, ImportVixenSetupParams,
     ImportVixenSequenceParams, ScanVixenDirectoryParams,
 };
-use crate::registry::CommandOutput;
+use crate::registry::{CommandOutput, CommandResult};
 use crate::state::{get_data_dir, AppState};
 
 pub fn import_vixen(
@@ -34,15 +34,15 @@ pub fn import_vixen(
     let guid_map = importer.guid_map().clone();
     let show = importer.into_show();
 
-    let profile_name = if show.name.is_empty() {
+    let setup_name = if show.name.is_empty() {
         "Vixen Import".to_string()
     } else {
         show.name.clone()
     };
-    let summary = profile::create_profile(&data_dir, &profile_name).map_err(AppError::from)?;
+    let summary = setup::create_setup(&data_dir, &setup_name).map_err(AppError::from)?;
 
-    let prof = profile::Profile {
-        name: profile_name,
+    let s = setup::Setup {
+        name: setup_name,
         slug: summary.slug.clone(),
         fixtures: show.fixtures.clone(),
         groups: show.groups.clone(),
@@ -50,30 +50,30 @@ pub fn import_vixen(
         patches: show.patches.clone(),
         layout: show.layout.clone(),
     };
-    profile::save_profile(&data_dir, &summary.slug, &prof).map_err(AppError::from)?;
-    profile::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map)
+    setup::save_setup(&data_dir, &summary.slug, &s).map_err(AppError::from)?;
+    setup::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map)
         .map_err(AppError::from)?;
 
     for seq in &show.sequences {
-        profile::create_sequence(&data_dir, &summary.slug, &seq.name)
+        setup::create_sequence(&data_dir, &summary.slug, &seq.name)
             .map_err(AppError::from)?;
         let seq_slug = crate::project::slugify(&seq.name);
-        profile::save_sequence(&data_dir, &summary.slug, &seq_slug, seq)
+        setup::save_sequence(&data_dir, &summary.slug, &seq_slug, seq)
             .map_err(AppError::from)?;
     }
 
-    let profiles = profile::list_profiles(&data_dir).map_err(AppError::from)?;
-    let updated_summary = profiles
+    let setups = setup::list_setups(&data_dir).map_err(AppError::from)?;
+    let updated_summary = setups
         .into_iter()
-        .find(|p| p.slug == summary.slug)
+        .find(|s| s.slug == summary.slug)
         .unwrap_or(summary);
 
-    Ok(CommandOutput::json("Vixen import complete.", &updated_summary))
+    Ok(CommandOutput::new("Vixen import complete.", CommandResult::ImportVixen(updated_summary)))
 }
 
-pub fn import_vixen_profile(
+pub fn import_vixen_setup(
     state: &Arc<AppState>,
-    p: ImportVixenProfileParams,
+    p: ImportVixenSetupParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
 
@@ -87,11 +87,11 @@ pub fn import_vixen_profile(
     let guid_map = importer.guid_map().clone();
     let show = importer.into_show();
 
-    let profile_name = "Vixen Import".to_string();
-    let summary = profile::create_profile(&data_dir, &profile_name).map_err(AppError::from)?;
+    let setup_name = "Vixen Import".to_string();
+    let summary = setup::create_setup(&data_dir, &setup_name).map_err(AppError::from)?;
 
-    let prof = profile::Profile {
-        name: profile_name,
+    let s = setup::Setup {
+        name: setup_name,
         slug: summary.slug.clone(),
         fixtures: show.fixtures.clone(),
         groups: show.groups.clone(),
@@ -99,19 +99,19 @@ pub fn import_vixen_profile(
         patches: show.patches.clone(),
         layout: show.layout.clone(),
     };
-    profile::save_profile(&data_dir, &summary.slug, &prof).map_err(AppError::from)?;
-    profile::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map)
+    setup::save_setup(&data_dir, &summary.slug, &s).map_err(AppError::from)?;
+    setup::save_vixen_guid_map(&data_dir, &summary.slug, &guid_map)
         .map_err(AppError::from)?;
 
-    let profiles = profile::list_profiles(&data_dir).map_err(AppError::from)?;
-    let updated_summary = profiles
+    let setups = setup::list_setups(&data_dir).map_err(AppError::from)?;
+    let updated_summary = setups
         .into_iter()
-        .find(|p| p.slug == summary.slug)
+        .find(|s| s.slug == summary.slug)
         .unwrap_or(summary);
 
-    Ok(CommandOutput::json(
-        "Vixen profile import complete.",
-        &updated_summary,
+    Ok(CommandOutput::new(
+        "Vixen setup import complete.",
+        CommandResult::ImportVixenSetup(updated_summary),
     ))
 }
 
@@ -121,22 +121,22 @@ pub fn import_vixen_sequence(
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
 
-    let prof =
-        profile::load_profile(&data_dir, &p.profile_slug).map_err(AppError::from)?;
+    let setup_data =
+        setup::load_setup(&data_dir, &p.setup_slug).map_err(AppError::from)?;
     let guid_map =
-        profile::load_vixen_guid_map(&data_dir, &p.profile_slug).map_err(AppError::from)?;
+        setup::load_vixen_guid_map(&data_dir, &p.setup_slug).map_err(AppError::from)?;
 
     if guid_map.is_empty() {
         return Err(AppError::ImportError {
-            message: "No Vixen GUID map found for this profile. Import the profile from Vixen first.".into(),
+            message: "No Vixen GUID map found for this setup. Import the setup from Vixen first.".into(),
         });
     }
 
-    let mut importer = crate::import::vixen::VixenImporter::from_profile(
-        prof.fixtures,
-        prof.groups,
-        prof.controllers,
-        prof.patches,
+    let mut importer = crate::import::vixen::VixenImporter::from_setup(
+        setup_data.fixtures,
+        setup_data.groups,
+        setup_data.controllers,
+        setup_data.patches,
         guid_map,
     );
 
@@ -152,23 +152,23 @@ pub fn import_vixen_sequence(
     })?;
 
     let seq_slug = crate::project::slugify(&seq.name);
-    if let Err(e) = profile::create_sequence(&data_dir, &p.profile_slug, &seq.name) {
+    if let Err(e) = setup::create_sequence(&data_dir, &p.setup_slug, &seq.name) {
         eprintln!("[VibeLights] Failed to create sequence entry: {e}");
     }
-    profile::save_sequence(&data_dir, &p.profile_slug, &seq_slug, &seq)
+    setup::save_sequence(&data_dir, &p.setup_slug, &seq_slug, &seq)
         .map_err(AppError::from)?;
 
-    let summary = profile::SequenceSummary {
+    let summary = setup::SequenceSummary {
         name: seq.name,
         slug: seq_slug,
     };
-    Ok(CommandOutput::json(
+    Ok(CommandOutput::new(
         "Vixen sequence imported.",
-        &summary,
+        CommandResult::ImportVixenSequence(summary),
     ))
 }
 
-pub fn scan_vixen_directory(p: ScanVixenDirectoryParams) -> Result<CommandOutput, AppError> {
+pub fn scan_vixen_directory(_state: &Arc<AppState>, p: ScanVixenDirectoryParams) -> Result<CommandOutput, AppError> {
     use crate::import::vixen_preview;
 
     let vixen_path = std::path::Path::new(&p.vixen_dir);
@@ -277,10 +277,11 @@ pub fn scan_vixen_directory(p: ScanVixenDirectoryParams) -> Result<CommandOutput
         sequences,
         media_files,
     };
-    Ok(CommandOutput::json("Vixen directory scanned.", &discovery))
+    Ok(CommandOutput::new("Vixen directory scanned.", CommandResult::ScanVixenDirectory(Box::new(discovery))))
 }
 
 pub fn check_vixen_preview_file(
+    _state: &Arc<AppState>,
     p: CheckVixenPreviewFileParams,
 ) -> Result<CommandOutput, AppError> {
     use crate::import::vixen_preview;
@@ -304,8 +305,8 @@ pub fn check_vixen_preview_file(
     }
 
     let count = data.display_items.len();
-    Ok(CommandOutput::json(
+    Ok(CommandOutput::new(
         format!("{count} display items found."),
-        &count,
+        CommandResult::CheckVixenPreviewFile(count),
     ))
 }

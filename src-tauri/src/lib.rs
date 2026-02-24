@@ -16,7 +16,7 @@ pub mod import;
 pub mod llm;
 pub mod model;
 pub mod paths;
-pub mod profile;
+pub mod setup;
 #[cfg(feature = "tauri-app")]
 pub mod progress;
 pub mod project;

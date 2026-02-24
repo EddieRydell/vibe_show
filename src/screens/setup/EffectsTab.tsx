@@ -58,20 +58,12 @@ export function EffectsTab({ setError, onOpenScript }: Props) {
       <section>
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-text text-sm font-medium">Custom Scripts</h3>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => onOpenScript(null)}
-              className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-3 py-1 text-xs transition-colors"
-            >
-              Open Effect Studio
-            </button>
-            <button
-              onClick={() => onOpenScript(null)}
-              className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white transition-colors"
-            >
-              New Script
-            </button>
-          </div>
+          <button
+            onClick={() => onOpenScript(null)}
+            className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white transition-colors"
+          >
+            Effect Studio
+          </button>
         </div>
 
         {scripts.length === 0 ? (

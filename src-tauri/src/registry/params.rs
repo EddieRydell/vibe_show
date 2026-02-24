@@ -239,19 +239,19 @@ pub struct SetLlmConfigParams {
     pub chat_mode: Option<ChatMode>,
 }
 
-// ── Profile params ─────────────────────────────────────────────
+// ── Setup params ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
-pub struct CreateProfileParams {
+pub struct CreateSetupParams {
     pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
-pub struct UpdateProfileFixturesParams {
+pub struct UpdateSetupFixturesParams {
     pub fixtures: Vec<FixtureDef>,
     pub groups: Vec<FixtureGroup>,
 }
@@ -259,7 +259,7 @@ pub struct UpdateProfileFixturesParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
-pub struct UpdateProfileSetupParams {
+pub struct UpdateSetupOutputsParams {
     pub controllers: Vec<Controller>,
     pub patches: Vec<Patch>,
 }
@@ -267,7 +267,7 @@ pub struct UpdateProfileSetupParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
-pub struct UpdateProfileLayoutParams {
+pub struct UpdateSetupLayoutParams {
     pub layout: Layout,
 }
 
@@ -381,7 +381,7 @@ pub struct ImportVixenParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
-pub struct ImportVixenProfileParams {
+pub struct ImportVixenSetupParams {
     pub system_config_path: String,
 }
 
@@ -389,7 +389,7 @@ pub struct ImportVixenProfileParams {
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
 pub struct ImportVixenSequenceParams {
-    pub profile_slug: String,
+    pub setup_slug: String,
     pub tim_path: String,
 }
 

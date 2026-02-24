@@ -28,7 +28,7 @@ export function formatTauriError(e: unknown): string {
       if (typeof detail.what === "string") return `${detail.what} not found`;
     }
 
-    // Bare code with no detail (e.g., "PythonNotReady", "NoProfile")
+    // Bare code with no detail (e.g., "PythonNotReady", "NoSetup")
     if (typeof obj.code === "string") {
       // Convert PascalCase to readable: "PythonNotReady" -> "Python not ready"
       return obj.code.replace(/([A-Z])/g, " $1").trim();

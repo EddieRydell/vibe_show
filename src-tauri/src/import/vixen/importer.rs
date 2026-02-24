@@ -63,10 +63,10 @@ impl VixenImporter {
         }
     }
 
-    /// Reconstruct importer state from an existing profile + saved GUID mapping.
-    /// This allows importing sequences against a previously-imported profile.
+    /// Reconstruct importer state from an existing setup + saved GUID mapping.
+    /// This allows importing sequences against a previously-imported setup.
     #[must_use]
-    pub fn from_profile(
+    pub fn from_setup(
         fixtures: Vec<FixtureDef>,
         groups: Vec<FixtureGroup>,
         controllers: Vec<Controller>,
@@ -88,7 +88,7 @@ impl VixenImporter {
         }
     }
 
-    /// Return the GUID → ID mapping (for persisting after profile import).
+    /// Return the GUID → ID mapping (for persisting after setup import).
     #[must_use]
     pub fn guid_map(&self) -> &HashMap<String, u32> {
         &self.guid_to_id

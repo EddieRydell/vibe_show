@@ -11,7 +11,7 @@ import type { ManualBeat } from "../components/AnalysisWorkspace";
 import { useAudio } from "../hooks/useAudio";
 
 interface Props {
-  profileSlug: string;
+  setupSlug: string;
   filename: string;
   onBack: () => void;
 }

@@ -3,4 +3,4 @@
 /**
  * Result returned after full import.
  */
-export type VixenImportResult = { profile_slug: string, fixtures_imported: number, groups_imported: number, controllers_imported: number, layout_items_imported: number, sequences_imported: number, media_imported: number, warnings: Array<string>, };
+export type VixenImportResult = { setup_slug: string, fixtures_imported: number, groups_imported: number, controllers_imported: number, layout_items_imported: number, sequences_imported: number, media_imported: number, warnings: Array<string>, };

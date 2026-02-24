@@ -6,7 +6,7 @@ import type { LlmProviderConfig } from "./LlmProviderConfig";
 /**
  * Application-level settings stored in the OS config directory.
  */
-export type AppSettings = { version: number, data_dir: string, last_profile: string | null, llm: LlmProviderConfig, 
+export type AppSettings = { version: number, data_dir: string, last_setup: string | null, llm: LlmProviderConfig, 
 /**
  * Whether to attempt GPU acceleration for audio analysis (requires NVIDIA CUDA).
  */

@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { cmd } from "../commands";
+import { Wordmark } from "../components/Wordmark";
 
 interface Props {
   onComplete: () => void;
@@ -41,9 +42,9 @@ export function FirstLaunchScreen({ onComplete }: Props) {
   return (
     <div className="bg-bg flex h-full items-center justify-center">
       <div className="max-w-lg text-center">
-        <h1 className="text-text text-4xl font-bold">Vibe Lights</h1>
+        <Wordmark size={40} className="text-text mx-auto" />
         <p className="text-text mt-6 text-sm">
-          Welcome! Pick a location and name for your Vibe Lights data folder. All profiles, shows,
+          Welcome! Pick a location and name for your Vibe Lights data folder. All setups, shows,
           and media will be stored inside it.
         </p>
 

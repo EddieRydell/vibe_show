@@ -37,10 +37,10 @@ enum Commands {
         /// Data directory (overrides settings.json)
         #[arg(long)]
         data_dir: Option<String>,
-        /// Open this profile on startup
+        /// Open this setup on startup
         #[arg(long)]
-        profile: Option<String>,
-        /// Open this sequence on startup (requires --profile)
+        setup: Option<String>,
+        /// Open this sequence on startup (requires --setup)
         #[arg(long)]
         sequence: Option<String>,
         /// Bind to specific port (default: OS-assigned)
@@ -50,10 +50,10 @@ enum Commands {
         #[arg(long)]
         api_key: Option<String>,
     },
-    /// Profile management
-    Profiles {
+    /// Setup management
+    Setups {
         #[command(subcommand)]
-        action: ProfileAction,
+        action: SetupAction,
     },
     /// Sequence management
     Sequences {
@@ -161,9 +161,9 @@ enum Commands {
         /// Data directory
         #[arg(long)]
         data_dir: String,
-        /// Profile slug
+        /// Setup slug
         #[arg(long)]
-        profile: String,
+        setup: String,
         /// Sequence slug
         #[arg(long)]
         sequence: String,
@@ -177,22 +177,22 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
-enum ProfileAction {
-    /// List all profiles
+enum SetupAction {
+    /// List all setups
     List,
-    /// Create a new profile
+    /// Create a new setup
     Create { name: String },
-    /// Open/load a profile
+    /// Open/load a setup
     Open { slug: String },
-    /// Delete a profile
+    /// Delete a setup
     Delete { slug: String },
-    /// Save the current profile
+    /// Save the current setup
     Save,
 }
 
 #[derive(Subcommand)]
 enum SequenceAction {
-    /// List sequences in the current profile
+    /// List sequences in the current setup
     List,
     /// Create a new sequence
     Create { name: String },
@@ -209,7 +209,7 @@ enum SequenceAction {
 #[allow(clippy::too_many_lines)]
 async fn run_serve(
     data_dir: Option<String>,
-    profile: Option<String>,
+    setup: Option<String>,
     sequence: Option<String>,
     port: u16,
     api_key: Option<String>,
@@ -230,7 +230,7 @@ async fn run_serve(
     // Override data_dir if provided
     if let Some(ref dd) = data_dir {
         let data_path = PathBuf::from(dd);
-        std::fs::create_dir_all(data_path.join("profiles")).ok();
+        std::fs::create_dir_all(data_path.join("setups")).ok();
         let mut s = loaded_settings
             .clone()
             .unwrap_or_else(|| settings::AppSettings::new(data_path.clone()));
@@ -263,7 +263,7 @@ async fn run_serve(
         api_port: AtomicU16::new(0),
         app_config_dir: app_config_dir.clone(),
         settings: Mutex::new(loaded_settings.clone()),
-        current_profile: Mutex::new(None),
+        current_setup: Mutex::new(None),
         current_sequence: Mutex::new(None),
         script_cache: Mutex::new(std::collections::HashMap::new()),
         python_sidecar: Mutex::new(None),
@@ -282,26 +282,26 @@ async fn run_serve(
     vibe_lights::chat::load_chat_history(&state);
     vibe_lights::chat::load_agent_chats(&state);
 
-    // Open profile and sequence if specified
-    if let Some(ref profile_slug) = profile {
+    // Open setup and sequence if specified
+    if let Some(ref setup_slug) = setup {
         if let Some(ref settings) = loaded_settings {
-            match vibe_lights::profile::load_profile(&settings.data_dir, profile_slug) {
-                Ok(profile_data) => {
-                    *state.current_profile.lock() = Some(profile_slug.clone());
+            match vibe_lights::setup::load_setup(&settings.data_dir, setup_slug) {
+                Ok(setup_data) => {
+                    *state.current_setup.lock() = Some(setup_slug.clone());
                     eprintln!(
-                        "[VibeLights] Profile: {} ({profile_slug})",
-                        profile_data.name
+                        "[VibeLights] Setup: {} ({setup_slug})",
+                        setup_data.name
                     );
 
                     if let Some(ref seq_slug) = sequence {
-                        match vibe_lights::profile::load_sequence(
+                        match vibe_lights::setup::load_sequence(
                             &settings.data_dir,
-                            profile_slug,
+                            setup_slug,
                             seq_slug,
                         ) {
                             Ok(seq_data) => {
                                 let assembled =
-                                    vibe_lights::profile::assemble_show(&profile_data, &seq_data);
+                                    vibe_lights::setup::assemble_show(&setup_data, &seq_data);
                                 *state.show.lock() = assembled;
                                 *state.current_sequence.lock() =
                                     Some(seq_slug.clone());
@@ -318,7 +318,7 @@ async fn run_serve(
                 }
                 Err(e) => {
                     eprintln!(
-                        "[VibeLights] Failed to load profile '{profile_slug}': {e}"
+                        "[VibeLights] Failed to load setup '{setup_slug}': {e}"
                     );
                 }
             }
@@ -370,28 +370,28 @@ async fn run_serve(
 // ── Bench mode ──────────────────────────────────────────────────
 
 #[allow(clippy::cast_precision_loss)]
-fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64, iterations: usize) {
+fn run_bench(data_dir: &str, setup_slug: &str, sequence_slug: &str, time: f64, iterations: usize) {
     use std::time::Instant;
     use vibe_lights::engine;
     use vibe_lights::model::fixture::EffectTarget;
-    use vibe_lights::profile;
+    use vibe_lights::setup;
 
     let data_path = PathBuf::from(data_dir);
 
-    // Load profile
-    let prof = profile::load_profile(&data_path, profile_slug).unwrap_or_else(|e| {
-        eprintln!("Failed to load profile '{profile_slug}': {e}");
+    // Load setup
+    let setup_data = setup::load_setup(&data_path, setup_slug).unwrap_or_else(|e| {
+        eprintln!("Failed to load setup '{setup_slug}': {e}");
         process::exit(1);
     });
 
     // Load sequence
-    let seq = profile::load_sequence(&data_path, profile_slug, sequence_slug).unwrap_or_else(|e| {
+    let seq = setup::load_sequence(&data_path, setup_slug, sequence_slug).unwrap_or_else(|e| {
         eprintln!("Failed to load sequence '{sequence_slug}': {e}");
         process::exit(1);
     });
 
     // Assemble show
-    let show = profile::assemble_show(&prof, &seq);
+    let show = setup::assemble_show(&setup_data, &seq);
 
     eprintln!("Show: {} fixtures, {} groups", show.fixtures.len(), show.groups.len());
     let total_pixels: u32 = show.fixtures.iter().map(|f| f.pixel_count).sum();
@@ -627,21 +627,21 @@ async fn main() {
     match cli.command {
         Commands::Serve {
             data_dir,
-            profile,
+            setup,
             sequence,
             port,
             api_key,
         } => {
-            run_serve(data_dir, profile, sequence, port, api_key).await;
+            run_serve(data_dir, setup, sequence, port, api_key).await;
         }
         Commands::Bench {
             data_dir,
-            profile,
+            setup,
             sequence,
             time,
             iterations,
         } => {
-            run_bench(&data_dir, &profile, &sequence, time, iterations);
+            run_bench(&data_dir, &setup, &sequence, time, iterations);
         }
         cmd => {
             let port = discover_port(cli.port);
@@ -651,55 +651,55 @@ async fn main() {
             let result = match cmd {
                 Commands::Serve { .. } | Commands::Bench { .. } => unreachable!(),
 
-                Commands::Profiles { action } => match action {
-                    ProfileAction::List => http_get(&format!("{base}/api/profiles")).await,
-                    ProfileAction::Create { name } => {
-                        http_post(&format!("{base}/api/profiles"), serde_json::json!({ "name": name })).await
+                Commands::Setups { action } => match action {
+                    SetupAction::List => http_get(&format!("{base}/api/setups")).await,
+                    SetupAction::Create { name } => {
+                        http_post(&format!("{base}/api/setups"), serde_json::json!({ "name": name })).await
                     }
-                    ProfileAction::Open { slug } => {
-                        http_get(&format!("{base}/api/profiles/{slug}")).await
+                    SetupAction::Open { slug } => {
+                        http_get(&format!("{base}/api/setups/{slug}")).await
                     }
-                    ProfileAction::Delete { slug } => {
-                        http_delete(&format!("{base}/api/profiles/{slug}")).await
+                    SetupAction::Delete { slug } => {
+                        http_delete(&format!("{base}/api/setups/{slug}")).await
                     }
-                    ProfileAction::Save => {
+                    SetupAction::Save => {
                         http_post(&format!("{base}/api/save"), serde_json::json!({})).await
                     }
                 },
 
                 Commands::Sequences { action } => {
-                    // We need the current profile slug for sequence operations.
+                    // We need the current setup slug for sequence operations.
                     // First try to get it from the server's settings.
                     let settings_json = http_get(&format!("{base}/api/settings")).await;
-                    let current_profile = settings_json
+                    let current_setup = settings_json
                         .as_ref()
                         .ok()
-                        .and_then(|j| j["data"]["last_profile"].as_str())
+                        .and_then(|j| j["data"]["last_setup"].as_str())
                         .map_or_else(String::new, str::to_string);
 
-                    if current_profile.is_empty() {
-                        eprintln!("Error: No profile is currently open. Open a profile first.");
+                    if current_setup.is_empty() {
+                        eprintln!("Error: No setup is currently open. Open a setup first.");
                         process::exit(1);
                     }
 
                     match action {
                         SequenceAction::List => {
-                            http_get(&format!("{base}/api/profiles/{current_profile}/sequences")).await
+                            http_get(&format!("{base}/api/setups/{current_setup}/sequences")).await
                         }
                         SequenceAction::Create { name } => {
                             http_post(
-                                &format!("{base}/api/profiles/{current_profile}/sequences"),
+                                &format!("{base}/api/setups/{current_setup}/sequences"),
                                 serde_json::json!({ "name": name }),
                             ).await
                         }
                         SequenceAction::Open { slug } => {
                             http_get(&format!(
-                                "{base}/api/profiles/{current_profile}/sequences/{slug}"
+                                "{base}/api/setups/{current_setup}/sequences/{slug}"
                             )).await
                         }
                         SequenceAction::Delete { slug } => {
                             http_delete(&format!(
-                                "{base}/api/profiles/{current_profile}/sequences/{slug}"
+                                "{base}/api/setups/{current_setup}/sequences/{slug}"
                             )).await
                         }
                         SequenceAction::Save => {

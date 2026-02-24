@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
 use crate::llm;
 use crate::registry;
@@ -62,7 +63,8 @@ impl ChatEmitter for NoopChatEmitter {
 // ── Types ────────────────────────────────────────────────────────
 
 /// Chat message role. Serializes to lowercase strings matching the Claude API.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "lowercase")]
 pub enum ChatRole {
     User,
@@ -101,7 +103,8 @@ pub enum ContentBlock {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ChatHistoryEntry {
     pub role: ChatRole,
     pub text: String,
@@ -117,9 +120,11 @@ fn build_system_prompt(state: &Arc<AppState>, context: Option<&str>) -> String {
 
     lines.push("You are VibeLights AI, a creative light show design assistant.".to_string());
     lines.push("You have 3 tools: help (discover commands), run (execute one), batch (execute many as one undo step).".to_string());
-    lines.push("Key categories: query (inspect show), edit (modify effects/tracks), playback, profile, sequence, library, script, analysis.".to_string());
+    lines.push("Key categories: query (inspect show), edit (modify effects/tracks), playback, setup, sequence, library, script, analysis.".to_string());
     lines.push("Use help() to see all categories, help({topic: \"query\"}) for commands in a category.".to_string());
     lines.push("The user only sees your text responses, not tool calls or results. Summarize results concisely in your reply.".to_string());
+    lines.push("When sharing DSL scripts, always compile them first with run({command: \"compile_script_preview\", params: {source: \"...\"}}) to verify they work.".to_string());
+    lines.push("When debugging user issues, use tools to investigate (e.g. compile_script_preview, get_show) before suggesting causes.".to_string());
     lines.push(String::new());
 
     // Param value format (essential — the LLM needs this to construct correct params)
@@ -212,17 +217,22 @@ pub fn execute_tool_api(state: &Arc<AppState>, name: &str, input: &Value) -> Res
     let cmd = registry::catalog::deserialize_from_tool_call(name, input)?;
     let output = registry::execute::execute(state, cmd).map_err(|e| e.to_string())?;
 
-    // If the command produced structured data, write large payloads to a scratch file
-    let data_file = if !output.data.is_null() {
-        let serialized = serde_json::to_string(&output.data).unwrap_or_default();
-        if serialized.len() > SCRATCH_THRESHOLD {
-            let filename = format!("{name}.json");
-            write_scratch_file(state, &filename, &output.data)
-        } else {
+    // If the command produced structured data, write large payloads to a scratch file.
+    // Serialize the typed result to JSON to check size.
+    let data_file = {
+        let result_json = serde_json::to_value(&output.result).unwrap_or(Value::Null);
+        let data_value = result_json.get("data").cloned().unwrap_or(Value::Null);
+        if data_value.is_null() {
             None
+        } else {
+            let serialized = serde_json::to_string(&data_value).unwrap_or_default();
+            if serialized.len() > SCRATCH_THRESHOLD {
+                let filename = format!("{name}.json");
+                write_scratch_file(state, &filename, &data_value)
+            } else {
+                None
+            }
         }
-    } else {
-        None
     };
 
     Ok(ToolResult {
@@ -603,7 +613,8 @@ pub struct AgentChatsData {
 }
 
 /// Summary returned to the frontend for listing conversations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ConversationSummary {
     pub id: String,
     pub title: String,

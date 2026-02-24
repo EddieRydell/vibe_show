@@ -13,7 +13,7 @@ pub enum AppError {
     InvalidIndex { what: String, index: usize },
     ValidationError { message: String },
     IoError { message: String },
-    NoProfile,
+    NoSetup,
     NoSequence,
     NoSettings,
     ApiError { message: String },
@@ -36,7 +36,7 @@ impl fmt::Display for AppError {
             }
             AppError::ValidationError { message } => write!(f, "{message}"),
             AppError::IoError { message } => write!(f, "I/O error: {message}"),
-            AppError::NoProfile => write!(f, "No profile loaded"),
+            AppError::NoSetup => write!(f, "No setup loaded"),
             AppError::NoSequence => write!(f, "No sequence loaded"),
             AppError::NoSettings => write!(f, "Settings not initialized"),
             AppError::ApiError { message } => write!(f, "API error: {message}"),

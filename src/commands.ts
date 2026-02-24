@@ -2,6 +2,8 @@
  * Typed command helpers wrapping the unified `exec` registry command.
  * All operations go through a single Tauri IPC endpoint.
  *
+ * Return types are inferred from CommandReturnMap — no manual `as T` casts.
+ *
  * Commands that STAY as direct `invoke()` (async/streaming/binary/hot-path):
  *   - send_chat_message, open_sequence, execute_vixen_import, analyze_audio
  *   - tick, get_frame, get_frame_filtered
@@ -10,65 +12,47 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { CommandOutput } from "../src-tauri/bindings/CommandOutput";
+import type { CommandResult } from "../src-tauri/bindings/CommandResult";
 import type {
-  AppSettings,
+  CommandReturnMap,
+  DataCommand,
+  UnitCommand,
+} from "./commandMap";
+import type {
   ChatMode,
   ColorGradient,
   Controller,
   Curve,
-  EffectDetail,
-  EffectInfo,
   EffectKind,
   FixtureDef,
   FixtureGroup,
   Layout,
-  LlmConfigInfo,
   LlmProvider,
-  MediaFile,
   Patch,
-  PlaybackInfo,
-  Profile,
-  ProfileSummary,
-  ScriptCompileResult,
-  ScriptParamInfo,
-  SequenceSummary,
-  Show,
-  UndoState,
-  AudioAnalysis,
   ParamKey,
   ParamValue,
   BlendMode,
 } from "./types";
-import type { VixenDiscovery } from "../src-tauri/bindings/VixenDiscovery";
-
-// ── Conversation types ────────────────────────────────────────────
-
-export interface ConversationSummary {
-  id: string;
-  title: string;
-  created_at: string;
-  message_count: number;
-  is_active: boolean;
-}
 
 // ── Core exec helpers ─────────────────────────────────────────────
 
-async function exec(
-  command: string,
+async function exec<C extends UnitCommand>(
+  command: C,
   params?: unknown,
-): Promise<CommandOutput> {
-  return invoke("exec", {
+): Promise<void> {
+  await invoke<CommandResult>("exec", {
     cmd: params ? { command, params } : { command },
   });
 }
 
-async function execData<T>(
-  command: string,
+async function execData<C extends DataCommand>(
+  command: C,
   params?: unknown,
-): Promise<T> {
-  const output = await exec(command, params);
-  return output.data as T;
+): Promise<CommandReturnMap[C]> {
+  const result = await invoke<CommandResult>("exec", {
+    cmd: params ? { command, params } : { command },
+  });
+  return (result as { data: CommandReturnMap[C] }).data;
 }
 
 // ── Typed command functions ───────────────────────────────────────
@@ -80,23 +64,23 @@ export const cmd = {
   seek: (time: number) => exec("Seek", { time }),
   undo: () => exec("Undo"),
   redo: () => exec("Redo"),
-  getPlayback: () => execData<PlaybackInfo>("GetPlayback"),
+  getPlayback: () => execData("GetPlayback"),
   setRegion: (region: [number, number] | null) =>
     exec("SetRegion", {
       region: region ? { start: region[0], end: region[1] } : null,
     }),
   setLooping: (looping: boolean) => exec("SetLooping", { looping }),
-  getUndoState: () => execData<UndoState>("GetUndoState"),
+  getUndoState: () => execData("GetUndoState"),
 
   // ── Query ───────────────────────────────────────────────
-  getShow: () => execData<Show>("GetShow"),
-  listEffects: () => execData<EffectInfo[]>("ListEffects"),
+  getShow: () => execData("GetShow"),
+  listEffects: () => execData("ListEffects"),
   getEffectDetail: (
     sequenceIndex: number,
     trackIndex: number,
     effectIndex: number,
   ) =>
-    execData<EffectDetail | null>("GetEffectDetail", {
+    execData("GetEffectDetail", {
       sequence_index: sequenceIndex,
       track_index: trackIndex,
       effect_index: effectIndex,
@@ -111,7 +95,7 @@ export const cmd = {
     blendMode?: BlendMode,
     opacity?: number,
   ) =>
-    execData<number>("AddEffect", {
+    execData("AddEffect", {
       track_index: trackIndex,
       kind,
       start,
@@ -148,7 +132,7 @@ export const cmd = {
       end,
     }),
   addTrack: (name: string, fixtureId: number) =>
-    execData<number>("AddTrack", { name, fixture_id: fixtureId }),
+    execData("AddTrack", { name, fixture_id: fixtureId }),
   deleteTrack: (trackIndex: number) =>
     exec("DeleteTrack", { track_index: trackIndex }),
   moveEffectToTrack: (
@@ -156,7 +140,7 @@ export const cmd = {
     effectIndex: number,
     toTrack: number,
   ) =>
-    execData<number>("MoveEffectToTrack", {
+    execData("MoveEffectToTrack", {
       from_track: fromTrack,
       effect_index: effectIndex,
       to_track: toTrack,
@@ -175,10 +159,10 @@ export const cmd = {
     }),
 
   // ── Settings ────────────────────────────────────────────
-  getSettings: () => execData<AppSettings | null>("GetSettings"),
-  getApiPort: () => execData<number>("GetApiPort"),
+  getSettings: () => execData("GetSettings"),
+  getApiPort: () => execData("GetApiPort"),
   initializeDataDir: (dataDir: string) =>
-    execData<AppSettings>("InitializeDataDir", { data_dir: dataDir }),
+    execData("InitializeDataDir", { data_dir: dataDir }),
   setLlmConfig: (p: {
     provider: LlmProvider;
     apiKey: string;
@@ -193,102 +177,99 @@ export const cmd = {
       model: p.model ?? null,
       ...(p.chatMode !== undefined && { chat_mode: p.chatMode }),
     }),
-  getLlmConfig: () => execData<LlmConfigInfo>("GetLlmConfig"),
+  getLlmConfig: () => execData("GetLlmConfig"),
 
-  // ── Profile CRUD ────────────────────────────────────────
-  listProfiles: () => execData<ProfileSummary[]>("ListProfiles"),
-  createProfile: (name: string) =>
-    execData<ProfileSummary>("CreateProfile", { name }),
-  openProfile: (slug: string) =>
-    execData<Profile>("OpenProfile", { slug }),
-  deleteProfile: (slug: string) => exec("DeleteProfile", { slug }),
-  saveProfile: () => exec("SaveProfile"),
-  updateProfileFixtures: (
+  // ── Setup CRUD ─────────────────────────────────────────
+  listSetups: () => execData("ListSetups"),
+  createSetup: (name: string) =>
+    execData("CreateSetup", { name }),
+  openSetup: (slug: string) =>
+    execData("OpenSetup", { slug }),
+  deleteSetup: (slug: string) => exec("DeleteSetup", { slug }),
+  saveSetup: () => exec("SaveSetup"),
+  updateSetupFixtures: (
     fixtures: FixtureDef[],
     groups: FixtureGroup[],
-  ) => exec("UpdateProfileFixtures", { fixtures, groups }),
-  updateProfileSetup: (controllers: Controller[], patches: Patch[]) =>
-    exec("UpdateProfileSetup", { controllers, patches }),
-  updateProfileLayout: (layout: Layout) =>
-    exec("UpdateProfileLayout", { layout }),
+  ) => exec("UpdateSetupFixtures", { fixtures, groups }),
+  updateSetupOutputs: (controllers: Controller[], patches: Patch[]) =>
+    exec("UpdateSetupOutputs", { controllers, patches }),
+  updateSetupLayout: (layout: Layout) =>
+    exec("UpdateSetupLayout", { layout }),
 
   // ── Sequence CRUD ───────────────────────────────────────
-  listSequences: () => execData<SequenceSummary[]>("ListSequences"),
+  listSequences: () => execData("ListSequences"),
   createSequence: (name: string) =>
-    execData<SequenceSummary>("CreateSequence", { name }),
+    execData("CreateSequence", { name }),
   openSequence: (slug: string) => exec("OpenSequence", { slug }),
   deleteSequence: (slug: string) => exec("DeleteSequence", { slug }),
   saveCurrentSequence: () => exec("SaveCurrentSequence"),
 
   // ── Media ───────────────────────────────────────────────
-  listMedia: () => execData<MediaFile[]>("ListMedia"),
+  listMedia: () => execData("ListMedia"),
   importMedia: (sourcePath: string) =>
-    execData<MediaFile>("ImportMedia", { source_path: sourcePath }),
+    execData("ImportMedia", { source_path: sourcePath }),
   deleteMedia: (name: string) => exec("DeleteMedia", { name }),
   resolveMediaPath: (name: string) =>
-    execData<string>("ResolveMediaPath", { name }),
+    execData("ResolveMediaPath", { name }),
 
   // ── Chat ────────────────────────────────────────────────
-  getChatHistory: () => execData<unknown[]>("GetChatHistory"),
-  getAgentChatHistory: () => execData<unknown[]>("GetAgentChatHistory"),
+  getChatHistory: () => execData("GetChatHistory"),
+  getAgentChatHistory: () => execData("GetAgentChatHistory"),
   clearChat: () => exec("ClearChat"),
   stopChat: () => exec("StopChat"),
-  listAgentConversations: () => execData<ConversationSummary[]>("ListAgentConversations"),
-  newAgentConversation: () => execData<{ id: string }>("NewAgentConversation"),
+  listAgentConversations: () => execData("ListAgentConversations"),
+  newAgentConversation: () => execData("NewAgentConversation"),
   switchAgentConversation: (id: string) => exec("SwitchAgentConversation", { conversation_id: id }),
   deleteAgentConversation: (id: string) => exec("DeleteAgentConversation", { conversation_id: id }),
 
   // ── Global Library ──────────────────────────────────────
-  listGlobalGradients: () =>
-    execData<[string, ColorGradient][]>("ListGlobalGradients"),
+  listGlobalGradients: () => execData("ListGlobalGradients"),
   setGlobalGradient: (name: string, gradient: ColorGradient) =>
     exec("SetGlobalGradient", { name, gradient }),
   deleteGlobalGradient: (name: string) =>
     exec("DeleteGlobalGradient", { name }),
   renameGlobalGradient: (oldName: string, newName: string) =>
     exec("RenameGlobalGradient", { old_name: oldName, new_name: newName }),
-  listGlobalCurves: () =>
-    execData<[string, Curve][]>("ListGlobalCurves"),
+  listGlobalCurves: () => execData("ListGlobalCurves"),
   setGlobalCurve: (name: string, curve: Curve) =>
     exec("SetGlobalCurve", { name, curve }),
   deleteGlobalCurve: (name: string) =>
     exec("DeleteGlobalCurve", { name }),
   renameGlobalCurve: (oldName: string, newName: string) =>
     exec("RenameGlobalCurve", { old_name: oldName, new_name: newName }),
-  listGlobalScripts: () =>
-    execData<[string, string][]>("ListGlobalScripts"),
+  listGlobalScripts: () => execData("ListGlobalScripts"),
   getGlobalScriptSource: (name: string) =>
-    execData<string | null>("GetGlobalScriptSource", { name }),
+    execData("GetGlobalScriptSource", { name }),
   deleteGlobalScript: (name: string) =>
     exec("DeleteGlobalScript", { name }),
   writeGlobalScript: (name: string, source: string) =>
     exec("WriteGlobalScript", { name, source }),
   compileGlobalScript: (name: string, source: string) =>
-    execData<ScriptCompileResult>("CompileGlobalScript", { name, source }),
+    execData("CompileGlobalScript", { name, source }),
   renameGlobalScript: (oldName: string, newName: string) =>
     exec("RenameGlobalScript", { old_name: oldName, new_name: newName }),
 
   // ── Script ──────────────────────────────────────────────
   compileScriptPreview: (source: string) =>
-    execData<ScriptCompileResult>("CompileScriptPreview", { source }),
+    execData("CompileScriptPreview", { source }),
   getScriptParams: (name: string) =>
-    execData<ScriptParamInfo[]>("GetScriptParams", { name }),
+    execData("GetScriptParams", { name }),
 
   // ── Cancellation ────────────────────────────────────────
   cancelOperation: (operation: string) =>
     invoke<boolean>("cancel_operation", { operation }),
 
   // ── Analysis ────────────────────────────────────────────
-  getAnalysis: () => execData<AudioAnalysis | null>("GetAnalysis"),
+  getAnalysis: () => execData("GetAnalysis"),
 
   // ── Vixen Import (sync) ─────────────────────────────────
-  importVixenSequence: (profileSlug: string, timPath: string) =>
-    exec("ImportVixenSequence", {
-      profile_slug: profileSlug,
+  importVixenSequence: (setupSlug: string, timPath: string) =>
+    execData("ImportVixenSequence", {
+      setup_slug: setupSlug,
       tim_path: timPath,
     }),
   scanVixenDirectory: (vixenDir: string) =>
-    execData<VixenDiscovery>("ScanVixenDirectory", { vixen_dir: vixenDir }),
+    execData("ScanVixenDirectory", { vixen_dir: vixenDir }),
   checkVixenPreviewFile: (filePath: string) =>
-    execData<number>("CheckVixenPreviewFile", { file_path: filePath }),
+    execData("CheckVixenPreviewFile", { file_path: filePath }),
 };

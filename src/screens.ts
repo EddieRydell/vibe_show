@@ -3,7 +3,6 @@ export type AppScreen =
   | { kind: "first_launch" }
   | { kind: "home" }
   | { kind: "settings"; returnTo: AppScreen }
-  | { kind: "profile"; slug: string }
-  | { kind: "editor"; profileSlug: string; sequenceSlug: string }
-  | { kind: "script"; profileSlug: string; scriptName: string | null; returnTo: AppScreen }
-  | { kind: "analysis"; profileSlug: string; filename: string; returnTo: AppScreen };
+  | { kind: "editor"; setupSlug: string; sequenceSlug: string }
+  | { kind: "script"; scriptName: string | null; returnTo: AppScreen }
+  | { kind: "analysis"; setupSlug: string; filename: string; returnTo: AppScreen };

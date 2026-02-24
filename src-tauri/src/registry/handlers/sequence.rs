@@ -3,31 +3,28 @@
 use std::sync::Arc;
 
 use crate::error::AppError;
-use crate::profile;
+use crate::setup;
 use crate::registry::params::{CreateSequenceParams, SlugParams};
-use crate::registry::CommandOutput;
+use crate::registry::{CommandOutput, CommandResult};
 use crate::state::{get_data_dir, AppState};
 use crate::commands;
 
 pub fn list_sequences(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let profile_slug = state.require_profile()?;
+    let setup_slug = state.require_setup()?;
     let sequences =
-        profile::list_sequences(&data_dir, &profile_slug).map_err(AppError::from)?;
+        setup::list_sequences(&data_dir, &setup_slug).map_err(AppError::from)?;
     let current = state.current_sequence.lock().clone();
     let mut lines = vec![format!(
-        "{} sequences in profile \"{}\":",
+        "{} sequences in setup \"{}\":",
         sequences.len(),
-        profile_slug
+        setup_slug
     )];
     for s in &sequences {
         let marker = if current.as_deref() == Some(&s.slug) { " (current)" } else { "" };
         lines.push(format!("  - \"{}\" (slug: {}){marker}", s.name, s.slug));
     }
-    Ok(CommandOutput::data(
-        lines.join("\n"),
-        serde_json::to_value(&sequences).unwrap_or_default(),
-    ))
+    Ok(CommandOutput::new(lines.join("\n"), CommandResult::ListSequences(sequences)))
 }
 
 pub fn create_sequence(
@@ -35,24 +32,21 @@ pub fn create_sequence(
     p: CreateSequenceParams,
 ) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let profile_slug = state.require_profile()?;
+    let setup_slug = state.require_setup()?;
     let summary =
-        profile::create_sequence(&data_dir, &profile_slug, &p.name).map_err(AppError::from)?;
-    Ok(CommandOutput::json(
-        format!("Sequence \"{}\" created.", summary.name),
-        &summary,
-    ))
+        setup::create_sequence(&data_dir, &setup_slug, &p.name).map_err(AppError::from)?;
+    Ok(CommandOutput::new(format!("Sequence \"{}\" created.", summary.name), CommandResult::CreateSequence(summary)))
 }
 
 pub fn open_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let profile_slug = state.require_profile()?;
+    let setup_slug = state.require_setup()?;
 
-    let profile_data =
-        profile::load_profile(&data_dir, &profile_slug).map_err(AppError::from)?;
+    let setup_data =
+        setup::load_setup(&data_dir, &setup_slug).map_err(AppError::from)?;
     let sequence =
-        profile::load_sequence(&data_dir, &profile_slug, &p.slug).map_err(AppError::from)?;
-    let assembled = profile::assemble_show(&profile_data, &sequence);
+        setup::load_sequence(&data_dir, &setup_slug, &p.slug).map_err(AppError::from)?;
+    let assembled = setup::assemble_show(&setup_data, &sequence);
 
     *state.show.lock() = assembled;
     state.dispatcher.lock().clear();
@@ -77,16 +71,16 @@ pub fn open_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutp
         .first()
         .map_or(0, |s| s.tracks.iter().map(|t| t.effects.len()).sum());
 
-    Ok(CommandOutput::unit(format!(
+    Ok(CommandOutput::new(format!(
         "Opened sequence \"{}\". {} tracks, {} effects.",
         p.slug, track_count, effect_count
-    )))
+    ), CommandResult::OpenSequence))
 }
 
 pub fn delete_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let profile_slug = state.require_profile()?;
-    profile::delete_sequence(&data_dir, &profile_slug, &p.slug).map_err(AppError::from)?;
+    let setup_slug = state.require_setup()?;
+    setup::delete_sequence(&data_dir, &setup_slug, &p.slug).map_err(AppError::from)?;
 
     let mut current = state.current_sequence.lock();
     if current.as_deref() == Some(&p.slug) {
@@ -95,22 +89,22 @@ pub fn delete_sequence(state: &Arc<AppState>, p: SlugParams) -> Result<CommandOu
         state.script_cache.lock().clear();
     }
 
-    Ok(CommandOutput::unit(format!(
+    Ok(CommandOutput::new(format!(
         "Sequence \"{}\" deleted.",
         p.slug
-    )))
+    ), CommandResult::DeleteSequence))
 }
 
 pub fn save_current_sequence(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let data_dir = get_data_dir(state).map_err(|_| AppError::NoSettings)?;
-    let profile_slug = state.require_profile()?;
+    let setup_slug = state.require_setup()?;
     let seq_slug = state.require_sequence()?;
 
     let show = state.show.lock();
     let sequence = show.sequences.first().ok_or(AppError::NotFound {
         what: "sequence in show".into(),
     })?;
-    profile::save_sequence(&data_dir, &profile_slug, &seq_slug, sequence)
+    setup::save_sequence(&data_dir, &setup_slug, &seq_slug, sequence)
         .map_err(AppError::from)?;
-    Ok(CommandOutput::unit("Sequence saved."))
+    Ok(CommandOutput::new("Sequence saved.", CommandResult::SaveCurrentSequence))
 }

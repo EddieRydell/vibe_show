@@ -13,21 +13,21 @@ use crate::model::show::{Layout, Show};
 use crate::model::timeline::Sequence;
 use crate::project::{read_json, slugify, write_json, ProjectError};
 
-// ── Profile types ──────────────────────────────────────────────────
+// ── Setup types ───────────────────────────────────────────────────
 
-const PROFILE_VERSION: u32 = 1;
+const SETUP_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProfileMeta {
+pub struct SetupMeta {
     pub version: u32,
     pub name: String,
     pub created_at: String,
 }
 
-/// Summary info for listing profiles (cheap to compute).
+/// Summary info for listing setups (cheap to compute).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct ProfileSummary {
+pub struct SetupSummary {
     pub name: String,
     pub slug: String,
     pub created_at: String,
@@ -35,10 +35,10 @@ pub struct ProfileSummary {
     pub fixture_count: usize,
 }
 
-/// Full profile data loaded into memory.
+/// Full setup data loaded into memory.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
-pub struct Profile {
+pub struct Setup {
     pub name: String,
     pub slug: String,
     pub fixtures: Vec<FixtureDef>,
@@ -96,7 +96,7 @@ pub struct LibrariesFile {
     pub scripts: HashMap<String, String>,
 }
 
-// ── Profile operations ─────────────────────────────────────────────
+// ── Setup operations ──────────────────────────────────────────────
 
 use crate::paths;
 
@@ -117,14 +117,14 @@ pub fn save_global_libraries(
     write_json(&paths::global_libraries_path(data_dir), libs)
 }
 
-/// List all profiles in the data directory.
-pub fn list_profiles(data_dir: &Path) -> Result<Vec<ProfileSummary>, ProjectError> {
-    let dir = paths::profiles_dir(data_dir);
+/// List all setups in the data directory.
+pub fn list_setups(data_dir: &Path) -> Result<Vec<SetupSummary>, ProjectError> {
+    let dir = paths::setups_dir(data_dir);
     if !dir.exists() {
         return Ok(Vec::new());
     }
 
-    let mut profiles = Vec::new();
+    let mut setups = Vec::new();
     let mut entries: Vec<_> = fs::read_dir(&dir)?
         .filter_map(Result::ok)
         .filter(|e| e.path().is_dir())
@@ -132,11 +132,11 @@ pub fn list_profiles(data_dir: &Path) -> Result<Vec<ProfileSummary>, ProjectErro
     entries.sort_by_key(std::fs::DirEntry::file_name);
 
     for entry in entries {
-        let meta_path = entry.path().join(paths::PROFILE_FILE);
+        let meta_path = entry.path().join(paths::SETUP_META_FILE);
         if !meta_path.exists() {
             continue;
         }
-        let meta: ProfileMeta = match read_json(&meta_path) {
+        let meta: SetupMeta = match read_json(&meta_path) {
             Ok(m) => m,
             Err(_) => continue,
         };
@@ -163,7 +163,7 @@ pub fn list_profiles(data_dir: &Path) -> Result<Vec<ProfileSummary>, ProjectErro
             0
         };
 
-        profiles.push(ProfileSummary {
+        setups.push(SetupSummary {
             name: meta.name,
             slug,
             created_at: meta.created_at,
@@ -172,17 +172,17 @@ pub fn list_profiles(data_dir: &Path) -> Result<Vec<ProfileSummary>, ProjectErro
         });
     }
 
-    Ok(profiles)
+    Ok(setups)
 }
 
-/// Create a new empty profile.
-pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, ProjectError> {
+/// Create a new empty setup.
+pub fn create_setup(data_dir: &Path, name: &str) -> Result<SetupSummary, ProjectError> {
     let slug = slugify(name);
-    let dir = paths::profile_dir(data_dir, &slug);
+    let dir = paths::setup_dir(data_dir, &slug);
 
     if dir.exists() {
         return Err(ProjectError::InvalidProject(format!(
-            "Profile '{slug}' already exists"
+            "Setup '{slug}' already exists"
         )));
     }
 
@@ -193,9 +193,9 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
     let now = chrono_now();
 
     write_json(
-        &dir.join(paths::PROFILE_FILE),
-        &ProfileMeta {
-            version: PROFILE_VERSION,
+        &dir.join(paths::SETUP_META_FILE),
+        &SetupMeta {
+            version: SETUP_VERSION,
             name: name.to_string(),
             created_at: now.clone(),
         },
@@ -225,7 +225,7 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
         },
     )?;
 
-    Ok(ProfileSummary {
+    Ok(SetupSummary {
         name: name.to_string(),
         slug,
         created_at: now,
@@ -234,21 +234,21 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
     })
 }
 
-/// Load full profile data.
-pub fn load_profile(data_dir: &Path, slug: &str) -> Result<Profile, ProjectError> {
-    let dir = paths::profile_dir(data_dir, slug);
+/// Load full setup data.
+pub fn load_setup(data_dir: &Path, slug: &str) -> Result<Setup, ProjectError> {
+    let dir = paths::setup_dir(data_dir, slug);
     if !dir.exists() {
         return Err(ProjectError::InvalidProject(format!(
-            "Profile '{slug}' not found"
+            "Setup '{slug}' not found"
         )));
     }
 
-    let meta: ProfileMeta = read_json(&dir.join(paths::PROFILE_FILE))?;
+    let meta: SetupMeta = read_json(&dir.join(paths::SETUP_META_FILE))?;
     let fixtures_file: FixturesFile = read_json(&dir.join(paths::FIXTURES_FILE))?;
     let setup_file: SetupFile = read_json(&dir.join(paths::SETUP_FILE))?;
     let layout: Layout = read_json(&dir.join(paths::LAYOUT_FILE))?;
 
-    Ok(Profile {
+    Ok(Setup {
         name: meta.name,
         slug: slug.to_string(),
         fixtures: fixtures_file.fixtures,
@@ -259,9 +259,9 @@ pub fn load_profile(data_dir: &Path, slug: &str) -> Result<Profile, ProjectError
     })
 }
 
-/// Save profile house data (fixtures, groups, controllers, patches, layout).
-pub fn save_profile(data_dir: &Path, slug: &str, profile: &Profile) -> Result<(), ProjectError> {
-    let dir = paths::profile_dir(data_dir, slug);
+/// Save setup house data (fixtures, groups, controllers, patches, layout).
+pub fn save_setup(data_dir: &Path, slug: &str, setup: &Setup) -> Result<(), ProjectError> {
+    let dir = paths::setup_dir(data_dir, slug);
 
     // Preserve existing vixen_guid_map if present
     let existing_map = read_json::<FixturesFile>(&dir.join(paths::FIXTURES_FILE))
@@ -271,8 +271,8 @@ pub fn save_profile(data_dir: &Path, slug: &str, profile: &Profile) -> Result<()
     write_json(
         &dir.join(paths::FIXTURES_FILE),
         &FixturesFile {
-            fixtures: profile.fixtures.clone(),
-            groups: profile.groups.clone(),
+            fixtures: setup.fixtures.clone(),
+            groups: setup.groups.clone(),
             vixen_guid_map: existing_map,
         },
     )?;
@@ -280,19 +280,19 @@ pub fn save_profile(data_dir: &Path, slug: &str, profile: &Profile) -> Result<()
     write_json(
         &dir.join(paths::SETUP_FILE),
         &SetupFile {
-            controllers: profile.controllers.clone(),
-            patches: profile.patches.clone(),
+            controllers: setup.controllers.clone(),
+            patches: setup.patches.clone(),
         },
     )?;
 
-    write_json(&dir.join(paths::LAYOUT_FILE), &profile.layout)?;
+    write_json(&dir.join(paths::LAYOUT_FILE), &setup.layout)?;
 
     Ok(())
 }
 
-/// Delete a profile and all its data.
-pub fn delete_profile(data_dir: &Path, slug: &str) -> Result<(), ProjectError> {
-    let dir = paths::profile_dir(data_dir, slug);
+/// Delete a setup and all its data.
+pub fn delete_setup(data_dir: &Path, slug: &str) -> Result<(), ProjectError> {
+    let dir = paths::setup_dir(data_dir, slug);
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
     }
@@ -301,12 +301,12 @@ pub fn delete_profile(data_dir: &Path, slug: &str) -> Result<(), ProjectError> {
 
 // ── Sequence operations ────────────────────────────────────────────
 
-/// List all sequences in a profile.
+/// List all sequences in a setup.
 pub fn list_sequences(
     data_dir: &Path,
-    profile_slug: &str,
+    setup_slug: &str,
 ) -> Result<Vec<SequenceSummary>, ProjectError> {
-    let dir = paths::sequences_dir(data_dir, profile_slug);
+    let dir = paths::sequences_dir(data_dir, setup_slug);
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -338,14 +338,14 @@ pub fn list_sequences(
     Ok(seqs)
 }
 
-/// Create a new empty sequence in a profile.
+/// Create a new empty sequence in a setup.
 pub fn create_sequence(
     data_dir: &Path,
-    profile_slug: &str,
+    setup_slug: &str,
     name: &str,
 ) -> Result<SequenceSummary, ProjectError> {
     let slug = slugify(name);
-    let dir = paths::sequences_dir(data_dir, profile_slug);
+    let dir = paths::sequences_dir(data_dir, setup_slug);
     fs::create_dir_all(&dir)?;
 
     let path = dir.join(format!("{slug}.json"));
@@ -371,13 +371,13 @@ pub fn create_sequence(
     })
 }
 
-/// Load a single sequence from a profile.
+/// Load a single sequence from a setup.
 pub fn load_sequence(
     data_dir: &Path,
-    profile_slug: &str,
+    setup_slug: &str,
     seq_slug: &str,
 ) -> Result<Sequence, ProjectError> {
-    let path = paths::sequences_dir(data_dir, profile_slug).join(format!("{seq_slug}.json"));
+    let path = paths::sequences_dir(data_dir, setup_slug).join(format!("{seq_slug}.json"));
     if !path.exists() {
         return Err(ProjectError::InvalidProject(format!(
             "Sequence '{seq_slug}' not found"
@@ -386,25 +386,25 @@ pub fn load_sequence(
     read_json(&path)
 }
 
-/// Save a sequence to a profile.
+/// Save a sequence to a setup.
 pub fn save_sequence(
     data_dir: &Path,
-    profile_slug: &str,
+    setup_slug: &str,
     seq_slug: &str,
     sequence: &Sequence,
 ) -> Result<(), ProjectError> {
-    let dir = paths::sequences_dir(data_dir, profile_slug);
+    let dir = paths::sequences_dir(data_dir, setup_slug);
     fs::create_dir_all(&dir)?;
     write_json(&dir.join(format!("{seq_slug}.json")), sequence)
 }
 
-/// Delete a sequence from a profile.
+/// Delete a sequence from a setup.
 pub fn delete_sequence(
     data_dir: &Path,
-    profile_slug: &str,
+    setup_slug: &str,
     seq_slug: &str,
 ) -> Result<(), ProjectError> {
-    let path = paths::sequences_dir(data_dir, profile_slug).join(format!("{seq_slug}.json"));
+    let path = paths::sequences_dir(data_dir, setup_slug).join(format!("{seq_slug}.json"));
     if path.exists() {
         fs::remove_file(&path)?;
     }
@@ -429,12 +429,12 @@ pub fn validate_filename(name: &str) -> Result<(), ProjectError> {
     Ok(())
 }
 
-/// List audio files in a profile's media directory.
+/// List audio files in a setup's media directory.
 pub fn list_media(
     data_dir: &Path,
-    profile_slug: &str,
+    setup_slug: &str,
 ) -> Result<Vec<MediaFile>, ProjectError> {
-    let dir = paths::media_dir(data_dir, profile_slug);
+    let dir = paths::media_dir(data_dir, setup_slug);
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -468,13 +468,13 @@ pub fn list_media(
     Ok(files)
 }
 
-/// Import (copy) an audio file into the profile's media directory.
+/// Import (copy) an audio file into the setup's media directory.
 pub fn import_media(
     data_dir: &Path,
-    profile_slug: &str,
+    setup_slug: &str,
     source_path: &Path,
 ) -> Result<MediaFile, ProjectError> {
-    let dir = paths::media_dir(data_dir, profile_slug);
+    let dir = paths::media_dir(data_dir, setup_slug);
     fs::create_dir_all(&dir)?;
 
     let filename = source_path
@@ -494,14 +494,14 @@ pub fn import_media(
     })
 }
 
-/// Delete an audio file from the profile's media directory.
+/// Delete an audio file from the setup's media directory.
 pub fn delete_media(
     data_dir: &Path,
-    profile_slug: &str,
+    setup_slug: &str,
     filename: &str,
 ) -> Result<(), ProjectError> {
     validate_filename(filename)?;
-    let path = paths::media_dir(data_dir, profile_slug).join(filename);
+    let path = paths::media_dir(data_dir, setup_slug).join(filename);
     if path.exists() {
         fs::remove_file(&path)?;
     }
@@ -510,42 +510,42 @@ pub fn delete_media(
 
 // ── Assembly ───────────────────────────────────────────────────────
 
-/// Combine a Profile (fixtures, setup) with a single Sequence into a full Show
+/// Combine a Setup (fixtures, outputs) with a single Sequence into a full Show
 /// that the engine can evaluate.
-pub fn assemble_show(profile: &Profile, sequence: &Sequence) -> Show {
+pub fn assemble_show(setup: &Setup, sequence: &Sequence) -> Show {
     Show {
         name: sequence.name.clone(),
-        fixtures: profile.fixtures.clone(),
-        groups: profile.groups.clone(),
-        layout: profile.layout.clone(),
+        fixtures: setup.fixtures.clone(),
+        groups: setup.groups.clone(),
+        layout: setup.layout.clone(),
         sequences: vec![sequence.clone()],
-        patches: profile.patches.clone(),
-        controllers: profile.controllers.clone(),
+        patches: setup.patches.clone(),
+        controllers: setup.controllers.clone(),
     }
 }
 
 // ── Vixen GUID map persistence ─────────────────────────────────────
 
-/// Save a Vixen GUID → ID map into a profile's fixtures file.
+/// Save a Vixen GUID → ID map into a setup's fixtures file.
 #[allow(clippy::implicit_hasher)]
 pub fn save_vixen_guid_map(
     data_dir: &Path,
-    profile_slug: &str,
+    setup_slug: &str,
     guid_map: &std::collections::HashMap<String, u32>,
 ) -> Result<(), ProjectError> {
-    let dir = paths::profile_dir(data_dir, profile_slug);
+    let dir = paths::setup_dir(data_dir, setup_slug);
     let path = dir.join(paths::FIXTURES_FILE);
     let mut file: FixturesFile = read_json(&path)?;
     file.vixen_guid_map.clone_from(guid_map);
     write_json(&path, &file)
 }
 
-/// Load a Vixen GUID → ID map from a profile's fixtures file.
+/// Load a Vixen GUID → ID map from a setup's fixtures file.
 pub fn load_vixen_guid_map(
     data_dir: &Path,
-    profile_slug: &str,
+    setup_slug: &str,
 ) -> Result<std::collections::HashMap<String, u32>, ProjectError> {
-    let dir = paths::profile_dir(data_dir, profile_slug);
+    let dir = paths::setup_dir(data_dir, setup_slug);
     let file: FixturesFile = read_json(&dir.join(paths::FIXTURES_FILE))?;
     Ok(file.vixen_guid_map)
 }
@@ -619,10 +619,10 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
     static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-    fn setup_test_dir() -> std::path::PathBuf {
+    fn make_test_dir() -> std::path::PathBuf {
         let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!(
-            "vibelights_test_profile_{}_{}",
+            "vibelights_test_setup_{}_{}",
             std::process::id(),
             id
         ));
@@ -632,39 +632,39 @@ mod tests {
     }
 
     #[test]
-    fn test_create_and_list_profiles() {
-        let data_dir = setup_test_dir();
+    fn test_create_and_list_setups() {
+        let data_dir = make_test_dir();
 
         // Initially empty
-        let profiles = list_profiles(&data_dir).unwrap();
-        assert!(profiles.is_empty());
+        let setups = list_setups(&data_dir).unwrap();
+        assert!(setups.is_empty());
 
-        // Create a profile
-        let summary = create_profile(&data_dir, "My House").unwrap();
+        // Create a setup
+        let summary = create_setup(&data_dir, "My House").unwrap();
         assert_eq!(summary.name, "My House");
         assert_eq!(summary.slug, "my-house");
         assert_eq!(summary.sequence_count, 0);
         assert_eq!(summary.fixture_count, 0);
 
         // List should have one
-        let profiles = list_profiles(&data_dir).unwrap();
-        assert_eq!(profiles.len(), 1);
-        assert_eq!(profiles[0].slug, "my-house");
+        let setups = list_setups(&data_dir).unwrap();
+        assert_eq!(setups.len(), 1);
+        assert_eq!(setups[0].slug, "my-house");
 
         let _ = fs::remove_dir_all(&data_dir);
     }
 
     #[test]
-    fn test_load_save_profile() {
-        let data_dir = setup_test_dir();
-        create_profile(&data_dir, "Test").unwrap();
+    fn test_load_save_setup() {
+        let data_dir = make_test_dir();
+        create_setup(&data_dir, "Test").unwrap();
 
-        let mut profile = load_profile(&data_dir, "test").unwrap();
-        assert_eq!(profile.name, "Test");
-        assert!(profile.fixtures.is_empty());
+        let mut setup = load_setup(&data_dir, "test").unwrap();
+        assert_eq!(setup.name, "Test");
+        assert!(setup.fixtures.is_empty());
 
         // Add a fixture and save
-        profile.fixtures.push(crate::model::FixtureDef {
+        setup.fixtures.push(crate::model::FixtureDef {
             id: crate::model::FixtureId(1),
             name: "Pixel String 1".into(),
             color_model: crate::model::fixture::ColorModel::Rgb,
@@ -674,10 +674,10 @@ mod tests {
             display_radius_override: None,
             channel_order: Default::default(),
         });
-        save_profile(&data_dir, "test", &profile).unwrap();
+        save_setup(&data_dir, "test", &setup).unwrap();
 
         // Reload and verify
-        let reloaded = load_profile(&data_dir, "test").unwrap();
+        let reloaded = load_setup(&data_dir, "test").unwrap();
         assert_eq!(reloaded.fixtures.len(), 1);
         assert_eq!(reloaded.fixtures[0].name, "Pixel String 1");
 
@@ -686,8 +686,8 @@ mod tests {
 
     #[test]
     fn test_sequence_crud() {
-        let data_dir = setup_test_dir();
-        create_profile(&data_dir, "Test").unwrap();
+        let data_dir = make_test_dir();
+        create_setup(&data_dir, "Test").unwrap();
 
         // Create sequence
         let seq = create_sequence(&data_dir, "test", "Intro Scene").unwrap();
@@ -711,20 +711,20 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_profile() {
-        let data_dir = setup_test_dir();
-        create_profile(&data_dir, "Deletable").unwrap();
-        assert_eq!(list_profiles(&data_dir).unwrap().len(), 1);
+    fn test_delete_setup() {
+        let data_dir = make_test_dir();
+        create_setup(&data_dir, "Deletable").unwrap();
+        assert_eq!(list_setups(&data_dir).unwrap().len(), 1);
 
-        delete_profile(&data_dir, "deletable").unwrap();
-        assert!(list_profiles(&data_dir).unwrap().is_empty());
+        delete_setup(&data_dir, "deletable").unwrap();
+        assert!(list_setups(&data_dir).unwrap().is_empty());
 
         let _ = fs::remove_dir_all(&data_dir);
     }
 
     #[test]
     fn test_assemble_show() {
-        let profile = Profile {
+        let setup = Setup {
             name: "House".into(),
             slug: "house".into(),
             fixtures: vec![crate::model::FixtureDef {
@@ -750,7 +750,7 @@ mod tests {
             tracks: Vec::new(),
             motion_paths: std::collections::HashMap::new(),
         };
-        let show = assemble_show(&profile, &sequence);
+        let show = assemble_show(&setup, &sequence);
         assert_eq!(show.name, "Xmas");
         assert_eq!(show.fixtures.len(), 1);
         assert_eq!(show.sequences.len(), 1);

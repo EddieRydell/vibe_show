@@ -1,26 +1,26 @@
 import { useEffect, useState } from "react";
 import { cmd } from "../../commands";
-import type { Profile, FixtureLayout } from "../../types";
+import type { Setup, FixtureLayout } from "../../types";
 import { LayoutCanvas } from "../../components/layout/LayoutCanvas";
 import { LayoutToolbar } from "../../components/layout/LayoutToolbar";
 import { ShapeConfigurator } from "../../components/layout/ShapeConfigurator";
 import { FixturePlacer } from "../../components/layout/FixturePlacer";
 
 interface Props {
-  profile: Profile;
-  onProfileUpdate: (p: Profile) => void;
+  setup: Setup;
+  onSetupUpdate: (s: Setup) => void;
   setError: (e: string | null) => void;
 }
 
-export function LayoutTab({ profile, onProfileUpdate, setError }: Props) {
-  const [layouts, setLayouts] = useState<FixtureLayout[]>(profile.layout.fixtures);
+export function LayoutTab({ setup, onSetupUpdate, setError }: Props) {
+  const [layouts, setLayouts] = useState<FixtureLayout[]>(setup.layout.fixtures);
   const [selectedFixtureId, setSelectedFixtureId] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
-    setLayouts(profile.layout.fixtures);
+    setLayouts(setup.layout.fixtures);
     setDirty(false);
-  }, [profile]);
+  }, [setup]);
 
   const handleLayoutChange = (updated: FixtureLayout[]) => {
     setLayouts(updated);
@@ -36,8 +36,8 @@ export function LayoutTab({ profile, onProfileUpdate, setError }: Props) {
   const handleSave = async () => {
     try {
       const layout = { fixtures: layouts };
-      await cmd.updateProfileLayout(layout);
-      onProfileUpdate({ ...profile, layout });
+      await cmd.updateSetupLayout(layout);
+      onSetupUpdate({ ...setup, layout });
       setDirty(false);
     } catch (e) {
       setError(String(e));
@@ -60,14 +60,14 @@ export function LayoutTab({ profile, onProfileUpdate, setError }: Props) {
 
       <LayoutToolbar
         selectedFixtureId={selectedFixtureId}
-        fixtures={profile.fixtures}
+        fixtures={setup.fixtures}
         layouts={layouts}
         onLayoutChange={handleLayoutChange}
       />
 
       <div className="flex flex-1 overflow-hidden">
         <FixturePlacer
-          fixtures={profile.fixtures}
+          fixtures={setup.fixtures}
           layouts={layouts}
           onPlace={handlePlace}
         />
@@ -75,7 +75,7 @@ export function LayoutTab({ profile, onProfileUpdate, setError }: Props) {
         <div className="flex-1 overflow-hidden">
           <LayoutCanvas
             layouts={layouts}
-            fixtures={profile.fixtures}
+            fixtures={setup.fixtures}
             selectedFixtureId={selectedFixtureId}
             onLayoutChange={handleLayoutChange}
             onSelectFixture={setSelectedFixtureId}
@@ -84,7 +84,7 @@ export function LayoutTab({ profile, onProfileUpdate, setError }: Props) {
 
         <ShapeConfigurator
           selectedFixtureId={selectedFixtureId}
-          fixtures={profile.fixtures}
+          fixtures={setup.fixtures}
           layouts={layouts}
           onLayoutChange={handleLayoutChange}
         />

@@ -38,7 +38,7 @@ fn main() {
             let global_libs = loaded_settings
                 .as_ref()
                 .and_then(|s| {
-                    vibe_lights::profile::load_global_libraries(&s.data_dir).ok()
+                    vibe_lights::setup::load_global_libraries(&s.data_dir).ok()
                 })
                 .unwrap_or_default();
 
@@ -57,7 +57,7 @@ fn main() {
                 api_port: AtomicU16::new(0),
                 app_config_dir: app_config_dir.clone(),
                 settings: Mutex::new(loaded_settings),
-                current_profile: Mutex::new(None),
+                current_setup: Mutex::new(None),
                 current_sequence: Mutex::new(None),
                 script_cache: Mutex::new(std::collections::HashMap::new()),
                 python_sidecar: Mutex::new(None),
@@ -106,6 +106,7 @@ fn main() {
             commands::cancel_agent_message,
             commands::clear_agent_session,
             commands::open_sequence,
+            commands::scan_vixen_directory,
             commands::execute_vixen_import,
             commands::analyze_audio,
             commands::get_python_status,

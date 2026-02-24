@@ -11,7 +11,7 @@ import type {
 import { useProgress } from "../hooks/useProgress";
 
 interface Props {
-  onComplete: (profileSlug: string) => void;
+  onComplete: (setupSlug: string) => void;
   onCancel: () => void;
 }
 
@@ -32,7 +32,7 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   // Review step state
-  const [profileName, setProfileName] = useState("Vixen Import");
+  const [setupName, setProfileName] = useState("Vixen Import");
   const [importControllers, setImportControllers] = useState(true);
   const [importLayout, setImportLayout] = useState(true);
   const [previewFileOverride, setPreviewFileOverride] = useState<string | null>(
@@ -57,7 +57,9 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
     setError(null);
     setPreviewFileOverride(null);
     try {
-      const disc = await cmd.scanVixenDirectory(vixenDir.trim());
+      const disc = await invoke<VixenDiscovery>("scan_vixen_directory", {
+        vixenDir: vixenDir.trim(),
+      });
       setDiscovery(disc);
       // Pre-select all sequences and media
       setSelectedSequences(new Set(disc.sequences.map((s) => s.path)));
@@ -106,7 +108,7 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
     try {
       const config: VixenImportConfig = {
         vixen_dir: discovery.vixen_dir,
-        profile_name: profileName.trim() || "Vixen Import",
+        setup_name: setupName.trim() || "Vixen Import",
         import_controllers: importControllers,
         import_layout: importLayout,
         preview_file_override: previewFileOverride,
@@ -125,7 +127,7 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
     }
   }, [
     discovery,
-    profileName,
+    setupName,
     importControllers,
     importLayout,
     previewFileOverride,
@@ -213,14 +215,15 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
               onBrowse={handleBrowse}
               onScan={handleScan}
               scanning={scanning}
+              scanProgress={scanning ? progressOps.get("scan")?.event : undefined}
             />
           )}
 
           {step === "review" && discovery && (
             <StepReview
               discovery={discovery}
-              profileName={profileName}
-              onProfileNameChange={setProfileName}
+              setupName={setupName}
+              onSetupNameChange={setProfileName}
               importControllers={importControllers}
               onImportControllersChange={setImportControllers}
               importLayout={importLayout}
@@ -290,10 +293,10 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
           )}
           {step === "done" && result && (
             <button
-              onClick={() => onComplete(result.profile_slug)}
+              onClick={() => onComplete(result.setup_slug)}
               className="bg-primary hover:bg-primary/90 rounded px-4 py-1.5 text-xs font-medium text-white transition-colors"
             >
-              Open Profile
+              Open Setup
             </button>
           )}
         </div>
@@ -338,13 +341,19 @@ function StepSelect({
   onBrowse,
   onScan,
   scanning,
+  scanProgress,
 }: {
   vixenDir: string;
   onDirChange: (dir: string) => void;
   onBrowse: () => void;
   onScan: () => void;
   scanning: boolean;
+  scanProgress?: ProgressEvent | undefined;
 }) {
+  const pct = scanProgress && scanProgress.progress >= 0
+    ? Math.round(scanProgress.progress * 100)
+    : 0;
+
   return (
     <div className="space-y-4">
       <p className="text-text-2 text-xs">
@@ -360,11 +369,13 @@ function StepSelect({
           onKeyDown={(e) => e.key === "Enter" && onScan()}
           placeholder="C:\Users\...\Documents\Vixen 3"
           autoFocus
-          className="border-border bg-surface-2 text-text placeholder:text-text-2 focus:border-primary flex-1 rounded border px-3 py-1.5 text-sm outline-none"
+          disabled={scanning}
+          className="border-border bg-surface-2 text-text placeholder:text-text-2 focus:border-primary flex-1 rounded border px-3 py-1.5 text-sm outline-none disabled:opacity-50"
         />
         <button
           onClick={onBrowse}
-          className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-3 py-1.5 text-xs transition-colors"
+          disabled={scanning}
+          className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-3 py-1.5 text-xs transition-colors disabled:opacity-50"
         >
           Browse
         </button>
@@ -377,6 +388,24 @@ function StepSelect({
       >
         {scanning ? "Scanning..." : "Scan Directory"}
       </button>
+
+      {scanning && (
+        <div className="space-y-1.5">
+          <p className="text-text-2 text-xs">
+            {scanProgress?.phase ?? "Starting scan..."}
+          </p>
+          <div className="bg-border/30 h-1.5 w-full overflow-hidden rounded-full">
+            {scanProgress ? (
+              <div
+                className="bg-primary h-full rounded-full transition-[width] duration-200"
+                style={{ width: `${pct}%` }}
+              />
+            ) : (
+              <div className="bg-primary h-full w-1/3 animate-pulse rounded-full" />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -385,8 +414,8 @@ function StepSelect({
 
 function StepReview({
   discovery,
-  profileName,
-  onProfileNameChange,
+  setupName,
+  onSetupNameChange,
   importControllers,
   onImportControllersChange,
   importLayout,
@@ -400,8 +429,8 @@ function StepReview({
   onToggleAllMedia,
 }: {
   discovery: VixenDiscovery;
-  profileName: string;
-  onProfileNameChange: (name: string) => void;
+  setupName: string;
+  onSetupNameChange: (name: string) => void;
   importControllers: boolean;
   onImportControllersChange: (v: boolean) => void;
   importLayout: boolean;
@@ -416,13 +445,13 @@ function StepReview({
 }) {
   return (
     <div className="space-y-4">
-      {/* Profile name */}
+      {/* Setup name */}
       <label className="block">
-        <span className="text-text-2 mb-1 block text-xs">Profile Name</span>
+        <span className="text-text-2 mb-1 block text-xs">Setup Name</span>
         <input
           type="text"
-          value={profileName}
-          onChange={(e) => onProfileNameChange(e.target.value)}
+          value={setupName}
+          onChange={(e) => onSetupNameChange(e.target.value)}
           className="border-border bg-surface-2 text-text focus:border-primary w-full rounded border px-3 py-1.5 text-sm outline-none"
         />
       </label>

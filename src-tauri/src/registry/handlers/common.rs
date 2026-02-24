@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use crate::commands::{self, ScriptCompileResult, ScriptError};
-use crate::registry::CommandOutput;
 use crate::state::AppState;
 
 /// Compile a script source, cache the result, and return a `ScriptCompileResult`.
@@ -75,12 +74,3 @@ pub fn compile_preview(name: String, source: &str) -> ScriptCompileResult {
     }
 }
 
-/// Build a `CommandOutput` from a `ScriptCompileResult`.
-pub fn compile_result_output(result: &ScriptCompileResult) -> CommandOutput {
-    let summary = if result.success {
-        "Compiled and saved."
-    } else {
-        "Compile failed."
-    };
-    CommandOutput::json(summary, result)
-}

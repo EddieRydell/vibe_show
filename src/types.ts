@@ -52,8 +52,8 @@ export type { PixelType } from "../src-tauri/bindings/PixelType";
 export type { PlaybackInfo } from "../src-tauri/bindings/PlaybackInfo";
 export type { ProgressEvent } from "../src-tauri/bindings/ProgressEvent";
 export type { Position2D } from "../src-tauri/bindings/Position2D";
-export type { Profile } from "../src-tauri/bindings/Profile";
-export type { ProfileSummary } from "../src-tauri/bindings/ProfileSummary";
+export type { Setup } from "../src-tauri/bindings/Setup";
+export type { SetupSummary } from "../src-tauri/bindings/SetupSummary";
 export type { ScriptCompileResult } from "../src-tauri/bindings/ScriptCompileResult";
 export type { ScriptError } from "../src-tauri/bindings/ScriptError";
 export type { ScriptParamInfo } from "../src-tauri/bindings/ScriptParamInfo";
@@ -72,6 +72,19 @@ export type { VixenImportResult } from "../src-tauri/bindings/VixenImportResult"
 export type { VixenMediaInfo } from "../src-tauri/bindings/VixenMediaInfo";
 export type { VixenSequenceInfo } from "../src-tauri/bindings/VixenSequenceInfo";
 export type { WipeDirection } from "../src-tauri/bindings/WipeDirection";
+
+// ── Command return types ─────────────────────────────────────────────
+
+export type { AnalysisSummary } from "../src-tauri/bindings/AnalysisSummary";
+export type { BeatsInRange } from "../src-tauri/bindings/BeatsInRange";
+export type { ChatHistoryEntry } from "../src-tauri/bindings/ChatHistoryEntry";
+export type { ChatRole } from "../src-tauri/bindings/ChatRole";
+export type { ConversationSummary } from "../src-tauri/bindings/ConversationSummary";
+export type { EffectCatalogEntry } from "../src-tauri/bindings/EffectCatalogEntry";
+export type { EffectCatalogParam } from "../src-tauri/bindings/EffectCatalogParam";
+export type { GlobalLibrarySummary } from "../src-tauri/bindings/GlobalLibrarySummary";
+export type { NewConversationResult } from "../src-tauri/bindings/NewConversationResult";
+export type { SectionSummary } from "../src-tauri/bindings/SectionSummary";
 
 // ── Audio analysis types ────────────────────────────────────────────
 

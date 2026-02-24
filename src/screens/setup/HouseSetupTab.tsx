@@ -1,30 +1,30 @@
 import { useEffect, useState } from "react";
 import { cmd } from "../../commands";
-import type { Profile, FixtureDef, FixtureGroup } from "../../types";
+import type { Setup, FixtureDef, FixtureGroup } from "../../types";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { HouseTree } from "../../components/house/HouseTree";
 import { FixtureEditor } from "../../components/house/FixtureEditor";
 import { GroupEditor } from "../../components/house/GroupEditor";
 
 interface Props {
-  profile: Profile;
-  onProfileUpdate: (p: Profile) => void;
+  setup: Setup;
+  onSetupUpdate: (s: Setup) => void;
   setError: (e: string | null) => void;
 }
 
-export function HouseSetupTab({ profile, onProfileUpdate, setError }: Props) {
-  const [fixtures, setFixtures] = useState<FixtureDef[]>(profile.fixtures);
-  const [groups, setGroups] = useState<FixtureGroup[]>(profile.groups);
+export function HouseSetupTab({ setup, onSetupUpdate, setError }: Props) {
+  const [fixtures, setFixtures] = useState<FixtureDef[]>(setup.fixtures);
+  const [groups, setGroups] = useState<FixtureGroup[]>(setup.groups);
   const [dirty, setDirty] = useState(false);
   const [editingFixture, setEditingFixture] = useState<FixtureDef | null | "new">(null);
   const [editingGroup, setEditingGroup] = useState<FixtureGroup | null | "new">(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ kind: "fixture" | "group"; id: number } | null>(null);
 
   useEffect(() => {
-    setFixtures(profile.fixtures);
-    setGroups(profile.groups);
+    setFixtures(setup.fixtures);
+    setGroups(setup.groups);
     setDirty(false);
-  }, [profile]);
+  }, [setup]);
 
   const nextFixtureId = Math.max(0, ...fixtures.map((f) => f.id)) + 1;
   const nextGroupId = Math.max(0, ...groups.map((g) => g.id)) + 1;
@@ -88,9 +88,9 @@ export function HouseSetupTab({ profile, onProfileUpdate, setError }: Props) {
 
   const handleSave = async () => {
     try {
-      await cmd.updateProfileFixtures(fixtures, groups);
-      const updated = { ...profile, fixtures, groups };
-      onProfileUpdate(updated);
+      await cmd.updateSetupFixtures(fixtures, groups);
+      const updated = { ...setup, fixtures, groups };
+      onSetupUpdate(updated);
       setDirty(false);
     } catch (e) {
       setError(String(e));
@@ -129,13 +129,13 @@ export function HouseSetupTab({ profile, onProfileUpdate, setError }: Props) {
 
       <section>
         <h3 className="text-text mb-3 text-sm font-medium">
-          Controllers ({profile.controllers.length})
+          Controllers ({setup.controllers.length})
         </h3>
-        {profile.controllers.length === 0 ? (
+        {setup.controllers.length === 0 ? (
           <p className="text-text-2 text-xs">No controllers configured.</p>
         ) : (
           <div className="border-border divide-border divide-y rounded border">
-            {profile.controllers.map((c) => (
+            {setup.controllers.map((c) => (
               <div key={c.id} className="flex items-center justify-between px-4 py-2">
                 <span className="text-text text-sm">{c.name}</span>
                 <span className="text-text-2 text-xs">
@@ -153,13 +153,13 @@ export function HouseSetupTab({ profile, onProfileUpdate, setError }: Props) {
 
       <section>
         <h3 className="text-text mb-3 text-sm font-medium">
-          Patches ({profile.patches.length})
+          Patches ({setup.patches.length})
         </h3>
-        {profile.patches.length === 0 ? (
+        {setup.patches.length === 0 ? (
           <p className="text-text-2 text-xs">No patches configured.</p>
         ) : (
           <div className="border-border divide-border divide-y rounded border">
-            {profile.patches.map((p, i) => (
+            {setup.patches.map((p, i) => (
               <div key={i} className="flex items-center justify-between px-4 py-2">
                 <span className="text-text text-sm">Fixture {p.fixture_id}</span>
                 <span className="text-text-2 text-xs">

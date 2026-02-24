@@ -2,16 +2,53 @@
 
 use std::sync::Arc;
 
+use serde::Serialize;
 use serde_json::Value;
+use ts_rs::TS;
 
 use crate::error::AppError;
 use crate::model::analysis::AudioAnalysis;
 use crate::registry::params::{GetAnalysisDetailParams, GetBeatsInRangeParams};
-use crate::registry::CommandOutput;
+use crate::registry::{CommandOutput, CommandResult, JsonValue};
 use crate::state::AppState;
 
-use crate::profile;
+use crate::setup;
 use crate::state::get_data_dir;
+
+/// Typed return for GetAnalysisSummary.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct AnalysisSummary {
+    pub tempo: Option<f64>,
+    pub time_signature: Option<u32>,
+    pub beat_count: Option<usize>,
+    pub key: Option<String>,
+    pub key_confidence: Option<f64>,
+    pub valence: Option<f64>,
+    pub arousal: Option<f64>,
+    pub danceability: Option<f64>,
+    pub genres: Option<std::collections::HashMap<String, f64>>,
+    pub sections: Option<Vec<SectionSummary>>,
+}
+
+/// Lightweight section info for the summary.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct SectionSummary {
+    pub label: String,
+    pub start: f64,
+    pub end: f64,
+}
+
+/// Typed return for GetBeatsInRange.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct BeatsInRange {
+    pub beats: Vec<f64>,
+    pub downbeats: Vec<f64>,
+    pub count: usize,
+    pub tempo: f64,
+}
 
 fn current_analysis(state: &Arc<AppState>) -> Option<AudioAnalysis> {
     let show = state.show.lock();
@@ -25,56 +62,30 @@ pub fn get_analysis_summary(state: &Arc<AppState>) -> Result<CommandOutput, AppE
         message: "No audio analysis available. Load a song and run analysis first.".into(),
     })?;
 
-    let mut summary = serde_json::Map::new();
+    let summary = AnalysisSummary {
+        tempo: analysis.beats.as_ref().map(|b| b.tempo),
+        time_signature: analysis.beats.as_ref().map(|b| b.time_signature),
+        beat_count: analysis.beats.as_ref().map(|b| b.beats.len()),
+        key: analysis.harmony.as_ref().map(|h| h.key.clone()),
+        key_confidence: analysis.harmony.as_ref().map(|h| h.key_confidence),
+        valence: analysis.mood.as_ref().map(|m| m.valence),
+        arousal: analysis.mood.as_ref().map(|m| m.arousal),
+        danceability: analysis.mood.as_ref().map(|m| m.danceability),
+        genres: analysis.mood.as_ref().and_then(|m| {
+            if m.genres.is_empty() { None } else { Some(m.genres.clone()) }
+        }),
+        sections: analysis.structure.as_ref().map(|s| {
+            s.sections.iter().map(|sec| SectionSummary {
+                label: sec.label.clone(),
+                start: sec.start,
+                end: sec.end,
+            }).collect()
+        }),
+    };
 
-    if let Some(ref beats) = analysis.beats {
-        summary.insert("tempo".to_string(), serde_json::json!(beats.tempo));
-        summary.insert(
-            "time_signature".to_string(),
-            serde_json::json!(beats.time_signature),
-        );
-        summary.insert(
-            "beat_count".to_string(),
-            serde_json::json!(beats.beats.len()),
-        );
-    }
-    if let Some(ref harmony) = analysis.harmony {
-        summary.insert("key".to_string(), serde_json::json!(harmony.key));
-        summary.insert(
-            "key_confidence".to_string(),
-            serde_json::json!(harmony.key_confidence),
-        );
-    }
-    if let Some(ref mood) = analysis.mood {
-        summary.insert("valence".to_string(), serde_json::json!(mood.valence));
-        summary.insert("arousal".to_string(), serde_json::json!(mood.arousal));
-        summary.insert(
-            "danceability".to_string(),
-            serde_json::json!(mood.danceability),
-        );
-        if !mood.genres.is_empty() {
-            summary.insert("genres".to_string(), serde_json::json!(mood.genres));
-        }
-    }
-    if let Some(ref structure) = analysis.structure {
-        let sections: Vec<Value> = structure
-            .sections
-            .iter()
-            .map(|s| {
-                serde_json::json!({
-                    "label": s.label,
-                    "start": s.start,
-                    "end": s.end,
-                })
-            })
-            .collect();
-        summary.insert("sections".to_string(), Value::Array(sections));
-    }
-
-    let data = Value::Object(summary);
-    Ok(CommandOutput::data(
-        serde_json::to_string_pretty(&data).unwrap_or_default(),
-        data,
+    Ok(CommandOutput::new(
+        serde_json::to_string_pretty(&summary).unwrap_or_default(),
+        CommandResult::GetAnalysisSummary(summary),
     ))
 }
 
@@ -105,15 +116,15 @@ pub fn get_beats_in_range(
         .filter(|&b| b >= p.start && b <= p.end)
         .collect();
 
-    let data = serde_json::json!({
-        "beats": filtered,
-        "downbeats": downbeats,
-        "count": filtered.len(),
-        "tempo": beats.tempo,
-    });
-    Ok(CommandOutput::data(
-        serde_json::to_string(&data).unwrap_or_default(),
-        data,
+    let result = BeatsInRange {
+        count: filtered.len(),
+        beats: filtered,
+        downbeats,
+        tempo: beats.tempo,
+    };
+    Ok(CommandOutput::new(
+        serde_json::to_string(&result).unwrap_or_default(),
+        CommandResult::GetBeatsInRange(result),
     ))
 }
 
@@ -127,9 +138,9 @@ pub fn get_sections(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
         .ok_or(AppError::ValidationError {
             message: "No structure analysis available.".into(),
         })?;
-    Ok(CommandOutput::json(
+    Ok(CommandOutput::new(
         serde_json::to_string_pretty(&structure.sections).unwrap_or_default(),
-        &structure.sections,
+        CommandResult::GetSections(structure.sections.clone()),
     ))
 }
 
@@ -162,14 +173,14 @@ pub fn get_analysis_detail(
     };
 
     if detail.is_null() {
-        Ok(CommandOutput::unit(format!(
-            "No {} analysis data available.",
-            p.feature
-        )))
+        Ok(CommandOutput::new(
+            format!("No {} analysis data available.", p.feature),
+            CommandResult::GetAnalysisDetail(JsonValue(serde_json::Value::Null)),
+        ))
     } else {
-        Ok(CommandOutput::data(
+        Ok(CommandOutput::new(
             serde_json::to_string_pretty(&detail).unwrap_or_default(),
-            detail,
+            CommandResult::GetAnalysisDetail(JsonValue(detail)),
         ))
     }
 }
@@ -182,11 +193,11 @@ pub fn get_analysis(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     });
 
     let Some(audio_file) = audio_file else {
-        return Ok(CommandOutput::json("No audio file.", &Option::<AudioAnalysis>::None));
+        return Ok(CommandOutput::new("No audio file.", CommandResult::GetAnalysis(None)));
     };
 
     // Validate audio filename to prevent path traversal
-    if let Err(e) = profile::validate_filename(&audio_file) {
+    if let Err(e) = setup::validate_filename(&audio_file) {
         return Err(AppError::ValidationError {
             message: format!("Invalid audio filename: {e}"),
         });
@@ -194,12 +205,12 @@ pub fn get_analysis(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
 
     // Resolve the full path to the audio file and verify it exists
     let Ok(data_dir) = get_data_dir(state) else {
-        return Ok(CommandOutput::json("No data dir.", &Option::<AudioAnalysis>::None));
+        return Ok(CommandOutput::new("No data dir.", CommandResult::GetAnalysis(None)));
     };
-    let Some(profile_slug) = state.current_profile.lock().clone() else {
-        return Ok(CommandOutput::json("No profile.", &Option::<AudioAnalysis>::None));
+    let Some(setup_slug) = state.current_setup.lock().clone() else {
+        return Ok(CommandOutput::new("No setup.", CommandResult::GetAnalysis(None)));
     };
-    let media_dir = crate::paths::media_dir(&data_dir, &profile_slug);
+    let media_dir = crate::paths::media_dir(&data_dir, &setup_slug);
 
     let audio_path = media_dir.join(&audio_file);
     if !audio_path.exists() {
@@ -210,7 +221,7 @@ pub fn get_analysis(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
 
     // Check memory cache
     if let Some(cached) = state.analysis_cache.lock().get(&audio_file) {
-        return Ok(CommandOutput::json("Analysis from cache.", &Some(cached.clone())));
+        return Ok(CommandOutput::new("Analysis from cache.", CommandResult::GetAnalysis(Some(Box::new(cached.clone())))));
     }
 
     // Check disk cache
@@ -219,9 +230,9 @@ pub fn get_analysis(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     if path.exists() {
         if let Ok(loaded) = crate::analysis::load_analysis(&path) {
             state.cache_analysis(audio_file, loaded.clone());
-            return Ok(CommandOutput::json("Analysis loaded from disk.", &Some(loaded)));
+            return Ok(CommandOutput::new("Analysis loaded from disk.", CommandResult::GetAnalysis(Some(Box::new(loaded)))));
         }
     }
 
-    Ok(CommandOutput::json("No analysis available.", &Option::<AudioAnalysis>::None))
+    Ok(CommandOutput::new("No analysis available.", CommandResult::GetAnalysis(None)))
 }

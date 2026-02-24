@@ -88,7 +88,7 @@ impl LlmConfigInfo {
 pub struct AppSettings {
     pub version: u32,
     pub data_dir: PathBuf,
-    pub last_profile: Option<String>,
+    pub last_setup: Option<String>,
     /// Legacy field — read during deserialization for backward compat, never written.
     #[serde(default, skip_serializing)]
     #[ts(skip)]
@@ -113,7 +113,7 @@ impl AppSettings {
         Self {
             version: SETTINGS_VERSION,
             data_dir,
-            last_profile: None,
+            last_setup: None,
             claude_api_key: None,
             llm: LlmProviderConfig::default(),
             use_gpu: false,
@@ -200,7 +200,7 @@ mod tests {
 
         let loaded = load_settings(&dir).expect("should load");
         assert_eq!(loaded.data_dir, PathBuf::from("/some/data/dir"));
-        assert_eq!(loaded.last_profile, None);
+        assert_eq!(loaded.last_setup, None);
         assert!(matches!(loaded.llm.provider, LlmProvider::Anthropic));
 
         let _ = std::fs::remove_dir_all(&dir);

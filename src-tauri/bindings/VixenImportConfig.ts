@@ -3,7 +3,7 @@
 /**
  * What the user selected for import (sent from frontend).
  */
-export type VixenImportConfig = { vixen_dir: string, profile_name: string, import_controllers: boolean, import_layout: boolean, 
+export type VixenImportConfig = { vixen_dir: string, setup_name: string, import_controllers: boolean, import_layout: boolean, 
 /**
  * Optional user-provided path to the file containing preview/layout data.
  * When set, overrides auto-detection in `find_preview_file`.

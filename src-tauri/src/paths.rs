@@ -18,7 +18,7 @@ pub const CREDENTIALS_FILE: &str = ".credentials";
 pub const CHAT_FILE: &str = "chat.json";
 pub const AGENT_CHATS_FILE: &str = "agent-chats.json";
 pub const PORT_FILE: &str = ".vibelights-port";
-pub const PROFILE_FILE: &str = "profile.json";
+pub const SETUP_META_FILE: &str = "meta.json";
 pub const FIXTURES_FILE: &str = "fixtures.json";
 pub const SETUP_FILE: &str = "setup.json";
 pub const LAYOUT_FILE: &str = "layout.json";
@@ -27,7 +27,7 @@ pub const DEPS_INSTALLED_MARKER: &str = ".deps_installed";
 
 // ── Directory names ──────────────────────────────────────────────
 
-pub const PROFILES_DIR: &str = "profiles";
+pub const SETUPS_DIR: &str = "setups";
 pub const SEQUENCES_DIR: &str = "sequences";
 pub const MEDIA_DIR: &str = "media";
 pub const PYTHON_ENV_DIR: &str = "python_env";
@@ -113,24 +113,24 @@ pub fn global_libraries_path(data_dir: &Path) -> PathBuf {
 
 // ── Data-dir functions (take data_dir + slugs) ───────────────────
 
-pub fn profiles_dir(data_dir: &Path) -> PathBuf {
-    data_dir.join(PROFILES_DIR)
+pub fn setups_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join(SETUPS_DIR)
 }
 
-pub fn profile_dir(data_dir: &Path, slug: &str) -> PathBuf {
-    profiles_dir(data_dir).join(slug)
+pub fn setup_dir(data_dir: &Path, slug: &str) -> PathBuf {
+    setups_dir(data_dir).join(slug)
 }
 
-pub fn sequences_dir(data_dir: &Path, profile_slug: &str) -> PathBuf {
-    profile_dir(data_dir, profile_slug).join(SEQUENCES_DIR)
+pub fn sequences_dir(data_dir: &Path, setup_slug: &str) -> PathBuf {
+    setup_dir(data_dir, setup_slug).join(SEQUENCES_DIR)
 }
 
-pub fn media_dir(data_dir: &Path, profile_slug: &str) -> PathBuf {
-    profile_dir(data_dir, profile_slug).join(MEDIA_DIR)
+pub fn media_dir(data_dir: &Path, setup_slug: &str) -> PathBuf {
+    setup_dir(data_dir, setup_slug).join(MEDIA_DIR)
 }
 
-pub fn sequence_file(data_dir: &Path, profile_slug: &str, seq_slug: &str) -> PathBuf {
-    sequences_dir(data_dir, profile_slug).join(format!("{seq_slug}.json"))
+pub fn sequence_file(data_dir: &Path, setup_slug: &str, seq_slug: &str) -> PathBuf {
+    sequences_dir(data_dir, setup_slug).join(format!("{seq_slug}.json"))
 }
 
 // ── Analysis functions (take media_dir) ──────────────────────────

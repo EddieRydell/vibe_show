@@ -1,6 +1,74 @@
+use std::fmt::Write;
+
+use crate::dsl::builtins::{BUILTINS, IMPLICIT_VARS};
+
+/// Generate a markdown table of built-in functions, grouped by category.
+fn builtin_functions_table() -> String {
+    let mut out = String::new();
+    out.push_str("## Built-in Functions\n\n");
+
+    // Ordered list of (category_key, display_title)
+    let categories: &[(&str, &str)] = &[
+        ("math", "Math"),
+        ("color", "Color Constructors"),
+        ("vec2", "Vec2"),
+        ("hash", "Hash / Random"),
+        ("easing", "Easing"),
+        ("noise", "Noise"),
+    ];
+
+    for &(cat_key, cat_title) in categories {
+        let fns: Vec<_> = BUILTINS.iter().filter(|b| b.category == cat_key).collect();
+        if fns.is_empty() {
+            continue;
+        }
+
+        let _ = writeln!(out, "### {cat_title}");
+        out.push_str("| Function | Description |\n");
+        out.push_str("|----------|-------------|\n");
+
+        for f in &fns {
+            let params_str: Vec<&str> = f.params.iter()
+                .map(|(name, _ty)| *name)
+                .collect();
+            let _ = writeln!(out,
+                "| `{}({})` | {} |",
+                f.name,
+                params_str.join(", "),
+                f.description,
+            );
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
+/// Generate a markdown table of implicit variables.
+fn implicit_variables_table() -> String {
+    let mut out = String::new();
+    out.push_str("## Implicit Variables\n");
+    out.push_str("| Variable | Type  | Description |\n");
+    out.push_str("|----------|-------|-------------|\n");
+
+    for &(name, ref ty, _, desc) in IMPLICIT_VARS {
+        let ty_str = match ty {
+            crate::dsl::ast::TypeName::Float => "float",
+            crate::dsl::ast::TypeName::Vec2 => "vec2",
+            _ => "?",
+        };
+        let _ = writeln!(out, "| `{name}` | {ty_str} | {desc} |");
+    }
+    out.push('\n');
+    out
+}
+
 /// Generate the complete DSL language reference from the actual implementation.
 pub fn dsl_reference() -> String {
-    r#"# VibeLights DSL Reference
+    let mut out = String::new();
+
+    // ── Hand-written sections ───────────────────────────────────
+    out.push_str(r#"# VibeLights DSL Reference
 
 ## Script Structure
 ```
@@ -28,7 +96,7 @@ let x = sin(phase) * 0.5 + 0.5
 -- Functions
 fn pulse(center: float, width: float) -> float {
     let d = abs(pos - center)
-    smoothstep(width, 0.0, d)
+    smoothstep(0.0, width, d)
 }
 
 -- Conditionals (if / else if / else)
@@ -49,19 +117,13 @@ if mode == Mode.Pulse {
 -- Lua-style line comment (also valid)
 ```
 
-## Implicit Variables
-| Variable | Type  | Description |
-|----------|-------|-------------|
-| `t`      | float | Normalized time [0.0, 1.0] within the effect duration |
-| `pixel`  | int   | Current pixel index (0-based) |
-| `pixels` | int   | Total pixel count in the effect's target |
-| `pos`    | float | Normalized position: pixel / (pixels - 1), range [0.0, 1.0] |
-| `pos2d`  | vec2  | 2D position (requires @spatial true) |
-| `abs_t`  | float | Absolute time in seconds (for motion path evaluation) |
-| `PI`     | float | 3.14159... |
-| `TAU`    | float | 6.28318... (2π) |
+"#);
 
-## Types
+    // ── Auto-generated from IMPLICIT_VARS ───────────────────────
+    out.push_str(&implicit_variables_table());
+
+    // ── Hand-written types/operators ────────────────────────────
+    out.push_str(r"## Types
 - `float` — 64-bit floating point
 - `int` — 32-bit integer
 - `bool` — true/false
@@ -111,69 +173,23 @@ if mode == Mode.Pulse {
 - `EnumName` — dropdown from defined enum
 - `FlagsName` — multi-select from defined flags
 
-## Built-in Functions
+");
 
-### Math (1 argument → float)
-| Function | Description |
-|----------|-------------|
-| `sin(x)` | Sine |
-| `cos(x)` | Cosine |
-| `tan(x)` | Tangent |
-| `abs(x)` | Absolute value |
-| `floor(x)` | Round down |
-| `ceil(x)` | Round up |
-| `round(x)` | Round to nearest |
-| `fract(x)` | Fractional part (x - floor(x)) |
-| `sqrt(x)` | Square root |
-| `sign(x)` | Sign: -1.0, 0.0, or 1.0 |
-| `exp(x)` | e^x (exponential) |
-| `log(x)` | Natural logarithm (ln) |
+    // ── Auto-generated from BUILTINS ────────────────────────────
+    out.push_str(&builtin_functions_table());
 
-### Math (2 arguments → float)
-| Function | Description |
-|----------|-------------|
-| `pow(base, exp)` | Power |
-| `min(a, b)` | Minimum |
-| `max(a, b)` | Maximum |
-| `mod(a, b)` | Modulo (same as `a % b`) |
-| `step(edge, x)` | 0 if x < edge, else 1 |
-| `atan2(y, x)` | Arctangent of y/x |
-
-### Math (3 arguments → float)
-| Function | Description |
-|----------|-------------|
-| `clamp(x, min, max)` | Constrain x to [min, max] |
-| `mix(a, b, t)` | Linear interpolation: a + (b - a) * t |
-| `smoothstep(e0, e1, x)` | Smooth Hermite interpolation |
-
-### Color Constructors → color
-| Function | Description |
-|----------|-------------|
-| `rgb(r, g, b)` | RGB color (0.0-1.0 range) |
-| `hsv(h, s, v)` | HSV color (h: 0-360, s: 0-1, v: 0-1) |
-| `rgba(r, g, b, a)` | RGBA color (0.0-1.0 range) |
-
-### Color Operations
+    // ── Hand-written color/vec2 operations & rest ───────────────
+    out.push_str(r#"### Color Operations
 | Operation | Description |
 |-----------|-------------|
 | `c.r`, `c.g`, `c.b`, `c.a` | Channel access (0.0-1.0) |
 | `c.scale(f)` | Multiply RGB by float, returns new color |
 | Gradient call: `grad(0.5)` | Evaluate gradient at position [0.0, 1.0] |
 
-### Vec2
-| Function | Description |
-|----------|-------------|
-| `vec2(x, y)` | Construct vec2 |
-| `distance(a, b)` | Euclidean distance between two vec2 |
-| `length(v)` | Length of vec2 |
-| `dot(a, b)` | Dot product of two vec2 |
-| `normalize(v)` | Normalize vec2 to unit length |
+### Vec2 Operations
+| Operation | Description |
+|-----------|-------------|
 | `v.x`, `v.y` | Component access |
-
-### Noise / Random
-| Function | Description |
-|----------|-------------|
-| `hash(a, b)` | Deterministic pseudo-random [0, 1] — same inputs always produce same output |
 
 ## Control Flow
 
@@ -260,7 +276,7 @@ param width: float(0.1, 1.0) = 0.3
 let head = fract(t * speed)
 let d = abs(pos - head)
 let d2 = min(d, 1.0 - d)
-let brightness = smoothstep(width, 0.0, d2)
+let brightness = smoothstep(0.0, width, d2)
 grad(pos).scale(brightness)
 ```
 
@@ -299,11 +315,12 @@ param center_y: float(0.0, 1.0) = 0.5
 let center = vec2(center_x, center_y)
 let d = distance(pos2d, center)
 let wave = sin((d - t * speed) * TAU * 3.0) * 0.5 + 0.5
-let falloff = smoothstep(0.8, 0.0, d)
+let falloff = smoothstep(0.0, 0.8, d)
 color1.scale(wave * falloff)
 ```
-"#
-    .to_string()
+"#);
+
+    out
 }
 
 /// Light show design best practices.
@@ -366,7 +383,7 @@ pub fn design_guide() -> String {
 - Start simple, test, then add complexity
 - Use `hash(pixel, floor(t * speed))` for per-pixel randomness that changes with time
 - Use `fract()` for repeating patterns
-- Use `smoothstep()` instead of hard if/else for smooth transitions
+- Use `smoothstep(e0, e1, x)` for smooth transitions (e0 must be < e1)
 - Combine `pos` with `t` for traveling patterns: `sin((pos - t) * TAU * 3.0)`
 "
     .to_string()

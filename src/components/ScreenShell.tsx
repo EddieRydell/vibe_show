@@ -1,5 +1,4 @@
 import { createContext, useContext } from "react";
-import { AppBar } from "./AppBar";
 import { NavBar } from "./NavBar";
 
 export interface AppShellContextType {
@@ -38,7 +37,6 @@ export function ScreenShell({
 }: ScreenShellProps) {
   return (
     <div className="bg-bg text-text flex h-full flex-col">
-      <AppBar />
       <nav>
         <NavBar
           title={title}
