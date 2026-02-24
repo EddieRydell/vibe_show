@@ -15,9 +15,7 @@ pub const APP_ID: &str = "com.vibelights.app";
 
 pub const SETTINGS_FILE: &str = "settings.json";
 pub const CREDENTIALS_FILE: &str = ".credentials";
-pub const CHAT_FILE: &str = "chat.json";
 pub const AGENT_CHATS_FILE: &str = "agent-chats.json";
-pub const PORT_FILE: &str = ".vibelights-port";
 pub const SETUP_META_FILE: &str = "meta.json";
 pub const FIXTURES_FILE: &str = "fixtures.json";
 pub const SETUP_FILE: &str = "setup.json";
@@ -32,6 +30,7 @@ pub const SEQUENCES_DIR: &str = "sequences";
 pub const MEDIA_DIR: &str = "media";
 pub const PYTHON_ENV_DIR: &str = "python_env";
 pub const MODELS_DIR: &str = "models";
+pub const AGENT_LOGS_DIR: &str = "agent-logs";
 pub const SCRATCH_DIR: &str = ".scratch";
 
 // ── Config-dir functions (take app_config_dir) ───────────────────
@@ -44,16 +43,12 @@ pub fn credentials_path(app_config_dir: &Path) -> PathBuf {
     app_config_dir.join(CREDENTIALS_FILE)
 }
 
-pub fn chat_file_path(app_config_dir: &Path) -> PathBuf {
-    app_config_dir.join(CHAT_FILE)
-}
-
 pub fn agent_chats_file_path(app_config_dir: &Path) -> PathBuf {
     app_config_dir.join(AGENT_CHATS_FILE)
 }
 
-pub fn port_file_path(app_config_dir: &Path) -> PathBuf {
-    app_config_dir.join(PORT_FILE)
+pub fn agent_logs_dir(app_config_dir: &Path) -> PathBuf {
+    app_config_dir.join(AGENT_LOGS_DIR)
 }
 
 pub fn python_env_dir(app_config_dir: &Path) -> PathBuf {

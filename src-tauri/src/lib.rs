@@ -1,6 +1,7 @@
 pub mod analysis;
 #[cfg(feature = "tauri-app")]
 pub mod agent;
+pub mod audit;
 pub mod chat;
 #[cfg(feature = "tauri-app")]
 pub mod commands;

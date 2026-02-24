@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -93,7 +94,28 @@ const SCRATCH_THRESHOLD: usize = 500;
 /// Execute a registry command by name. Used by the agent sidecar.
 /// Handles the `help` meta-tool directly, then dispatches to the registry.
 /// Returns a `ToolResult` with the message and an optional scratch file path.
+///
+/// Wraps the actual execution with timing + audit logging.
 pub fn execute_tool_api(state: &Arc<AppState>, name: &str, input: &Value) -> Result<ToolResult, String> {
+    let start = Instant::now();
+    let conversation_id = state.agent_chats.lock().active_id.clone();
+
+    let result = execute_tool_api_inner(state, name, input);
+
+    crate::audit::log_tool_call(
+        &state.app_config_dir,
+        conversation_id.as_deref(),
+        name,
+        input,
+        result.as_ref().map_err(String::as_str),
+        start.elapsed(),
+    );
+
+    result
+}
+
+/// Inner implementation of tool execution (no logging).
+fn execute_tool_api_inner(state: &Arc<AppState>, name: &str, input: &Value) -> Result<ToolResult, String> {
     if name == "help" {
         let topic = input.get("topic").and_then(Value::as_str);
         return Ok(ToolResult {
