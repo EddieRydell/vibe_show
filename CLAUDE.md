@@ -74,10 +74,18 @@ Effects are pure functions of (normalized time, pixel position, params) → Colo
 3. Blend track outputs using `BlendMode` (Override, Add, Multiply, Max, Alpha)
 4. Output: `Frame` = `HashMap<fixture_id, Vec<[r,g,b,a]>>`
 
-**Tauri Commands (`commands.rs`)** — IPC bridge:
-- `get_show()`, `get_frame(time)`, `play()`, `pause()`, `seek(time)`, `get_playback()`, `tick(dt)`
-- State managed via `Mutex<Show>` and `Mutex<PlaybackState>`
-- Frontend drives the animation loop via `tick(dt)` calls from `requestAnimationFrame`
+**Command Registry (`registry/`)** — Unified IPC layer. A single `define_commands!` macro in `mod.rs` defines every operation as a variant of the `Command` enum (`#[serde(tag="command", content="params")]`). The macro auto-generates: the `Command` and `CommandResult` enums (both ts-rs exported), dispatch functions (sync + async), JSON schemas (via schemars), help text, and deserialization from tool calls. Adding a new command = add a param struct in `params.rs`, add a variant to the macro, implement a handler — the compiler enforces the rest.
+- `catalog.rs` — Three-tier help system (categories → commands → parameter schemas), `to_json_schema()` for REST/MCP introspection, `to_llm_tools()` for agent discovery
+- `execute.rs` — Exhaustive match dispatch; compiler error if any variant is unhandled
+- `params.rs` — All parameter structs with `#[derive(JsonSchema)]` for auto schema generation
+- `handlers/` — Handler modules by domain (edit, playback, query, analysis, library, script, settings, setup, sequence, media, chat, import, python, agent, etc.)
+- `reference.rs` — Auto-generated DSL language reference and design guide (blend modes, beat sync, color theory)
+- Tauri exposes just two commands: `exec` (dispatches any `Command`) and `get_command_registry` (introspection)
+- State managed via `Mutex<Show>` and `Mutex<PlaybackState>`; frontend drives animation via `tick(dt)` from `requestAnimationFrame`
+
+**Audit Logging (`audit.rs`)** — Every agent tool execution is logged to `{app_config_dir}/agent-logs/YYYY-MM-DD.jsonl`. Captures timestamp, conversation ID, tool name, input params, success/failure, result message, wall-clock duration, and scratch file path. Best-effort append — never panics or fails the caller.
+
+**Agent Chat (`chat.rs`)** — Tool execution bridge for the agent sidecar (`execute_tool_api()`), multi-conversation persistence (`AgentChatsData` in `agent-chats.json`), and the `ChatEmitter` trait for streaming events to the frontend.
 
 ### Frontend (`src/`)
 
