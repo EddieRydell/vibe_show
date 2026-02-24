@@ -546,14 +546,68 @@ impl Parser {
     }
 
     fn parse_and(&mut self) -> Result<Expr, CompileError> {
-        let mut left = self.parse_equality()?;
+        let mut left = self.parse_bit_or()?;
         while matches!(self.peek(), Token::And) {
+            self.advance();
+            let right = self.parse_bit_or()?;
+            let span = left.span.merge(right.span);
+            left = Expr {
+                kind: ExprKind::BinOp {
+                    op: BinOp::And,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_bit_or(&mut self) -> Result<Expr, CompileError> {
+        let mut left = self.parse_bit_xor()?;
+        while matches!(self.peek(), Token::Pipe) {
+            self.advance();
+            let right = self.parse_bit_xor()?;
+            let span = left.span.merge(right.span);
+            left = Expr {
+                kind: ExprKind::BinOp {
+                    op: BinOp::BitOr,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_bit_xor(&mut self) -> Result<Expr, CompileError> {
+        let mut left = self.parse_bit_and()?;
+        while matches!(self.peek(), Token::Caret) {
+            self.advance();
+            let right = self.parse_bit_and()?;
+            let span = left.span.merge(right.span);
+            left = Expr {
+                kind: ExprKind::BinOp {
+                    op: BinOp::BitXor,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_bit_and(&mut self) -> Result<Expr, CompileError> {
+        let mut left = self.parse_equality()?;
+        while matches!(self.peek(), Token::Ampersand) {
             self.advance();
             let right = self.parse_equality()?;
             let span = left.span.merge(right.span);
             left = Expr {
                 kind: ExprKind::BinOp {
-                    op: BinOp::And,
+                    op: BinOp::BitAnd,
                     left: Box::new(left),
                     right: Box::new(right),
                 },
@@ -587,13 +641,36 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, CompileError> {
-        let mut left = self.parse_add()?;
+        let mut left = self.parse_shift()?;
         loop {
             let op = match self.peek() {
                 Token::Lt => BinOp::Lt,
                 Token::Gt => BinOp::Gt,
                 Token::Le => BinOp::Le,
                 Token::Ge => BinOp::Ge,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_shift()?;
+            let span = left.span.merge(right.span);
+            left = Expr {
+                kind: ExprKind::BinOp {
+                    op,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_shift(&mut self) -> Result<Expr, CompileError> {
+        let mut left = self.parse_add()?;
+        loop {
+            let op = match self.peek() {
+                Token::Shl => BinOp::Shl,
+                Token::Shr => BinOp::Shr,
                 _ => break,
             };
             self.advance();
@@ -1221,6 +1298,51 @@ if mode == Mode.A {
                 panic!("expected Mul at top level");
             }
         }
+    }
+
+    // ── Issue #72: Bitwise operators ─────────────────────────────
+
+    #[test]
+    fn parse_bitwise_and() {
+        let script = parse_str("let x = 3 & 1\nrgb(0.0, 0.0, 0.0)");
+        if let Stmt::Let { value, .. } = &script.body[0] {
+            assert!(matches!(value.kind, ExprKind::BinOp { op: BinOp::BitAnd, .. }));
+        } else { panic!("expected let"); }
+    }
+
+    #[test]
+    fn parse_bitwise_xor() {
+        let script = parse_str("let x = 3 ^ 1\nrgb(0.0, 0.0, 0.0)");
+        if let Stmt::Let { value, .. } = &script.body[0] {
+            assert!(matches!(value.kind, ExprKind::BinOp { op: BinOp::BitXor, .. }));
+        } else { panic!("expected let"); }
+    }
+
+    #[test]
+    fn parse_shift_left() {
+        let script = parse_str("let x = 1 << 3\nrgb(0.0, 0.0, 0.0)");
+        if let Stmt::Let { value, .. } = &script.body[0] {
+            assert!(matches!(value.kind, ExprKind::BinOp { op: BinOp::Shl, .. }));
+        } else { panic!("expected let"); }
+    }
+
+    #[test]
+    fn parse_shift_right() {
+        let script = parse_str("let x = 8 >> 2\nrgb(0.0, 0.0, 0.0)");
+        if let Stmt::Let { value, .. } = &script.body[0] {
+            assert!(matches!(value.kind, ExprKind::BinOp { op: BinOp::Shr, .. }));
+        } else { panic!("expected let"); }
+    }
+
+    #[test]
+    fn parse_bitwise_precedence() {
+        // a | b ^ c & d should parse as a | (b ^ (c & d))
+        let script = parse_str("let x = 1 | 2 ^ 3 & 4\nrgb(0.0, 0.0, 0.0)");
+        if let Stmt::Let { value, .. } = &script.body[0] {
+            // Top-level should be BitOr
+            assert!(matches!(value.kind, ExprKind::BinOp { op: BinOp::BitOr, .. }),
+                "top-level should be BitOr, got {:?}", value.kind);
+        } else { panic!("expected let"); }
     }
 
     // ── Issue #70: Switch/case ──────────────────────────────────

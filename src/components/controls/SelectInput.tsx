@@ -10,6 +10,7 @@ export function SelectInput({ label, value, options, onChange }: SelectInputProp
     <div className="flex flex-col gap-1">
       <label className="text-text-2 text-[11px]">{label}</label>
       <select
+        aria-label={label}
         className="bg-surface-2 border-border text-text w-full rounded border px-1.5 py-1 text-[11px]"
         value={value}
         onChange={(e) => onChange(e.target.value)}

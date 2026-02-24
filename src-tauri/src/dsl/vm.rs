@@ -186,6 +186,32 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                 }
             }
 
+            // Bitwise — values are truncated to i64 for the operation, then
+            // converted back to f64.  Precision loss for large integers is
+            // acceptable here (same trade-off as the rest of the f64-based VM).
+            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+            Op::BitAnd => float_binop(stack, &mut underflow, |a, b| {
+                ((a as i64) & (b as i64)) as f64
+            }),
+            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+            Op::BitOr => float_binop(stack, &mut underflow, |a, b| {
+                ((a as i64) | (b as i64)) as f64
+            }),
+            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+            Op::BitXor => float_binop(stack, &mut underflow, |a, b| {
+                ((a as i64) ^ (b as i64)) as f64
+            }),
+            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
+            Op::Shl => float_binop(stack, &mut underflow, |a, b| {
+                let shift = (b as i64).clamp(0, 63) as u32;
+                ((a as i64).wrapping_shl(shift)) as f64
+            }),
+            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::cast_sign_loss)]
+            Op::Shr => float_binop(stack, &mut underflow, |a, b| {
+                let shift = (b as i64).clamp(0, 63) as u32;
+                ((a as i64).wrapping_shr(shift)) as f64
+            }),
+
             // Math (1-arg)
             Op::Sin => float_unary(stack, &mut underflow, f64::sin),
             Op::Cos => float_unary(stack, &mut underflow, f64::cos),
@@ -541,7 +567,8 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     let octaves = stack.pop().map_or(4.0, Value::as_float);
                     let y = stack.pop().map_or(0.0, Value::as_float);
                     let x = stack.pop().map_or(0.0, Value::as_float);
-                    stack.push(Value::Float(noise::fbm(x, y, octaves as u32)));
+                    #[allow(clippy::cast_sign_loss)]
+                    stack.push(Value::Float(noise::fbm(x, y, octaves.max(0.0) as u32)));
                 } else {
                     underflow = true;
                 }
@@ -771,10 +798,10 @@ mod noise {
         let u = fade(xf);
         let v = fade(yf);
 
-        let aa = PERM[perm_idx(PERM[perm_idx(xi)] as i32 + yi)] ;
-        let ab = PERM[perm_idx(PERM[perm_idx(xi)] as i32 + yi + 1)];
-        let ba = PERM[perm_idx(PERM[perm_idx(xi + 1)] as i32 + yi)];
-        let bb = PERM[perm_idx(PERM[perm_idx(xi + 1)] as i32 + yi + 1)];
+        let aa = PERM[perm_idx(i32::from(PERM[perm_idx(xi)]) + yi)];
+        let ab = PERM[perm_idx(i32::from(PERM[perm_idx(xi)]) + yi + 1)];
+        let ba = PERM[perm_idx(i32::from(PERM[perm_idx(xi + 1)]) + yi)];
+        let bb = PERM[perm_idx(i32::from(PERM[perm_idx(xi + 1)]) + yi + 1)];
 
         lerp(v,
             lerp(u, grad2(aa, xf, yf), grad2(ba, xf - 1.0, yf)),
@@ -795,12 +822,12 @@ mod noise {
         let v = fade(yf);
         let w = fade(zf);
 
-        let a  = PERM[perm_idx(xi)] as i32 + yi;
-        let aa = PERM[perm_idx(a)] as i32 + zi;
-        let ab = PERM[perm_idx(a + 1)] as i32 + zi;
-        let b  = PERM[perm_idx(xi + 1)] as i32 + yi;
-        let ba = PERM[perm_idx(b)] as i32 + zi;
-        let bb = PERM[perm_idx(b + 1)] as i32 + zi;
+        let a  = i32::from(PERM[perm_idx(xi)]) + yi;
+        let aa = i32::from(PERM[perm_idx(a)]) + zi;
+        let ab = i32::from(PERM[perm_idx(a + 1)]) + zi;
+        let b  = i32::from(PERM[perm_idx(xi + 1)]) + yi;
+        let ba = i32::from(PERM[perm_idx(b)]) + zi;
+        let bb = i32::from(PERM[perm_idx(b + 1)]) + zi;
 
         lerp(w,
             lerp(v,
@@ -861,9 +888,9 @@ mod noise {
                 // Deterministic point position within neighbor cell
                 let cell_x = ix + dx;
                 let cell_y = iy + dy;
-                let h = PERM[perm_idx(PERM[perm_idx(cell_x)] as i32 + cell_y)];
-                let px = dx as f64 + (h as f64 / 255.0) - fx;
-                let py = dy as f64 + (PERM[perm_idx(h as i32 + 1)] as f64 / 255.0) - fy;
+                let h = PERM[perm_idx(i32::from(PERM[perm_idx(cell_x)]) + cell_y)];
+                let px = f64::from(dx) + (f64::from(h) / 255.0) - fx;
+                let py = f64::from(dy) + (f64::from(PERM[perm_idx(i32::from(h) + 1)]) / 255.0) - fy;
                 let dist = px * px + py * py;
                 if dist < min_dist {
                     min_dist = dist;
@@ -1294,6 +1321,53 @@ if phase < duty_cycle {
                 native.r, native.g, native.b
             );
         }
+    }
+
+    // ── Issue #72: Bitwise operators ─────────────────────────────
+
+    #[test]
+    fn bitwise_and() {
+        // 6 & 3 = 2 → 2/255 ≈ very dark
+        let color = run("let x = 6 & 3\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        // 6 & 3 = 2, 2/8 = 0.25 → 64
+        assert_eq!(color.r, 64, "6 & 3 = 2, /8.0 → 0.25 → 64, got {}", color.r);
+    }
+
+    #[test]
+    fn bitwise_or() {
+        // 5 | 3 = 7
+        let color = run("let x = 5 | 3\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        // 5 | 3 = 7, 7/8 = 0.875 → 223
+        assert_eq!(color.r, 223, "5 | 3 = 7, /8.0 → 0.875 → 223, got {}", color.r);
+    }
+
+    #[test]
+    fn bitwise_xor() {
+        // 5 ^ 3 = 6
+        let color = run("let x = 5 ^ 3\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        // 5 ^ 3 = 6, 6/8 = 0.75 → 191
+        assert_eq!(color.r, 191, "5 ^ 3 = 6, /8.0 → 0.75 → 191, got {}", color.r);
+    }
+
+    #[test]
+    fn shift_left() {
+        // 1 << 3 = 8
+        let color = run("let x = 1 << 3\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        assert_eq!(color.r, 255, "1 << 3 = 8, /8.0 → 1.0 → 255, got {}", color.r);
+    }
+
+    #[test]
+    fn shift_right() {
+        // 8 >> 2 = 2
+        let color = run("let x = 8 >> 2\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        assert_eq!(color.r, 64, "8 >> 2 = 2, /8.0 → 0.25 → 64, got {}", color.r);
+    }
+
+    #[test]
+    fn shift_clamped() {
+        // Negative shift amounts should be clamped to 0
+        let color = run("let x = 8 >> 0\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        assert_eq!(color.r, 255, "8 >> 0 = 8, /8.0 → 1.0 → 255, got {}", color.r);
     }
 
     // ── Issue #69: Whitespace-agnostic if/else ──────────────────

@@ -608,7 +608,7 @@ async fn post_vixen_scan(
     Json(body): Json<VixenScanBody>,
 ) -> ApiResult<crate::import::vixen::VixenDiscovery> {
     let vixen_path = std::path::Path::new(&body.vixen_dir);
-    let config_path = vixen_path.join("SystemData").join("SystemConfig.xml");
+    let config_path = vixen_path.join(crate::import::VIXEN_SYSTEM_DATA_DIR).join(crate::import::VIXEN_SYSTEM_CONFIG_FILE);
     if !config_path.exists() {
         return Err(error_response(format!(
             "Not a valid Vixen 3 directory: SystemData/SystemConfig.xml not found in {}",
@@ -644,7 +644,7 @@ async fn post_vixen_scan(
                 let path = entry.path();
                 if path.is_file() {
                     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-                    if ext == "tim" {
+                    if ext == crate::import::VIXEN_SEQUENCE_EXT {
                         let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
                         let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
                         sequences.push(crate::import::vixen::VixenSequenceInfo {
@@ -723,7 +723,7 @@ async fn post_vixen_execute(
 
     let result = tokio::task::spawn_blocking(move || {
         let vixen_path = std::path::Path::new(&config.vixen_dir);
-        let config_path = vixen_path.join("SystemData").join("SystemConfig.xml");
+        let config_path = vixen_path.join(crate::import::VIXEN_SYSTEM_DATA_DIR).join(crate::import::VIXEN_SYSTEM_CONFIG_FILE);
 
         let mut importer = crate::import::vixen::VixenImporter::new();
         importer.parse_system_config(&config_path).map_err(|e| e.to_string())?;

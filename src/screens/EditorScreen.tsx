@@ -19,9 +19,10 @@ import { useAudio } from "../hooks/useAudio";
 import { useAnalysis } from "../hooks/useAnalysis";
 import { useKeyboard } from "../hooks/useKeyboard";
 import { useProgress } from "../hooks/useProgress";
+import { useEffectActions } from "../hooks/useEffectActions";
 import { ShowVersionContext } from "../hooks/useShowVersion";
 import { deduplicateEffectKeys, makeEffectKey } from "../utils/effectKey";
-import type { EffectKind, InteractionMode } from "../types";
+import type { InteractionMode } from "../types";
 
 interface Props {
   profileSlug: string;
@@ -76,11 +77,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
   const [loading, setLoading] = useState(true);
   const [showSequenceSettings, setShowSequenceSettings] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
-  const [addEffectState, setAddEffectState] = useState<{
-    fixtureId: number;
-    time: number;
-    screenPos: { x: number; y: number };
-  } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [interactionMode, setInteractionMode] = useState<InteractionMode>("select");
@@ -119,7 +115,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
   useEffect(() => {
     if (!previewOpen) return;
     const effects = deduplicateEffectKeys(selectedEffects);
-    emitTo("preview", "selection-changed", { effects }).catch(() => {});
+    emitTo("preview", "selection-changed", { effects }).catch(console.warn);
   }, [selectedEffects, previewOpen]);
 
   // ── Composed transport controls ────────────────────────────────────
@@ -253,6 +249,22 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
   // Cleanup saved timer on unmount
   useEffect(() => () => clearTimeout(savedTimerRef.current), []);
 
+  // ── Effect actions hook ──────────────────────────────────────────
+
+  const {
+    addEffectState,
+    setAddEffectState,
+    handleAddEffect,
+    handleEffectTypeSelected,
+    handleMoveEffect,
+    handleResizeEffect,
+  } = useEffectActions({
+    show,
+    playback,
+    commitChange,
+    setSelectedEffects,
+  });
+
   // ── Preview window toggle ──────────────────────────────────────────
 
   const handleTogglePreview = useCallback(async () => {
@@ -308,115 +320,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
     commitChange();
   }, [commitChange]);
 
-  // ── Add effect flow ──────────────────────────────────────────────
-
-  const handleAddEffect = useCallback(
-    (fixtureId: number, time: number, screenPos: { x: number; y: number }) => {
-      setAddEffectState({ fixtureId, time, screenPos });
-    },
-    [],
-  );
-
-  const handleEffectTypeSelected = useCallback(
-    async (kind: EffectKind) => {
-      if (!addEffectState || !show || !playback) return;
-      const { fixtureId, time } = addEffectState;
-      const sequenceIndex = playback.sequence_index;
-      const sequence = show.sequences[sequenceIndex];
-      if (!sequence) return;
-
-      setAddEffectState(null);
-
-      try {
-        // Find existing track targeting this fixture, or create one
-        let trackIndex = sequence.tracks.findIndex((t) => {
-          const target = t.target;
-          return (
-            typeof target === "object" &&
-            "Fixtures" in target &&
-            target.Fixtures.length === 1 &&
-            target.Fixtures[0] === fixtureId
-          );
-        });
-
-        if (trackIndex === -1) {
-          const fixture = show.fixtures.find((f) => f.id === fixtureId);
-          const trackName = fixture ? fixture.name : `Fixture ${fixtureId}`;
-          trackIndex = await cmd.addTrack(trackName, fixtureId);
-        }
-
-        const end = Math.min(time + 2.0, sequence.duration);
-        const start = Math.max(0, end - 2.0);
-        const effectIndex = await cmd.addEffect(trackIndex, kind, start, end);
-
-        commitChange();
-        setSelectedEffects(new Set([makeEffectKey(trackIndex, effectIndex)]));
-      } catch (e) {
-        console.error("[VibeLights] Add effect failed:", e);
-      }
-    },
-    [addEffectState, show, playback, commitChange],
-  );
-
-  // ── Move effect flow ─────────────────────────────────────────────
-
-  const handleMoveEffect = useCallback(
-    async (
-      fromTrackIndex: number,
-      effectIndex: number,
-      targetFixtureId: number,
-      newStart: number,
-      newEnd: number,
-    ) => {
-      if (!show || !playback) return;
-      const sequenceIndex = playback.sequence_index;
-      const sequence = show.sequences[sequenceIndex];
-      if (!sequence) return;
-
-      const fromTrack = sequence.tracks[fromTrackIndex];
-      if (!fromTrack) return;
-
-      // Check if the effect is staying on a track that targets this fixture
-      const fromTarget = fromTrack.target;
-      const staysOnSameFixture =
-        fromTarget === "All" ||
-        (typeof fromTarget === "object" &&
-          "Fixtures" in fromTarget &&
-          fromTarget.Fixtures.includes(targetFixtureId));
-
-      if (staysOnSameFixture) {
-        // Just update time
-        await cmd.updateEffectTimeRange(fromTrackIndex, effectIndex, newStart, newEnd);
-        commitChange();
-      } else {
-        // Moving to a different fixture: find or create target track
-        let toTrackIndex = sequence.tracks.findIndex((t) => {
-          const target = t.target;
-          return (
-            typeof target === "object" &&
-            "Fixtures" in target &&
-            target.Fixtures.length === 1 &&
-            target.Fixtures[0] === targetFixtureId
-          );
-        });
-
-        if (toTrackIndex === -1) {
-          const fixture = show.fixtures.find((f) => f.id === targetFixtureId);
-          const trackName = fixture ? fixture.name : `Fixture ${targetFixtureId}`;
-          toTrackIndex = await cmd.addTrack(trackName, targetFixtureId);
-        }
-
-        const newEffectIndex = await cmd.moveEffectToTrack(fromTrackIndex, effectIndex, toTrackIndex);
-
-        await cmd.updateEffectTimeRange(toTrackIndex, newEffectIndex, newStart, newEnd);
-
-        commitChange();
-        setSelectedEffects(new Set([makeEffectKey(toTrackIndex, newEffectIndex)]));
-      }
-    },
-    [show, playback, commitChange],
-  );
-
   const handleUndo = useCallback(async () => {
     await engineUndo();
     commitChange({ skipRefreshAll: true });
@@ -426,15 +329,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
     await engineRedo();
     commitChange({ skipRefreshAll: true });
   }, [engineRedo, commitChange]);
-
-  const handleResizeEffect = useCallback(
-    async (trackIndex: number, effectIndex: number, newStart: number, newEnd: number) => {
-      if (!playback) return;
-      await cmd.updateEffectTimeRange(trackIndex, effectIndex, newStart, newEnd);
-      commitChange();
-    },
-    [playback, commitChange],
-  );
 
   const handleRegionChange = useCallback(
     (region: [number, number] | null) => {

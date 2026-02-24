@@ -313,7 +313,8 @@ impl TypeContext {
                 }
 
                 let result_ty = match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow => {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow
+                    | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
                         if typed_left.ty != TypeName::Float && typed_left.ty != TypeName::Int {
                             return Err(CompileError::type_error(
                                 format!("Arithmetic on non-numeric type {:?}", typed_left.ty),
@@ -334,12 +335,6 @@ impl TypeContext {
                             ));
                         }
                         TypeName::Bool
-                    }
-                    BinOp::BitOr => {
-                        return Err(CompileError::type_error(
-                            "Bitwise OR (|) is only allowed in param defaults for flag combinations",
-                            expr.span,
-                        ));
                     }
                 };
 
@@ -995,6 +990,8 @@ mod tests {
     use crate::dsl::lexer::lex;
     use crate::dsl::parser::parse;
 
+    use crate::dsl::ast::TypeName;
+
     fn check(src: &str) -> TypedScript {
         let tokens = lex(src).unwrap();
         let script = parse(tokens).unwrap();
@@ -1007,28 +1004,46 @@ mod tests {
         type_check(&script).unwrap_err()
     }
 
+    /// Extract the inferred type of the last statement in the body.
+    fn last_ty(typed: &TypedScript) -> &TypeName {
+        match &typed.body.last().unwrap().kind {
+            TypedStmtKind::Expr(e) => &e.ty,
+            TypedStmtKind::Let { value, .. } => &value.ty,
+        }
+    }
+
+    /// Extract the inferred type of the let binding at body[index].
+    fn let_ty(typed: &TypedScript, index: usize) -> &TypeName {
+        match &typed.body[index].kind {
+            TypedStmtKind::Let { value, .. } => &value.ty,
+            _ => panic!("expected Let at body[{index}]"),
+        }
+    }
+
     #[test]
     fn simple_solid_color() {
         let typed = check("rgb(1.0, 0.0, 0.0)");
-        assert_eq!(typed.body.len(), 1);
+        assert_eq!(*last_ty(&typed), TypeName::Color);
     }
 
     #[test]
     fn let_and_use() {
         let typed = check("let x = t * 2.0\nrgb(x, 0.0, 0.0)");
-        assert_eq!(typed.body.len(), 2);
+        assert_eq!(*let_ty(&typed, 0), TypeName::Float);
+        assert_eq!(*last_ty(&typed), TypeName::Color);
     }
 
     #[test]
     fn builtin_math() {
         let typed = check("let s = sin(t * 3.14)\nrgb(s, s, s)");
-        assert_eq!(typed.body.len(), 2);
+        assert_eq!(*let_ty(&typed, 0), TypeName::Float);
+        assert_eq!(*last_ty(&typed), TypeName::Color);
     }
 
     #[test]
     fn if_else() {
         let typed = check("if t > 0.5 {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 0.0, 1.0)\n}");
-        assert_eq!(typed.body.len(), 1);
+        assert_eq!(*last_ty(&typed), TypeName::Color);
     }
 
     #[test]
@@ -1040,13 +1055,15 @@ mod tests {
     #[test]
     fn int_auto_promotion() {
         let typed = check("let x = 1 + 2.0\nrgb(x, x, x)");
-        assert_eq!(typed.body.len(), 2);
+        assert_eq!(*let_ty(&typed, 0), TypeName::Float, "int + float should promote to float");
+        assert_eq!(*last_ty(&typed), TypeName::Color);
     }
 
     #[test]
     fn enum_comparison() {
         let typed = check("enum Mode { A, B }\nparam mode: Mode = A\nif mode == Mode.A {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 1.0, 0.0)\n}");
         assert_eq!(typed.enums.len(), 1);
+        assert_eq!(*last_ty(&typed), TypeName::Color);
     }
 
     #[test]
@@ -1058,7 +1075,8 @@ mod tests {
     #[test]
     fn user_function_inline() {
         let typed = check("fn double(x: float) -> float {\nx * 2.0\n}\nlet v = double(t)\nrgb(v, v, v)");
-        assert_eq!(typed.body.len(), 2);
+        assert_eq!(*let_ty(&typed, 0), TypeName::Float, "inlined function returning float");
+        assert_eq!(*last_ty(&typed), TypeName::Color);
     }
 
     #[test]
@@ -1081,33 +1099,76 @@ mod tests {
 
     #[test]
     fn if_with_else_ok() {
-        let _typed = check("if t > 0.5 {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 0.0, 1.0)\n}");
+        let typed = check("if t > 0.5 {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 0.0, 1.0)\n}");
+        assert_eq!(*last_ty(&typed), TypeName::Color);
+    }
+
+    // ── Issue #72: Bitwise operators ─────────────────────────────
+
+    #[test]
+    fn bitwise_and_typechecks() {
+        let typed = check("let x = 3 & 1\nrgb(0.0, 0.0, 0.0)");
+        assert_eq!(*let_ty(&typed, 0), TypeName::Int);
+    }
+
+    #[test]
+    fn bitwise_xor_typechecks() {
+        let typed = check("let x = 3 ^ 1\nrgb(0.0, 0.0, 0.0)");
+        assert_eq!(*let_ty(&typed, 0), TypeName::Int);
+    }
+
+    #[test]
+    fn bitwise_or_typechecks() {
+        let typed = check("let x = 3 | 1\nrgb(0.0, 0.0, 0.0)");
+        assert_eq!(*let_ty(&typed, 0), TypeName::Int);
+    }
+
+    #[test]
+    fn shift_left_typechecks() {
+        let typed = check("let x = 1 << 3\nrgb(0.0, 0.0, 0.0)");
+        assert_eq!(*let_ty(&typed, 0), TypeName::Int);
+    }
+
+    #[test]
+    fn shift_right_typechecks() {
+        let typed = check("let x = 8 >> 2\nrgb(0.0, 0.0, 0.0)");
+        assert_eq!(*let_ty(&typed, 0), TypeName::Int);
+    }
+
+    #[test]
+    fn bitwise_on_non_numeric_error() {
+        let errors = check_err("let x = true & false\nrgb(0.0, 0.0, 0.0)");
+        assert!(errors.iter().any(|e| e.message.contains("non-numeric")));
     }
 
     // ── Issue #72: Power operator ───────────────────────────────
 
     #[test]
     fn power_operator_typechecks() {
-        let _typed = check("let x = 2.0 ** 3.0\nrgb(x, 0.0, 0.0)");
+        let typed = check("let x = 2.0 ** 3.0\nrgb(x, 0.0, 0.0)");
+        assert_eq!(*let_ty(&typed, 0), TypeName::Float);
     }
 
     #[test]
     fn power_operator_int_promotion() {
-        let _typed = check("let x = 2 ** 3.0\nrgb(x, 0.0, 0.0)");
+        let typed = check("let x = 2 ** 3.0\nrgb(x, 0.0, 0.0)");
+        assert_eq!(*let_ty(&typed, 0), TypeName::Float, "int ** float should promote to float");
     }
 
     // ── Issue #73: Ternary operator ─────────────────────────────
 
     #[test]
     fn ternary_typechecks() {
-        let _typed = check("t > 0.5 ? rgb(1.0, 0.0, 0.0) : rgb(0.0, 0.0, 1.0)");
+        let typed = check("t > 0.5 ? rgb(1.0, 0.0, 0.0) : rgb(0.0, 0.0, 1.0)");
+        assert_eq!(*last_ty(&typed), TypeName::Color);
     }
 
     // ── Issue #70: Switch expression ────────────────────────────
 
     #[test]
     fn switch_enum_typechecks() {
-        let _typed = check("enum Mode { A, B }\nparam mode: Mode = A\nswitch mode {\ncase Mode.A => rgb(1.0, 0.0, 0.0)\ncase Mode.B => rgb(0.0, 1.0, 0.0)\ndefault => rgb(0.0, 0.0, 1.0)\n}");
+        let typed = check("enum Mode { A, B }\nparam mode: Mode = A\nswitch mode {\ncase Mode.A => rgb(1.0, 0.0, 0.0)\ncase Mode.B => rgb(0.0, 1.0, 0.0)\ndefault => rgb(0.0, 0.0, 1.0)\n}");
+        assert_eq!(*last_ty(&typed), TypeName::Color);
     }
 
     #[test]
@@ -1121,31 +1182,37 @@ mod tests {
 
     #[test]
     fn easing_functions_typecheck() {
-        let _typed = check("let x = ease_in(t)\nrgb(x, x, x)");
-        let _typed = check("let x = ease_out(t)\nrgb(x, x, x)");
-        let _typed = check("let x = ease_in_out(t)\nrgb(x, x, x)");
-        let _typed = check("let x = ease_in_cubic(t)\nrgb(x, x, x)");
-        let _typed = check("let x = ease_out_cubic(t)\nrgb(x, x, x)");
-        let _typed = check("let x = ease_in_out_cubic(t)\nrgb(x, x, x)");
+        for func in ["ease_in", "ease_out", "ease_in_out", "ease_in_cubic", "ease_out_cubic", "ease_in_out_cubic"] {
+            let typed = check(&format!("let x = {func}(t)\nrgb(x, x, x)"));
+            assert_eq!(*let_ty(&typed, 0), TypeName::Float, "{func} should return float");
+        }
     }
 
     // ── Issue #77: Randomness builtins ──────────────────────────
 
     #[test]
     fn random_functions_typecheck() {
-        let _typed = check("let x = hash3(1.0, 2.0, 3.0)\nrgb(x, x, x)");
-        let _typed = check("let x = random(t)\nrgb(x, x, x)");
-        let _typed = check("let x = random_range(0.0, 1.0, t)\nrgb(x, x, x)");
+        let typed = check("let x = hash3(1.0, 2.0, 3.0)\nrgb(x, x, x)");
+        assert_eq!(*let_ty(&typed, 0), TypeName::Float, "hash3 should return float");
+        let typed = check("let x = random(t)\nrgb(x, x, x)");
+        assert_eq!(*let_ty(&typed, 0), TypeName::Float, "random should return float");
+        let typed = check("let x = random_range(0.0, 1.0, t)\nrgb(x, x, x)");
+        assert_eq!(*let_ty(&typed, 0), TypeName::Float, "random_range should return float");
     }
 
     // ── Issue #78: Noise builtins ───────────────────────────────
 
     #[test]
     fn noise_functions_typecheck() {
-        let _typed = check("let x = abs(noise(t * 5.0))\nrgb(x, x, x)");
-        let _typed = check("let x = abs(noise2(t, pos))\nrgb(x, x, x)");
-        let _typed = check("let x = abs(noise3(t, pos, 0.0))\nrgb(x, x, x)");
-        let _typed = check("let x = abs(fbm(t, pos, 4.0))\nrgb(x, x, x)");
-        let _typed = check("let x = worley2(t, pos)\nrgb(x, x, x)");
+        for (func, src) in [
+            ("noise", "let x = abs(noise(t * 5.0))\nrgb(x, x, x)"),
+            ("noise2", "let x = abs(noise2(t, pos))\nrgb(x, x, x)"),
+            ("noise3", "let x = abs(noise3(t, pos, 0.0))\nrgb(x, x, x)"),
+            ("fbm", "let x = abs(fbm(t, pos, 4.0))\nrgb(x, x, x)"),
+            ("worley2", "let x = worley2(t, pos)\nrgb(x, x, x)"),
+        ] {
+            let typed = check(src);
+            assert_eq!(*let_ty(&typed, 0), TypeName::Float, "{func} should return float");
+        }
     }
 }

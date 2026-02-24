@@ -40,7 +40,7 @@ pub struct VixenPreviewPixel {
 #[must_use]
 pub fn find_preview_file(vixen_dir: &Path) -> Option<std::path::PathBuf> {
     // Primary location: SystemData/ModuleStore.xml
-    let module_store = vixen_dir.join("SystemData").join("ModuleStore.xml");
+    let module_store = vixen_dir.join(super::VIXEN_SYSTEM_DATA_DIR).join(super::VIXEN_MODULE_STORE_FILE);
     if module_store.exists() && file_contains_preview_marker(&module_store) {
         return Some(module_store);
     }
@@ -1238,29 +1238,4 @@ mod tests {
         assert_eq!(preview.display_items[0].pixels.len(), 2);
     }
 
-    /// Integration test: verify find_preview_file works with the real Vixen directory
-    /// on this machine. Skipped if the directory doesn't exist.
-    #[test]
-    fn test_find_preview_in_real_vixen_dir() {
-        let vixen_dir = std::path::Path::new(
-            r"C:\Users\eddie\Documents\VixenProfile2020\Vixen 3",
-        );
-        if !vixen_dir.exists() {
-            eprintln!("Skipping: real Vixen directory not found");
-            return;
-        }
-
-        let result = find_preview_file(vixen_dir);
-        assert!(
-            result.is_some(),
-            "Expected to find preview file in real Vixen directory"
-        );
-
-        let path = result.unwrap();
-        assert!(
-            path.to_string_lossy().contains("ModuleStore.xml"),
-            "Expected ModuleStore.xml, got: {}",
-            path.display()
-        );
-    }
 }

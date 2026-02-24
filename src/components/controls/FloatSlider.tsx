@@ -27,6 +27,7 @@ export function FloatSlider({ label, value, min, max, step, onChange }: FloatSli
       </div>
       <input
         type="range"
+        aria-label={label}
         className="accent-primary bg-surface-2 h-1.5 w-full cursor-pointer appearance-none rounded-full"
         value={value}
         min={min}

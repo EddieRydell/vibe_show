@@ -22,7 +22,7 @@ export function ScriptBrowser({
   const refresh = useCallback(() => {
     cmd.listProfileScripts()
       .then((pairs) => setScripts(pairs.map(([name]) => name)))
-      .catch(() => {});
+      .catch(console.warn);
   }, []);
 
   useEffect(() => {

@@ -88,7 +88,7 @@ export function useEngine(
             } else {
               audioPauseRef.current?.();
               audioSeekRef.current?.(regionEnd);
-              cmd.pause().catch(() => {});
+              cmd.pause().catch((e) => console.warn("[VibeLights] Pause at region end failed:", e));
               setPlayback((prev) => {
                 const updated = prev ? { ...prev, current_time: regionEnd, playing: false } : prev;
                 playbackRef.current = updated;
@@ -112,7 +112,7 @@ export function useEngine(
               return updated;
             });
           })
-          .catch(() => {})
+          .catch((e) => console.warn("[VibeLights] Frame fetch failed:", e))
           .finally(scheduleNext);
       } else if (!playingRef.current) {
         // Not playing and no audio — skip tick, just schedule next
@@ -137,7 +137,7 @@ export function useEngine(
               });
             }
           })
-          .catch(() => {})
+          .catch((e) => console.warn("[VibeLights] Tick failed:", e))
           .finally(scheduleNext);
       }
     };

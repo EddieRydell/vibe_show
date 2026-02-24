@@ -73,6 +73,13 @@ pub enum Op {
     Eq,
     Ne,
 
+    // Bitwise
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+
     // Logic
     And,
     Or,
@@ -398,12 +405,11 @@ impl Compiler {
                     BinOp::Ne => Op::Ne,
                     BinOp::And => Op::And,
                     BinOp::Or => Op::Or,
-                    BinOp::BitOr => {
-                        return Err(CompileError::compiler(
-                            "BitOr should not appear in compiled code",
-                            expr.span,
-                        ));
-                    }
+                    BinOp::BitOr => Op::BitOr,
+                    BinOp::BitAnd => Op::BitAnd,
+                    BinOp::BitXor => Op::BitXor,
+                    BinOp::Shl => Op::Shl,
+                    BinOp::Shr => Op::Shr,
                 });
             }
             TypedExprKind::UnaryOp { op, operand } => {
@@ -591,6 +597,21 @@ mod tests {
         let compiled = compile_src("hsv(t * 360.0, 1.0, 1.0)");
         assert!(compiled.ops.contains(&Op::Hsv));
         assert!(compiled.ops.contains(&Op::PushT));
+    }
+
+    #[test]
+    fn bitwise_ops_compile() {
+        let compiled = compile_src("let x = 3 & 1\nlet y = x | 2\nlet z = y ^ 1\nrgb(0.0, 0.0, 0.0)");
+        assert!(compiled.ops.contains(&Op::BitAnd));
+        assert!(compiled.ops.contains(&Op::BitOr));
+        assert!(compiled.ops.contains(&Op::BitXor));
+    }
+
+    #[test]
+    fn shift_ops_compile() {
+        let compiled = compile_src("let x = 1 << 3\nlet y = x >> 1\nrgb(0.0, 0.0, 0.0)");
+        assert!(compiled.ops.contains(&Op::Shl));
+        assert!(compiled.ops.contains(&Op::Shr));
     }
 
     #[test]

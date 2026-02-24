@@ -22,6 +22,8 @@ jobs:
       - run: pnpm check
       - run: pnpm lint
       - run: pnpm test
+      - name: Audit JS dependencies
+        run: pnpm audit --audit-level moderate || true
 
   backend:
     name: Rust checks
@@ -42,3 +44,8 @@ jobs:
       - run: cd src-tauri && cargo check
       - run: cd src-tauri && cargo clippy -- -D warnings
       - run: cd src-tauri && cargo test
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: Check Rust dependencies
+        run: cd src-tauri && cargo deny check

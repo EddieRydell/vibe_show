@@ -15,7 +15,7 @@ export function EffectPicker({ position, onSelect, onCancel }: EffectPickerProps
 
   useEffect(() => {
     cmd.listEffects().then(setEffects).catch(console.error);
-    cmd.listScripts().then(setScripts).catch(() => {});
+    cmd.listScripts().then(setScripts).catch(console.warn);
   }, []);
 
   useEffect(() => {
@@ -41,6 +41,8 @@ export function EffectPicker({ position, onSelect, onCancel }: EffectPickerProps
   return (
     <div
       ref={ref}
+      role="menu"
+      aria-label="Add effect"
       className="border-border bg-surface fixed z-50 rounded-md border py-1 shadow-lg"
       style={{ left: position.x, top: position.y }}
     >
@@ -50,6 +52,7 @@ export function EffectPicker({ position, onSelect, onCancel }: EffectPickerProps
       {effects.map((effect) => (
         <button
           key={effectKindKey(effect.kind)}
+          role="menuitem"
           className="text-text hover:bg-primary/15 hover:text-primary flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors"
           onClick={() => onSelect(effect.kind)}
         >
@@ -65,6 +68,7 @@ export function EffectPicker({ position, onSelect, onCancel }: EffectPickerProps
           {scripts.map((name) => (
             <button
               key={`script:${name}`}
+              role="menuitem"
               className="text-text hover:bg-primary/15 hover:text-primary flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors"
               onClick={() => onSelect({ Script: name })}
             >

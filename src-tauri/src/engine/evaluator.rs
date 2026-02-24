@@ -124,6 +124,7 @@ pub fn evaluate(
 
     // Initialize only targeted fixtures to black (lazy via HashMap).
     let mut frame: HashMap<FixtureId, Vec<Color>> = HashMap::new();
+    let mut warnings: Vec<String> = Vec::new();
 
     // Evaluate tracks bottom-to-top.
     for (track_idx, track) in sequence.tracks.iter().enumerate() {
@@ -155,6 +156,33 @@ pub fn evaluate(
         }
 
         let target_fixtures = resolve_target_cached(&track.target, &all_fixture_ids, &group_fixtures);
+
+        // Warn on dangling references (missing groups or fixtures that resolve to nothing).
+        if target_fixtures.is_empty() {
+            match &track.target {
+                EffectTarget::Group(gid) => {
+                    if !group_fixtures.contains_key(gid) {
+                        warnings.push(format!(
+                            "Track \"{}\" references non-existent group {:?}",
+                            track.name, gid
+                        ));
+                    }
+                }
+                EffectTarget::Fixtures(ids) if !ids.is_empty() => {
+                    let missing: Vec<_> = ids
+                        .iter()
+                        .filter(|id| !pixel_counts.contains_key(id))
+                        .collect();
+                    if !missing.is_empty() {
+                        warnings.push(format!(
+                            "Track \"{}\" references non-existent fixture(s): {:?}",
+                            track.name, missing
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
 
         // Compute total pixel count once per track (same for all effects on this track).
         let total_pixels: usize = target_fixtures
@@ -280,7 +308,11 @@ pub fn evaluate(
             .filter(|(_, colors)| !is_all_black(colors))
             .map(|(id, colors)| (id.0, colors_to_base64(&colors)))
             .collect(),
-        warnings: None,
+        warnings: if warnings.is_empty() {
+            None
+        } else {
+            Some(warnings)
+        },
     }
 }
 

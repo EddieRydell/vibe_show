@@ -36,6 +36,7 @@ function ToolBtn({
     <button
       onClick={onClick}
       disabled={disabled}
+      aria-label={title}
       title={title}
       className={`rounded border px-3 py-1.5 text-xs font-semibold transition-colors duration-100 ${
         active
@@ -72,22 +73,22 @@ export function Toolbar({
   return (
     <div className="border-border bg-surface flex items-center gap-1.5 border-b px-3 py-1.5">
       {/* Transport */}
-      <ToolBtn onClick={onSkipBack}>
+      <ToolBtn onClick={onSkipBack} title="Skip back">
         <SkipBackIcon />
       </ToolBtn>
       {playing ? (
-        <ToolBtn onClick={onPause} active>
+        <ToolBtn onClick={onPause} active title="Pause">
           <PauseIcon />
         </ToolBtn>
       ) : (
-        <ToolBtn onClick={onPlay}>
+        <ToolBtn onClick={onPlay} title="Play">
           <PlayIcon />
         </ToolBtn>
       )}
-      <ToolBtn onClick={onStop}>
+      <ToolBtn onClick={onStop} title="Stop">
         <StopIcon />
       </ToolBtn>
-      <ToolBtn onClick={onSkipForward}>
+      <ToolBtn onClick={onSkipForward} title="Skip forward">
         <SkipForwardIcon />
       </ToolBtn>
 

@@ -40,7 +40,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const refreshConversations = useCallback(() => {
-    cmd.listAgentConversations().then(setConversations).catch(() => {});
+    cmd.listAgentConversations().then(setConversations).catch(console.warn);
   }, []);
 
   // Check API key and chat mode on mount
@@ -48,7 +48,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
     cmd.getLlmConfig().then((config) => {
       setHasApiKey(config.has_api_key);
       setChatMode(config.chat_mode);
-    }).catch(() => {});
+    }).catch(console.warn);
   }, [open]);
 
   // Load persisted chat history when the active show changes
@@ -62,14 +62,14 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
       if (config.chat_mode === "Agent") {
         cmd.getAgentChatHistory().then((entries) => {
           setMessages(parseChatEntries(entries));
-        }).catch(() => {});
+        }).catch(console.warn);
         refreshConversations();
       } else {
         cmd.getChatHistory().then((entries) => {
           setMessages(parseChatEntries(entries));
-        }).catch(() => {});
+        }).catch(console.warn);
       }
-    }).catch(() => {});
+    }).catch(console.warn);
     setStreaming("");
     setSending(false);
   }, [sequenceKey, refreshConversations]);
@@ -125,12 +125,12 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
           cmd.getAgentChatHistory().then((entries) => {
             const parsed = parseChatEntries(entries);
             if (parsed.length > 0) setMessages(parsed);
-          }).catch(() => {});
+          }).catch(console.warn);
         } else {
           cmd.getChatHistory().then((entries) => {
             const parsed = parseChatEntries(entries);
             if (parsed.length > 0) setMessages(parsed);
-          }).catch(() => {});
+          }).catch(console.warn);
         }
         return currentMode;
       });
@@ -182,8 +182,8 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
 
   const handleClear = useCallback(async () => {
     if (chatMode === "Agent") {
-      await cmd.newAgentConversation().catch(() => {});
-      await invoke("clear_agent_session").catch(() => {});
+      await cmd.newAgentConversation().catch(console.warn);
+      await invoke("clear_agent_session").catch(console.warn);
       refreshConversations();
     } else {
       await cmd.clearChat();
@@ -195,14 +195,14 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
 
   const handleStop = useCallback(async () => {
     if (chatMode === "Agent") {
-      await invoke("cancel_agent_message").catch(() => {});
+      await invoke("cancel_agent_message").catch(console.warn);
     }
     await cmd.stopChat();
     setSending(false);
   }, [chatMode]);
 
   const handleSwitchConversation = useCallback(async (id: string) => {
-    await cmd.switchAgentConversation(id).catch(() => {});
+    await cmd.switchAgentConversation(id).catch(console.warn);
     const entries = await cmd.getAgentChatHistory().catch(() => []);
     setMessages(parseChatEntries(entries));
     setStreaming("");
@@ -212,7 +212,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
   }, [refreshConversations]);
 
   const handleDeleteConversation = useCallback(async (id: string) => {
-    await cmd.deleteAgentConversation(id).catch(() => {});
+    await cmd.deleteAgentConversation(id).catch(console.warn);
     refreshConversations();
     // If we deleted the active one, reload messages
     const active = conversations.find((c) => c.is_active);
@@ -240,6 +240,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
             <button
               onClick={() => setShowHistory((v) => !v)}
               className={`rounded p-1 transition-colors ${showHistory ? "text-primary bg-primary/10" : "text-text-2 hover:text-text"}`}
+              aria-label="Conversation history"
               title="Conversation history"
             >
               <History size={14} />
@@ -248,6 +249,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
           <button
             onClick={handleClear}
             className="text-text-2 hover:text-text rounded p-1 transition-colors"
+            aria-label={chatMode === "Agent" ? "New conversation" : "Clear conversation"}
             title={chatMode === "Agent" ? "New conversation" : "Clear conversation"}
           >
             {chatMode === "Agent" ? <Plus size={14} /> : <Trash2 size={14} />}
@@ -255,6 +257,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
           <button
             onClick={onClose}
             className="text-text-2 hover:text-text rounded p-1 transition-colors"
+            aria-label="Close chat"
           >
             <X size={14} />
           </button>
@@ -285,6 +288,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
                     handleDeleteConversation(conv.id);
                   }}
                   className="text-text-2 hover:text-error shrink-0 rounded p-0.5 transition-colors"
+                  aria-label="Delete conversation"
                   title="Delete conversation"
                 >
                   <Trash2 size={11} />
@@ -296,7 +300,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2" aria-live="polite">
         {!hasApiKey && chatMode !== "Agent" && (
           <div className="bg-surface-2 border-border rounded border p-3 text-center">
             <Key size={20} className="text-text-2 mx-auto mb-2" />
@@ -385,6 +389,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
           {sending ? (
             <button
               onClick={handleStop}
+              aria-label="Stop generating"
               className="border-border bg-surface text-text-2 hover:text-text rounded border px-2 py-1.5 text-xs transition-colors"
             >
               Stop
@@ -393,6 +398,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
             <button
               onClick={handleSend}
               disabled={(!hasApiKey && chatMode !== "Agent") || !input.trim()}
+              aria-label="Send message"
               className="bg-primary text-white rounded px-2 py-1.5 transition-colors hover:opacity-90 disabled:opacity-50"
             >
               <Send size={12} />

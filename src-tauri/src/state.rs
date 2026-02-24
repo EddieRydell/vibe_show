@@ -26,11 +26,17 @@ pub struct CancellationRegistry {
     flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
-impl CancellationRegistry {
-    pub fn new() -> Self {
+impl Default for CancellationRegistry {
+    fn default() -> Self {
         Self {
             flags: Mutex::new(HashMap::new()),
         }
+    }
+}
+
+impl CancellationRegistry {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Register a new cancellable operation. Returns a flag that the operation

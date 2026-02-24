@@ -36,6 +36,9 @@ export function ConfirmDialog({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="confirm-dialog-title"
       onKeyDown={handleKeyDown}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onCancel();
@@ -43,7 +46,7 @@ export function ConfirmDialog({
     >
       <div className="bg-surface border-border w-[360px] rounded-lg border shadow-xl">
         <div className="border-border border-b px-5 py-3">
-          <h3 className="text-text text-sm font-bold">{title}</h3>
+          <h3 id="confirm-dialog-title" className="text-text text-sm font-bold">{title}</h3>
         </div>
         <div className="px-5 py-4">
           <p className="text-text-2 text-sm">{message}</p>

@@ -172,7 +172,7 @@ pub fn scan_vixen_directory(p: ScanVixenDirectoryParams) -> Result<CommandOutput
     use crate::import::vixen_preview;
 
     let vixen_path = std::path::Path::new(&p.vixen_dir);
-    let config_path = vixen_path.join("SystemData").join("SystemConfig.xml");
+    let config_path = vixen_path.join(crate::import::VIXEN_SYSTEM_DATA_DIR).join(crate::import::VIXEN_SYSTEM_CONFIG_FILE);
     if !config_path.exists() {
         return Err(AppError::ImportError {
             message: format!(
@@ -216,7 +216,7 @@ pub fn scan_vixen_directory(p: ScanVixenDirectoryParams) -> Result<CommandOutput
                         .and_then(|e| e.to_str())
                         .unwrap_or("")
                         .to_lowercase();
-                    if ext == "tim" {
+                    if ext == crate::import::VIXEN_SEQUENCE_EXT {
                         let filename = path
                             .file_name()
                             .unwrap_or_default()

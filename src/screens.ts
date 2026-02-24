@@ -5,4 +5,5 @@ export type AppScreen =
   | { kind: "settings"; returnTo: AppScreen }
   | { kind: "profile"; slug: string }
   | { kind: "editor"; profileSlug: string; sequenceSlug: string }
-  | { kind: "script"; profileSlug: string; scriptName: string | null; returnTo: AppScreen };
+  | { kind: "script"; profileSlug: string; scriptName: string | null; returnTo: AppScreen }
+  | { kind: "analysis"; profileSlug: string; filename: string; returnTo: AppScreen };

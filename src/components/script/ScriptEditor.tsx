@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
+import { EditorView } from "@codemirror/view";
 import { cmd } from "../../commands";
 import { vibelightsLanguage } from "../../editor/vibelights-lang";
 import type { ScriptCompileResult } from "../../types";
@@ -12,7 +13,7 @@ interface Props {
   onSave: () => void;
 }
 
-const extensions = [vibelightsLanguage()];
+const extensions = [vibelightsLanguage(), EditorView.lineWrapping];
 
 export function ScriptEditor({
   scriptName,

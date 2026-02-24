@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod chat;
+pub mod common;
 pub mod edit;
 pub mod import;
 pub mod library;

@@ -733,3 +733,195 @@ impl fmt::Display for ParamValue {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── TimeRange boundary tests ──────────────────────────────────
+
+    #[test]
+    fn time_range_valid() {
+        assert!(TimeRange::new(0.0, 1.0).is_some());
+        assert!(TimeRange::new(0.0, 0.001).is_some());
+        assert!(TimeRange::new(5.0, 10.0).is_some());
+    }
+
+    #[test]
+    fn time_range_equal_start_end_is_none() {
+        assert!(TimeRange::new(0.0, 0.0).is_none());
+        assert!(TimeRange::new(5.0, 5.0).is_none());
+    }
+
+    #[test]
+    fn time_range_reversed_is_none() {
+        assert!(TimeRange::new(5.0, 1.0).is_none());
+    }
+
+    #[test]
+    fn time_range_negative_start_is_none() {
+        assert!(TimeRange::new(-1.0, 5.0).is_none());
+    }
+
+    #[test]
+    fn time_range_both_negative_is_none() {
+        assert!(TimeRange::new(-5.0, -1.0).is_none());
+    }
+
+    #[test]
+    fn time_range_nan_is_none() {
+        assert!(TimeRange::new(f64::NAN, 5.0).is_none());
+        assert!(TimeRange::new(0.0, f64::NAN).is_none());
+    }
+
+    #[test]
+    fn time_range_contains_boundaries() {
+        let tr = TimeRange::new(1.0, 3.0).expect("valid range");
+        assert!(tr.contains(1.0));
+        assert!(tr.contains(2.0));
+        // end is exclusive but with epsilon tolerance
+        assert!(tr.contains(3.0));
+        assert!(!tr.contains(0.0));
+        assert!(!tr.contains(4.0));
+    }
+
+    #[test]
+    fn time_range_normalize_boundaries() {
+        let tr = TimeRange::new(2.0, 4.0).expect("valid range");
+        let tol = 1e-10;
+        assert!((tr.normalize(2.0) - 0.0).abs() < tol);
+        assert!((tr.normalize(3.0) - 0.5).abs() < tol);
+        assert!((tr.normalize(4.0) - 1.0).abs() < tol);
+        // Outside range: clamped to [0, 1]
+        assert!((tr.normalize(0.0) - 0.0).abs() < tol);
+        assert!((tr.normalize(10.0) - 1.0).abs() < tol);
+    }
+
+    #[test]
+    fn time_range_normalize_unclamped_outside() {
+        let tr = TimeRange::new(2.0, 4.0).expect("valid range");
+        assert!(tr.normalize_unclamped(0.0) < 0.0);
+        assert!(tr.normalize_unclamped(6.0) > 1.0);
+    }
+
+    #[test]
+    fn time_range_duration() {
+        let tr = TimeRange::new(1.0, 3.5).expect("valid range");
+        assert!((tr.duration() - 2.5).abs() < 1e-10);
+    }
+
+    // ── EffectParams boundary tests ──────────────────────────────
+
+    #[test]
+    fn effect_params_empty_returns_defaults() {
+        let params = EffectParams::new();
+        assert_eq!(params.float_or(ParamKey::Speed, 1.0), 1.0);
+        assert_eq!(params.bool_or(ParamKey::Reverse, false), false);
+        assert_eq!(params.color_or(ParamKey::Color, Color::WHITE), Color::WHITE);
+    }
+
+    #[test]
+    fn effect_params_type_mismatch_returns_fallback() {
+        let params = EffectParams::new().set(ParamKey::Speed, ParamValue::Bool(true));
+        // Speed is stored as Bool, but requesting it as float should return fallback
+        assert_eq!(params.float_or(ParamKey::Speed, 2.0), 2.0);
+    }
+
+    #[test]
+    fn effect_params_correct_type_returns_value() {
+        let params = EffectParams::new().set(ParamKey::Speed, ParamValue::Float(5.0));
+        assert_eq!(params.float_or(ParamKey::Speed, 1.0), 5.0);
+    }
+
+    #[test]
+    fn effect_params_int_coerces_to_float() {
+        let params = EffectParams::new().set(ParamKey::Speed, ParamValue::Int(3));
+        assert_eq!(params.float_or(ParamKey::Speed, 1.0), 3.0);
+    }
+
+    #[test]
+    fn effect_params_has_refs() {
+        let params = EffectParams::new()
+            .set(ParamKey::Speed, ParamValue::Float(1.0));
+        assert!(!params.has_refs());
+
+        let params_with_ref = EffectParams::new()
+            .set(ParamKey::Gradient, ParamValue::GradientRef("my_grad".to_string()));
+        assert!(params_with_ref.has_refs());
+    }
+
+    #[test]
+    fn effect_params_resolve_refs_substitutes_known() {
+        use crate::model::ColorStop;
+
+        let mut gradient_lib = HashMap::new();
+        let grad = ColorGradient::new(vec![
+            ColorStop { position: 0.0, color: Color::rgb(255, 0, 0) },
+            ColorStop { position: 1.0, color: Color::rgb(0, 0, 255) },
+        ]).expect("valid gradient");
+        gradient_lib.insert("my_grad".to_string(), grad);
+        let curve_lib = HashMap::new();
+
+        let params = EffectParams::new()
+            .set(ParamKey::Gradient, ParamValue::GradientRef("my_grad".to_string()));
+
+        let resolved = params.resolve_refs(&gradient_lib, &curve_lib);
+        assert!(resolved.get(ParamKey::Gradient).expect("should exist").as_color_gradient().is_some());
+    }
+
+    #[test]
+    fn effect_params_resolve_refs_unknown_stays() {
+        let gradient_lib = HashMap::new();
+        let curve_lib = HashMap::new();
+
+        let params = EffectParams::new()
+            .set(ParamKey::Gradient, ParamValue::GradientRef("missing".to_string()));
+
+        let resolved = params.resolve_refs(&gradient_lib, &curve_lib);
+        assert!(resolved.get(ParamKey::Gradient).expect("should exist").as_gradient_ref().is_some());
+    }
+
+    // ── ParamValue accessor boundary tests ───────────────────────
+
+    #[test]
+    fn param_value_as_float_wrong_type() {
+        assert_eq!(ParamValue::Bool(true).as_float(), None);
+        assert_eq!(ParamValue::Text("hi".to_string()).as_float(), None);
+    }
+
+    #[test]
+    fn param_value_as_color_wrong_type() {
+        assert_eq!(ParamValue::Float(1.0).as_color(), None);
+    }
+
+    #[test]
+    fn param_value_as_bool_wrong_type() {
+        assert_eq!(ParamValue::Float(1.0).as_bool(), None);
+    }
+
+    // ── ParamKey round-trip test ─────────────────────────────────
+
+    #[test]
+    fn param_key_builtin_roundtrip() {
+        let key = ParamKey::Speed;
+        let json = serde_json::to_string(&key).expect("serialize");
+        assert_eq!(json, "\"Speed\"");
+        let back: ParamKey = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, ParamKey::Speed);
+    }
+
+    #[test]
+    fn param_key_custom_roundtrip() {
+        let key = ParamKey::Custom("myParam".to_string());
+        let json = serde_json::to_string(&key).expect("serialize");
+        assert_eq!(json, "\"myParam\"");
+        let back: ParamKey = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, ParamKey::Custom("myParam".to_string()));
+    }
+
+    #[test]
+    fn param_key_unknown_deserializes_as_custom() {
+        let back: ParamKey = serde_json::from_str("\"UnknownKey\"").expect("deserialize");
+        assert_eq!(back, ParamKey::Custom("UnknownKey".to_string()));
+    }
+}

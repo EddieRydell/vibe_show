@@ -62,7 +62,7 @@ export function SettingsScreen({ onBack }: Props) {
       setBaseUrl(config.base_url ?? "");
       setModel(config.model ?? "");
       setChatMode(config.chat_mode);
-    }).catch(() => {});
+    }).catch(console.warn);
   }, []);
 
   const handleSaveLlmConfig = useCallback(async () => {

@@ -87,6 +87,7 @@ export function PreviewToolbar({
               ? "bg-surface-2 text-text"
               : "text-text-2 hover:bg-surface-2 hover:text-text"
           }`}
+          aria-label="Preview settings"
           title="Preview settings"
         >
           <Settings size={14} />
@@ -140,6 +141,7 @@ export function PreviewToolbar({
 
             <button
               onClick={onResetView}
+              aria-label="Reset view"
               className="text-text-2 hover:bg-surface-2 hover:text-text rounded px-2 py-1 text-left text-[11px] transition-colors"
             >
               Reset View

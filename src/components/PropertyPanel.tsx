@@ -107,10 +107,10 @@ export function PropertyPanel({
   useEffect(() => {
     cmd.listLibraryGradients()
       .then((items) => setGradientNames(items.map(([n]) => n)))
-      .catch(() => {});
+      .catch(console.warn);
     cmd.listLibraryCurves()
       .then((items) => setCurveNames(items.map(([n]) => n)))
-      .catch(() => {});
+      .catch(console.warn);
   }, [selectedEffect]);
 
   // Load effect detail when selection changes or after undo/redo (refreshKey)

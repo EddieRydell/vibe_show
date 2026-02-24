@@ -204,10 +204,7 @@ pub fn get_analysis(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let audio_path = media_dir.join(&audio_file);
     if !audio_path.exists() {
         return Err(AppError::ValidationError {
-            message: format!(
-                "Audio file '{}' not found in media directory",
-                audio_file
-            ),
+            message: format!("Audio file '{audio_file}' not found in media directory"),
         });
     }
 

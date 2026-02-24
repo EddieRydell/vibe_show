@@ -262,7 +262,7 @@ export function ColorPicker({
 
   return createPortal(
     <div
-      className="border-border bg-surface z-[9999] flex flex-col rounded-lg border shadow-xl"
+      className="border-border bg-surface z-9999 flex flex-col rounded-lg border shadow-xl"
       style={{ position: "fixed", top: pos.y, left: pos.x, width: PANEL_W }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}

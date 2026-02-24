@@ -321,7 +321,9 @@ impl CommandDispatcher {
             let result = self.apply(show, cmd)?;
 
             // Update the description to reflect the latest edit.
-            self.undo_stack[coalesce_idx].description = description;
+            if let Some(entry) = self.undo_stack.get_mut(coalesce_idx) {
+                entry.description = description;
+            }
 
             // Update the coalesce timestamp.
             self.last_coalesce_time = Some(now);

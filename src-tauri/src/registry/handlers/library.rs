@@ -12,32 +12,21 @@ use crate::registry::params::{
 use crate::registry::CommandOutput;
 use crate::state::AppState;
 
-/// Count how many effects in the sequence reference a gradient library item by name.
-fn count_gradient_refs(seq: &Sequence, name: &str) -> usize {
+/// Count how many effects in the sequence reference a library item by name.
+fn count_refs(seq: &Sequence, name: &str, pred: fn(&ParamValue, &str) -> bool) -> usize {
     seq.tracks
         .iter()
         .flat_map(|t| &t.effects)
-        .filter(|e| {
-            e.params
-                .inner()
-                .values()
-                .any(|v| matches!(v, ParamValue::GradientRef(n) if n == name))
-        })
+        .filter(|e| e.params.inner().values().any(|v| pred(v, name)))
         .count()
 }
 
-/// Count how many effects in the sequence reference a curve library item by name.
-fn count_curve_refs(seq: &Sequence, name: &str) -> usize {
-    seq.tracks
-        .iter()
-        .flat_map(|t| &t.effects)
-        .filter(|e| {
-            e.params
-                .inner()
-                .values()
-                .any(|v| matches!(v, ParamValue::CurveRef(n) if n == name))
-        })
-        .count()
+/// Execute an `EditCommand` via the dispatcher.
+fn dispatch(state: &Arc<AppState>, cmd: &EditCommand) -> Result<(), AppError> {
+    let mut dispatcher = state.dispatcher.lock();
+    let mut show = state.show.lock();
+    dispatcher.execute(&mut show, cmd)?;
+    Ok(())
 }
 
 pub fn list_library(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
@@ -64,15 +53,12 @@ pub fn set_library_gradient(
     let gradient = ColorGradient::new(p.stops).ok_or(AppError::ValidationError {
         message: "Gradient needs at least 1 stop".into(),
     })?;
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
-    let seq_idx = state.active_sequence_index(&show)?;
-    let cmd = EditCommand::SetGradient {
+    let seq_idx = state.active_sequence_index(&state.show.lock())?;
+    dispatch(state, &EditCommand::SetGradient {
         sequence_index: seq_idx,
         name: p.name.clone(),
         gradient,
-    };
-    dispatcher.execute(&mut show, &cmd)?;
+    })?;
     Ok(CommandOutput::unit(format!("Gradient \"{}\" saved.", p.name)))
 }
 
@@ -83,46 +69,48 @@ pub fn set_library_curve(
     let curve = Curve::new(p.points).ok_or(AppError::ValidationError {
         message: "Curve needs at least 2 points".into(),
     })?;
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
-    let seq_idx = state.active_sequence_index(&show)?;
-    let cmd = EditCommand::SetCurve {
+    let seq_idx = state.active_sequence_index(&state.show.lock())?;
+    dispatch(state, &EditCommand::SetCurve {
         sequence_index: seq_idx,
         name: p.name.clone(),
         curve,
-    };
-    dispatcher.execute(&mut show, &cmd)?;
+    })?;
     Ok(CommandOutput::unit(format!("Curve \"{}\" saved.", p.name)))
+}
+
+/// Check for dangling references before deleting a library item.
+fn check_no_refs(
+    state: &Arc<AppState>,
+    name: &str,
+    kind: &str,
+    pred: fn(&ParamValue, &str) -> bool,
+) -> Result<usize, AppError> {
+    let show = state.show.lock();
+    let seq_idx = state.active_sequence_index(&show)?;
+    if let Some(seq) = show.sequences.get(seq_idx) {
+        let ref_count = count_refs(seq, name, pred);
+        if ref_count > 0 {
+            return Err(AppError::ValidationError {
+                message: format!(
+                    "Cannot delete {kind} \"{name}\": it is referenced by {ref_count} effect(s). Remove the references first.",
+                ),
+            });
+        }
+    }
+    state.active_sequence_index(&show)
 }
 
 pub fn delete_library_gradient(
     state: &Arc<AppState>,
     p: NameParams,
 ) -> Result<CommandOutput, AppError> {
-    // Check for dangling references before deleting
-    {
-        let show = state.show.lock();
-        let seq_idx = state.active_sequence_index(&show)?;
-        if let Some(seq) = show.sequences.get(seq_idx) {
-            let ref_count = count_gradient_refs(seq, &p.name);
-            if ref_count > 0 {
-                return Err(AppError::ValidationError {
-                    message: format!(
-                        "Cannot delete gradient \"{}\": it is referenced by {} effect(s). Remove the references first.",
-                        p.name, ref_count
-                    ),
-                });
-            }
-        }
-    }
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
-    let seq_idx = state.active_sequence_index(&show)?;
-    let cmd = EditCommand::DeleteGradient {
+    let seq_idx = check_no_refs(state, &p.name, "gradient", |v, n| {
+        matches!(v, ParamValue::GradientRef(r) if r == n)
+    })?;
+    dispatch(state, &EditCommand::DeleteGradient {
         sequence_index: seq_idx,
         name: p.name.clone(),
-    };
-    dispatcher.execute(&mut show, &cmd)?;
+    })?;
     Ok(CommandOutput::unit(format!(
         "Gradient \"{}\" deleted.",
         p.name
@@ -133,30 +121,13 @@ pub fn delete_library_curve(
     state: &Arc<AppState>,
     p: NameParams,
 ) -> Result<CommandOutput, AppError> {
-    // Check for dangling references before deleting
-    {
-        let show = state.show.lock();
-        let seq_idx = state.active_sequence_index(&show)?;
-        if let Some(seq) = show.sequences.get(seq_idx) {
-            let ref_count = count_curve_refs(seq, &p.name);
-            if ref_count > 0 {
-                return Err(AppError::ValidationError {
-                    message: format!(
-                        "Cannot delete curve \"{}\": it is referenced by {} effect(s). Remove the references first.",
-                        p.name, ref_count
-                    ),
-                });
-            }
-        }
-    }
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
-    let seq_idx = state.active_sequence_index(&show)?;
-    let cmd = EditCommand::DeleteCurve {
+    let seq_idx = check_no_refs(state, &p.name, "curve", |v, n| {
+        matches!(v, ParamValue::CurveRef(r) if r == n)
+    })?;
+    dispatch(state, &EditCommand::DeleteCurve {
         sequence_index: seq_idx,
         name: p.name.clone(),
-    };
-    dispatcher.execute(&mut show, &cmd)?;
+    })?;
     Ok(CommandOutput::unit(format!("Curve \"{}\" deleted.", p.name)))
 }
 
@@ -200,15 +171,12 @@ pub fn rename_library_gradient(
     state: &Arc<AppState>,
     p: RenameParams,
 ) -> Result<CommandOutput, AppError> {
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
-    let seq_idx = state.active_sequence_index(&show)?;
-    let cmd = EditCommand::RenameGradient {
+    let seq_idx = state.active_sequence_index(&state.show.lock())?;
+    dispatch(state, &EditCommand::RenameGradient {
         sequence_index: seq_idx,
         old_name: p.old_name,
         new_name: p.new_name.clone(),
-    };
-    dispatcher.execute(&mut show, &cmd)?;
+    })?;
     Ok(CommandOutput::unit(format!(
         "Gradient renamed to \"{}\".",
         p.new_name
@@ -219,15 +187,12 @@ pub fn rename_library_curve(
     state: &Arc<AppState>,
     p: RenameParams,
 ) -> Result<CommandOutput, AppError> {
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
-    let seq_idx = state.active_sequence_index(&show)?;
-    let cmd = EditCommand::RenameCurve {
+    let seq_idx = state.active_sequence_index(&state.show.lock())?;
+    dispatch(state, &EditCommand::RenameCurve {
         sequence_index: seq_idx,
         old_name: p.old_name,
         new_name: p.new_name.clone(),
-    };
-    dispatcher.execute(&mut show, &cmd)?;
+    })?;
     Ok(CommandOutput::unit(format!(
         "Curve renamed to \"{}\".",
         p.new_name
@@ -255,17 +220,14 @@ pub fn link_effect_to_library(
         .map_err(|e| AppError::ValidationError {
             message: format!("Invalid param key: {e}"),
         })?;
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
-    let seq_idx = state.active_sequence_index(&show)?;
-    let cmd = EditCommand::UpdateEffectParam {
+    let seq_idx = state.active_sequence_index(&state.show.lock())?;
+    dispatch(state, &EditCommand::UpdateEffectParam {
         sequence_index: seq_idx,
         track_index: p.track_index,
         effect_index: p.effect_index,
         key,
         value: param_value,
-    };
-    dispatcher.execute(&mut show, &cmd)?;
+    })?;
     Ok(CommandOutput::unit(format!(
         "Linked to {} \"{}\".",
         p.ref_type, p.library_name

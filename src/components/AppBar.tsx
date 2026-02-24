@@ -56,6 +56,7 @@ export function AppBar({ onClose }: { onClose?: () => void } = {}) {
         <button
           onClick={handleMinimize}
           className="text-text-2 hover:bg-surface-2 hover:text-text flex h-6 w-8 items-center justify-center rounded-sm transition-colors"
+          aria-label="Minimize"
           title="Minimize"
         >
           <svg width="10" height="1" viewBox="0 0 10 1">
@@ -65,6 +66,7 @@ export function AppBar({ onClose }: { onClose?: () => void } = {}) {
         <button
           onClick={handleToggleMaximize}
           className="text-text-2 hover:bg-surface-2 hover:text-text flex h-6 w-8 items-center justify-center rounded-sm transition-colors"
+          aria-label={maximized ? "Restore" : "Maximize"}
           title={maximized ? "Restore" : "Maximize"}
         >
           {maximized ? (
@@ -91,6 +93,7 @@ export function AppBar({ onClose }: { onClose?: () => void } = {}) {
         <button
           onClick={handleClose}
           className="text-text-2 hover:bg-error flex h-6 w-8 items-center justify-center rounded-sm transition-colors hover:text-white"
+          aria-label="Close"
           title="Close"
         >
           <svg width="10" height="10" viewBox="0 0 10 10">

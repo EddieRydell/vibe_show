@@ -34,9 +34,10 @@ interface Props {
   onBack: () => void;
   onOpenSequence: (sequenceSlug: string) => void;
   onOpenScript: (name: string | null) => void;
+  onOpenAnalysis: (filename: string) => void;
 }
 
-export function ProfileScreen({ slug, onBack, onOpenSequence, onOpenScript }: Props) {
+export function ProfileScreen({ slug, onBack, onOpenSequence, onOpenScript, onOpenAnalysis }: Props) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [tab, setTab] = useState<Tab>("sequences");
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +90,7 @@ export function ProfileScreen({ slug, onBack, onOpenSequence, onOpenScript }: Pr
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto">
         {profile && tab === "sequences" && <SequencesTab slug={slug} onOpenSequence={onOpenSequence} setError={setError} />}
-        {profile && tab === "music" && <MusicTab setError={setError} />}
+        {profile && tab === "music" && <MusicTab setError={setError} onOpenAnalysis={onOpenAnalysis} />}
         {profile && tab === "house" && (
           <HouseSetupTab profile={profile} onProfileUpdate={setProfile} setError={setError} />
         )}
@@ -273,7 +274,7 @@ function SequencesTab({
 
 // ── Music Tab ──────────────────────────────────────────────────────
 
-function MusicTab({ setError }: { setError: (e: string | null) => void }) {
+function MusicTab({ setError, onOpenAnalysis }: { setError: (e: string | null) => void; onOpenAnalysis: (filename: string) => void }) {
   const [files, setFiles] = useState<MediaFile[]>([]);
 
   const refresh = useCallback(() => {
@@ -347,12 +348,20 @@ function MusicTab({ setError }: { setError: (e: string | null) => void }) {
                 <span className="text-text text-sm">{f.filename}</span>
                 <span className="text-text-2 ml-3 text-xs">{formatSize(f.size_bytes)}</span>
               </div>
-              <button
-                onClick={() => handleDelete(f.filename)}
-                className="text-text-2 hover:text-error text-xs opacity-0 transition-all group-hover:opacity-100"
-              >
-                Delete
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => onOpenAnalysis(f.filename)}
+                  className="text-text-2 hover:text-primary text-xs opacity-0 transition-all group-hover:opacity-100"
+                >
+                  Analyze
+                </button>
+                <button
+                  onClick={() => handleDelete(f.filename)}
+                  className="text-text-2 hover:text-error text-xs opacity-0 transition-all group-hover:opacity-100"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           ))}
         </div>

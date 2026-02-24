@@ -91,14 +91,14 @@ export function ScriptScreen({
           setDirty(false);
         }
       })
-      .catch(() => {});
+      .catch(console.warn);
     // Also load params from cache
     cmd.getScriptParams(currentScript)
       .then((p) => {
         setParams(p);
         setParamValues(buildDefaults(p));
       })
-      .catch(() => {});
+      .catch(console.warn);
   }, [currentScript]);
 
   // Listen for chat tool_result events — refresh script list & current source
@@ -118,13 +118,13 @@ export function ScriptScreen({
               setDirty(false);
             }
           })
-          .catch(() => {});
+          .catch(console.warn);
         cmd.getScriptParams(currentScript)
           .then((p) => {
             setParams(p);
             setParamValues(buildDefaults(p));
           })
-          .catch(() => {});
+          .catch(console.warn);
       }
     }).then((fn) => {
       if (cancelled) fn();
@@ -153,7 +153,7 @@ export function ScriptScreen({
               setCurrentScript(lastScript[0]);
             }
           })
-          .catch(() => {});
+          .catch(console.warn);
       }
     }).then((fn) => {
       if (cancelled) fn();
@@ -327,8 +327,10 @@ export function ScriptScreen({
               currentTime={preview.currentTime}
               playing={preview.playing}
               pixelCount={50}
+              duration={preview.duration}
               onScrub={preview.scrub}
               onTogglePlay={preview.togglePlay}
+              onDurationChange={preview.setDuration}
             />
 
             {/* Parameters */}

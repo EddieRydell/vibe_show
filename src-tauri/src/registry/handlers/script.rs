@@ -4,13 +4,15 @@ use std::sync::Arc;
 
 use crate::dispatcher::EditCommand;
 use crate::error::AppError;
-use crate::profile;
 use crate::registry::params::{
     CompileScriptParams, CompileScriptPreviewParams, NameParams, RenameParams, WriteScriptParams,
 };
 use crate::registry::reference;
 use crate::registry::CommandOutput;
-use crate::state::{get_data_dir, AppState};
+use crate::state::AppState;
+
+use super::common;
+use super::profile_lib;
 
 pub fn get_dsl_reference() -> Result<CommandOutput, AppError> {
     let reference = reference::dsl_reference();
@@ -119,63 +121,19 @@ pub fn write_profile_script(
     state: &Arc<AppState>,
     p: WriteScriptParams,
 ) -> Result<CommandOutput, AppError> {
-    match crate::dsl::compile_source(&p.source) {
-        Ok(compiled) => {
-            let params_desc: Vec<String> = compiled
-                .params
-                .iter()
-                .map(|param| format!("{} ({:?})", param.name, param.ty))
-                .collect();
-            state
-                .script_cache
-                .lock()
-                .insert(p.name.clone(), Arc::new(compiled));
-            let data_dir = get_data_dir(state)?;
-            let slug = state
-                .current_profile
-                .lock()
-                .clone()
-                .ok_or(AppError::NoProfile)?;
-            let mut libs = profile::load_libraries(&data_dir, &slug)
-                .map_err(|e| AppError::IoError {
-                    message: e.to_string(),
-                })?;
-            libs.scripts.insert(p.name.clone(), p.source);
-            profile::save_libraries(&data_dir, &slug, &libs).map_err(|e| AppError::IoError {
-                message: e.to_string(),
-            })?;
-            if params_desc.is_empty() {
-                Ok(CommandOutput::unit(format!(
-                    "Compiled and saved \"{}\" to profile library (no params).",
-                    p.name
-                )))
-            } else {
-                Ok(CommandOutput::unit(format!(
-                    "Compiled and saved \"{}\" to profile library with params: {}.",
-                    p.name,
-                    params_desc.join(", ")
-                )))
-            }
-        }
-        Err(errors) => {
-            let msgs: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
-            Err(AppError::ValidationError {
-                message: format!("Compile errors:\n{}", msgs.join("\n")),
-            })
-        }
+    let result = common::compile_and_cache(state, p.name.clone(), &p.source);
+    if result.success {
+        profile_lib::with_libraries(state, |libs| {
+            libs.scripts.insert(p.name, p.source);
+        })?;
+        Ok(common::compile_result_output(&result))
+    } else {
+        Ok(common::compile_result_output(&result))
     }
 }
 
 pub fn list_profile_scripts(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
-    let data_dir = get_data_dir(state)?;
-    let slug = state
-        .current_profile
-        .lock()
-        .clone()
-        .ok_or(AppError::NoProfile)?;
-    let libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
-        message: e.to_string(),
-    })?;
+    let libs = profile_lib::read_libraries(state)?;
     let scripts: Vec<(String, String)> = libs.scripts.into_iter().collect();
     Ok(CommandOutput::json(
         format!("{} scripts.", scripts.len()),
@@ -187,15 +145,7 @@ pub fn get_profile_script_source(
     state: &Arc<AppState>,
     p: NameParams,
 ) -> Result<CommandOutput, AppError> {
-    let data_dir = get_data_dir(state)?;
-    let slug = state
-        .current_profile
-        .lock()
-        .clone()
-        .ok_or(AppError::NoProfile)?;
-    let libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
-        message: e.to_string(),
-    })?;
+    let libs = profile_lib::read_libraries(state)?;
     let source = libs
         .scripts
         .get(&p.name)
@@ -213,18 +163,8 @@ pub fn delete_profile_script(
     state: &Arc<AppState>,
     p: NameParams,
 ) -> Result<CommandOutput, AppError> {
-    let data_dir = get_data_dir(state)?;
-    let slug = state
-        .current_profile
-        .lock()
-        .clone()
-        .ok_or(AppError::NoProfile)?;
-    let mut libs = profile::load_libraries(&data_dir, &slug).map_err(|e| AppError::IoError {
-        message: e.to_string(),
-    })?;
-    libs.scripts.remove(&p.name);
-    profile::save_libraries(&data_dir, &slug, &libs).map_err(|e| AppError::IoError {
-        message: e.to_string(),
+    profile_lib::with_libraries(state, |libs| {
+        libs.scripts.remove(&p.name);
     })?;
     state.script_cache.lock().remove(&p.name);
     Ok(CommandOutput::unit(format!(
@@ -237,78 +177,26 @@ pub fn compile_script(
     state: &Arc<AppState>,
     p: CompileScriptParams,
 ) -> Result<CommandOutput, AppError> {
-    match crate::dsl::compile_source(&p.source) {
-        Ok(compiled) => {
-            let params = crate::commands::extract_script_params(&compiled);
-            state
-                .script_cache
-                .lock()
-                .insert(p.name.clone(), Arc::new(compiled));
-            let mut dispatcher = state.dispatcher.lock();
-            let mut show = state.show.lock();
-            let seq_idx = state.active_sequence_index(&show)?;
-            let cmd = EditCommand::SetScript {
-                sequence_index: seq_idx,
-                name: p.name.clone(),
-                source: p.source,
-            };
-            dispatcher.execute(&mut show, &cmd)?;
-            let result = crate::commands::ScriptCompileResult {
-                success: true,
-                errors: vec![],
-                name: p.name,
-                params: Some(params),
-            };
-            Ok(CommandOutput::json("Compiled and saved.", &result))
-        }
-        Err(errors) => {
-            let result = crate::commands::ScriptCompileResult {
-                success: false,
-                errors: errors
-                    .iter()
-                    .map(|e| crate::commands::ScriptError {
-                        message: e.message.clone(),
-                        offset: e.span.start,
-                    })
-                    .collect(),
-                name: p.name,
-                params: None,
-            };
-            Ok(CommandOutput::json("Compile failed.", &result))
-        }
+    let result = common::compile_and_cache(state, p.name.clone(), &p.source);
+    if result.success {
+        let mut dispatcher = state.dispatcher.lock();
+        let mut show = state.show.lock();
+        let seq_idx = state.active_sequence_index(&show)?;
+        let cmd = EditCommand::SetScript {
+            sequence_index: seq_idx,
+            name: p.name,
+            source: p.source,
+        };
+        dispatcher.execute(&mut show, &cmd)?;
     }
+    Ok(common::compile_result_output(&result))
 }
 
 pub fn compile_script_preview(
     p: CompileScriptPreviewParams,
 ) -> Result<CommandOutput, AppError> {
-    match crate::dsl::compile_source(&p.source) {
-        Ok(compiled) => {
-            let params = crate::commands::extract_script_params(&compiled);
-            let result = crate::commands::ScriptCompileResult {
-                success: true,
-                errors: vec![],
-                name: compiled.name.clone(),
-                params: Some(params),
-            };
-            Ok(CommandOutput::json("Compile successful.", &result))
-        }
-        Err(errors) => {
-            let result = crate::commands::ScriptCompileResult {
-                success: false,
-                errors: errors
-                    .iter()
-                    .map(|e| crate::commands::ScriptError {
-                        message: e.message.clone(),
-                        offset: e.span.start,
-                    })
-                    .collect(),
-                name: String::new(),
-                params: None,
-            };
-            Ok(CommandOutput::json("Compile failed.", &result))
-        }
-    }
+    let result = common::compile_preview(String::new(), &p.source);
+    Ok(common::compile_result_output(&result))
 }
 
 pub fn rename_script(

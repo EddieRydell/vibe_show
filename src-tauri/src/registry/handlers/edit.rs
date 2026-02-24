@@ -172,11 +172,17 @@ pub fn add_track(state: &Arc<AppState>, p: AddTrackParams) -> Result<CommandOutp
     let mut dispatcher = state.dispatcher.lock();
     let mut show = state.show.lock();
     let seq_idx = state.active_sequence_index(&show)?;
-    let fixture_name = show
+    let fixture = show
         .fixtures
         .iter()
         .find(|f| f.id.0 == p.fixture_id)
-        .map_or_else(|| format!("fixture {}", p.fixture_id), |f| f.name.clone());
+        .ok_or_else(|| AppError::ValidationError {
+            message: format!(
+                "Fixture with ID {} does not exist",
+                p.fixture_id
+            ),
+        })?;
+    let fixture_name = fixture.name.clone();
     let cmd = EditCommand::AddTrack {
         sequence_index: seq_idx,
         name: p.name.clone(),

@@ -18,6 +18,7 @@ export function NavBar({ title, subtitle, onBack, backLabel = "Back", hideSettin
         <button
           onClick={onBack}
           className="text-text-2 hover:text-text mr-1 text-sm transition-colors"
+          aria-label={backLabel}
         >
           &larr; {backLabel}
         </button>
@@ -31,6 +32,7 @@ export function NavBar({ title, subtitle, onBack, backLabel = "Back", hideSettin
         <button
           onClick={openSettings}
           className="text-text-2 hover:text-text p-1 transition-colors"
+          aria-label="Settings"
           title="Settings"
         >
           <Settings size={14} />
@@ -39,6 +41,7 @@ export function NavBar({ title, subtitle, onBack, backLabel = "Back", hideSettin
       <button
         onClick={toggleChat}
         className={`p-1 transition-colors ${chatOpen ? "text-primary" : "text-text-2 hover:text-text"}`}
+        aria-label="Toggle chat"
         title="Chat"
       >
         <MessageSquare size={14} />

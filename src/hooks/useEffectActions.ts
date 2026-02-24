@@ -1,36 +1,30 @@
+// Effect action handlers extracted from EditorScreen.tsx.
+
 import { useCallback, useState } from "react";
 import { cmd } from "../commands";
-import type { EffectKind, PlaybackInfo, Show } from "../types";
 import { makeEffectKey } from "../utils/effectKey";
+import type { EffectKind, PlaybackInfo, Show } from "../types";
 
-export interface EffectEditingState {
-  addEffectState: { fixtureId: number; time: number; screenPos: { x: number; y: number } } | null;
-  cancelAddEffect: () => void;
-  handleAddEffect: (fixtureId: number, time: number, screenPos: { x: number; y: number }) => void;
-  handleEffectTypeSelected: (kind: EffectKind) => Promise<void>;
-  handleMoveEffect: (
-    fromTrackIndex: number,
-    effectIndex: number,
-    targetFixtureId: number,
-    newStart: number,
-    newEnd: number,
-  ) => Promise<void>;
-  handleResizeEffect: (trackIndex: number, effectIndex: number, newStart: number, newEnd: number) => Promise<void>;
+interface AddEffectState {
+  fixtureId: number;
+  time: number;
+  screenPos: { x: number; y: number };
 }
 
-export function useEffectEditing(
-  show: Show | null,
-  playback: PlaybackInfo | null,
-  setSelectedEffects: (s: Set<string>) => void,
-  commitChange: () => void,
-): EffectEditingState {
-  const [addEffectState, setAddEffectState] = useState<{
-    fixtureId: number;
-    time: number;
-    screenPos: { x: number; y: number };
-  } | null>(null);
+interface UseEffectActionsParams {
+  show: Show | null;
+  playback: PlaybackInfo | null;
+  commitChange: (opts?: { skipRefreshAll?: boolean; skipDirty?: boolean }) => void;
+  setSelectedEffects: (sel: Set<string>) => void;
+}
 
-  const cancelAddEffect = useCallback(() => setAddEffectState(null), []);
+export function useEffectActions({
+  show,
+  playback,
+  commitChange,
+  setSelectedEffects,
+}: UseEffectActionsParams) {
+  const [addEffectState, setAddEffectState] = useState<AddEffectState | null>(null);
 
   const handleAddEffect = useCallback(
     (fixtureId: number, time: number, screenPos: { x: number; y: number }) => {
@@ -124,7 +118,6 @@ export function useEffectEditing(
         }
 
         const newEffectIndex = await cmd.moveEffectToTrack(fromTrackIndex, effectIndex, toTrackIndex);
-
         await cmd.updateEffectTimeRange(toTrackIndex, newEffectIndex, newStart, newEnd);
 
         commitChange();
@@ -145,7 +138,7 @@ export function useEffectEditing(
 
   return {
     addEffectState,
-    cancelAddEffect,
+    setAddEffectState,
     handleAddEffect,
     handleEffectTypeSelected,
     handleMoveEffect,

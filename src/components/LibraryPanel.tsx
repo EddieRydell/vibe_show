@@ -88,6 +88,8 @@ function Section({
     <div className="border-border border-b">
       <div
         className="hover:bg-surface-2 flex cursor-pointer select-none items-center gap-1 px-3 py-1.5"
+        role="button"
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -333,7 +335,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
         {/* Header */}
         <div className="border-border flex items-center justify-between border-b px-3 py-2">
           <span className="text-text text-xs font-semibold">Library</span>
-          <button onClick={onClose} className="text-text-2 hover:text-text text-[11px]">
+          <button onClick={onClose} aria-label="Close library" className="text-text-2 hover:text-text text-[11px]">
             &times;
           </button>
         </div>

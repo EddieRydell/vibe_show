@@ -39,13 +39,15 @@ export function ScreenShell({
   return (
     <div className="bg-bg text-text flex h-full flex-col">
       <AppBar />
-      <NavBar
-        title={title}
-        subtitle={subtitle}
-        onBack={onBack}
-        backLabel={backLabel}
-        hideSettings={hideSettings}
-      />
+      <nav>
+        <NavBar
+          title={title}
+          subtitle={subtitle}
+          onBack={onBack}
+          backLabel={backLabel}
+          hideSettings={hideSettings}
+        />
+      </nav>
       {toolbar}
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">

@@ -26,6 +26,7 @@ export function IntSlider({ label, value, min, max, onChange }: IntSliderProps) 
       </div>
       <input
         type="range"
+        aria-label={label}
         className="accent-primary bg-surface-2 h-1.5 w-full cursor-pointer appearance-none rounded-full"
         value={value}
         min={min}

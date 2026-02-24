@@ -378,4 +378,62 @@ mod tests {
         let ids = g.resolve_fixture_ids(&all);
         assert_eq!(ids, vec![FixtureId(10)]);
     }
+
+    // ── DmxAddress boundary tests ────────────────────────────────
+
+    #[test]
+    fn dmx_address_zero_is_none() {
+        assert!(DmxAddress::new(0).is_none());
+    }
+
+    #[test]
+    fn dmx_address_one_is_valid() {
+        let addr = DmxAddress::new(1).expect("1 is valid");
+        assert_eq!(addr.get(), 1);
+    }
+
+    #[test]
+    fn dmx_address_512_is_valid() {
+        let addr = DmxAddress::new(512).expect("512 is valid");
+        assert_eq!(addr.get(), 512);
+    }
+
+    #[test]
+    fn dmx_address_513_is_none() {
+        assert!(DmxAddress::new(513).is_none());
+    }
+
+    #[test]
+    fn dmx_address_max_is_none() {
+        assert!(DmxAddress::new(u16::MAX).is_none());
+    }
+
+    #[test]
+    fn dmx_address_deserialize_invalid_errors() {
+        let result: Result<DmxAddress, _> = serde_json::from_str("0");
+        assert!(result.is_err());
+        let result: Result<DmxAddress, _> = serde_json::from_str("513");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn dmx_address_roundtrip() {
+        let addr = DmxAddress::new(256).expect("valid");
+        let json = serde_json::to_string(&addr).expect("serialize");
+        assert_eq!(json, "256");
+        let back: DmxAddress = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.get(), 256);
+    }
+
+    // ── Deeply nested groups ─────────────────────────────────────
+
+    #[test]
+    fn deeply_nested_groups_resolve() {
+        let g3 = group(3, vec![GroupMember::Fixture(FixtureId(100))]);
+        let g2 = group(2, vec![GroupMember::Group(GroupId(3))]);
+        let g1 = group(1, vec![GroupMember::Group(GroupId(2))]);
+        let all = vec![g1.clone(), g2, g3];
+        let ids = g1.resolve_fixture_ids(&all);
+        assert_eq!(ids, vec![FixtureId(100)]);
+    }
 }

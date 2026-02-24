@@ -1,18 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppScreen } from "./screens";
 import { cmd } from "./commands";
 import { LoadingScreen } from "./screens/LoadingScreen";
 import { FirstLaunchScreen } from "./screens/FirstLaunchScreen";
 import { HomeScreen } from "./screens/HomeScreen";
-import { ProfileScreen } from "./screens/ProfileScreen";
-import { EditorScreen } from "./screens/EditorScreen";
-import { ScriptScreen } from "./screens/ScriptScreen";
-import { SettingsScreen } from "./screens/SettingsScreen";
 import { useProgress } from "./hooks/useProgress";
 import { ProgressOverlay } from "./components/ProgressOverlay";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AppShellContext } from "./components/ScreenShell";
 import { ChatPanel } from "./components/ChatPanel";
+
+const ProfileScreen = lazy(() => import("./screens/ProfileScreen").then(m => ({ default: m.ProfileScreen })));
+const EditorScreen = lazy(() => import("./screens/EditorScreen").then(m => ({ default: m.EditorScreen })));
+const ScriptScreen = lazy(() => import("./screens/ScriptScreen").then(m => ({ default: m.ScriptScreen })));
+const SettingsScreen = lazy(() => import("./screens/SettingsScreen").then(m => ({ default: m.SettingsScreen })));
+const AnalysisScreen = lazy(() => import("./screens/AnalysisScreen").then(m => ({ default: m.AnalysisScreen })));
 
 export default function App() {
   const progressOps = useProgress();
@@ -82,6 +84,15 @@ export default function App() {
     }));
   }, []);
 
+  const handleOpenAnalysis = useCallback((profileSlug: string, filename: string) => {
+    setScreen((current) => ({
+      kind: "analysis",
+      profileSlug,
+      filename,
+      returnTo: current,
+    }));
+  }, []);
+
   const toggleChat = useCallback(() => {
     setChatOpen((o) => !o);
   }, []);
@@ -117,41 +128,61 @@ export default function App() {
       );
       break;
     case "settings":
-      content = <ErrorBoundary><SettingsScreen onBack={handleCloseSettings} /></ErrorBoundary>;
+      content = <ErrorBoundary><Suspense fallback={<LoadingScreen />}><SettingsScreen onBack={handleCloseSettings} /></Suspense></ErrorBoundary>;
       break;
     case "profile":
       content = (
         <ErrorBoundary>
-          <ProfileScreen
-            slug={screen.slug}
-            onBack={handleBackToHome}
-            onOpenSequence={(sequenceSlug) => handleOpenSequence(screen.slug, sequenceSlug)}
-            onOpenScript={(name) => handleOpenScript(screen.slug, name)}
-          />
+          <Suspense fallback={<LoadingScreen />}>
+            <ProfileScreen
+              slug={screen.slug}
+              onBack={handleBackToHome}
+              onOpenSequence={(sequenceSlug) => handleOpenSequence(screen.slug, sequenceSlug)}
+              onOpenScript={(name) => handleOpenScript(screen.slug, name)}
+              onOpenAnalysis={(filename) => handleOpenAnalysis(screen.slug, filename)}
+            />
+          </Suspense>
         </ErrorBoundary>
       );
       break;
     case "editor":
       content = (
         <ErrorBoundary>
-          <EditorScreen
-            profileSlug={screen.profileSlug}
-            sequenceSlug={screen.sequenceSlug}
-            onBack={() => handleBackToProfile(screen.profileSlug)}
-            onOpenScript={(name) => handleOpenScript(screen.profileSlug, name)}
-          />
+          <Suspense fallback={<LoadingScreen />}>
+            <EditorScreen
+              profileSlug={screen.profileSlug}
+              sequenceSlug={screen.sequenceSlug}
+              onBack={() => handleBackToProfile(screen.profileSlug)}
+              onOpenScript={(name) => handleOpenScript(screen.profileSlug, name)}
+            />
+          </Suspense>
         </ErrorBoundary>
       );
       break;
     case "script":
       content = (
         <ErrorBoundary>
-          <ScriptScreen
-            profileSlug={screen.profileSlug}
-            initialScriptName={screen.scriptName}
-            onBack={() => setScreen(screen.returnTo)}
-            onOpenScript={(name) => handleOpenScript(screen.profileSlug, name)}
-          />
+          <Suspense fallback={<LoadingScreen />}>
+            <ScriptScreen
+              profileSlug={screen.profileSlug}
+              initialScriptName={screen.scriptName}
+              onBack={() => setScreen(screen.returnTo)}
+              onOpenScript={(name) => handleOpenScript(screen.profileSlug, name)}
+            />
+          </Suspense>
+        </ErrorBoundary>
+      );
+      break;
+    case "analysis":
+      content = (
+        <ErrorBoundary>
+          <Suspense fallback={<LoadingScreen />}>
+            <AnalysisScreen
+              profileSlug={screen.profileSlug}
+              filename={screen.filename}
+              onBack={() => setScreen(screen.returnTo)}
+            />
+          </Suspense>
         </ErrorBoundary>
       );
       break;
@@ -161,7 +192,7 @@ export default function App() {
     <ErrorBoundary>
       <AppShellContext.Provider value={shellContext}>
         <div className="flex h-full">
-          <div className="min-w-0 flex-1">{content}</div>
+          <main className="min-w-0 flex-1">{content}</main>
           <ChatPanel
             open={chatOpen}
             onClose={toggleChat}

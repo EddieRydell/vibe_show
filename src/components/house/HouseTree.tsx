@@ -101,6 +101,7 @@ export function HouseTree({
       <button
         onClick={() => onEditFixture(fixture)}
         className="text-text-2 hover:text-text opacity-0 transition-all group-hover/node:opacity-100"
+        aria-label={`Edit fixture ${fixture.name}`}
         title="Edit"
       >
         <Pencil size={12} />
@@ -108,6 +109,7 @@ export function HouseTree({
       <button
         onClick={() => onDeleteFixture(fixture.id)}
         className="text-text-2 hover:text-error opacity-0 transition-all group-hover/node:opacity-100"
+        aria-label={`Delete fixture ${fixture.name}`}
         title="Delete"
       >
         <Trash2 size={12} />
@@ -121,6 +123,8 @@ export function HouseTree({
       <div key={`g-${group.id}`}>
         <div
           className="group/node hover:bg-surface flex cursor-pointer items-center gap-2 py-1 pr-2"
+          role="treeitem"
+          aria-expanded={isExpanded}
           style={{ paddingLeft: `${depth * 16 + 4}px` }}
           onClick={() => toggleExpand(group.id)}
         >
@@ -137,6 +141,7 @@ export function HouseTree({
           <button
             onClick={(e) => { e.stopPropagation(); onEditGroup(group); }}
             className="text-text-2 hover:text-text opacity-0 transition-all group-hover/node:opacity-100"
+            aria-label={`Edit group ${group.name}`}
             title="Edit"
           >
             <Pencil size={12} />
@@ -144,6 +149,7 @@ export function HouseTree({
           <button
             onClick={(e) => { e.stopPropagation(); onDeleteGroup(group.id); }}
             className="text-text-2 hover:text-error opacity-0 transition-all group-hover/node:opacity-100"
+            aria-label={`Delete group ${group.name}`}
             title="Delete"
           >
             <Trash2 size={12} />
@@ -175,7 +181,7 @@ export function HouseTree({
       </div>
 
       {/* Tree */}
-      <div className="border-border divide-border divide-y rounded border">
+      <div className="border-border divide-border divide-y rounded border" role="tree" aria-label="Fixtures and groups">
         {rootGroups.length === 0 && ungroupedFixtures.length === 0 && (
           <p className="text-text-2 px-4 py-6 text-center text-xs">
             No fixtures or groups. Add some to get started.

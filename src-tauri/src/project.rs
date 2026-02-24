@@ -128,13 +128,17 @@ static FILE_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> =
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), ProjectError> {
     // Acquire per-file lock to serialize writes to the same path
     let lock = {
-        let mut locks = FILE_LOCKS.lock().unwrap();
+        let mut locks = FILE_LOCKS.lock().map_err(|e| {
+            ProjectError::Io(std::io::Error::other(e.to_string()))
+        })?;
         locks
             .entry(path.to_path_buf())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     };
-    let _guard = lock.lock().unwrap();
+    let _guard = lock.lock().map_err(|e| {
+        ProjectError::Io(std::io::Error::other(e.to_string()))
+    })?;
 
     // Build sibling paths: foo.json → foo.json.tmp, foo.json.bak
     let file_name = path.file_name().unwrap_or_default();

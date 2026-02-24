@@ -10,6 +10,9 @@ export function BoolToggle({ label, value, onChange }: BoolToggleProps) {
       <label className="text-text-2 text-[11px]">{label}</label>
       <button
         type="button"
+        role="switch"
+        aria-checked={value}
+        aria-label={label}
         className={`relative h-5 w-9 rounded-full transition-colors ${value ? "bg-primary" : "bg-surface-2"}`}
         onClick={() => onChange(!value)}
       >

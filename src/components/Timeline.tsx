@@ -1,11 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EffectBlock } from "./EffectBlock";
-import type { AudioAnalysis, BlendMode, InteractionMode, PlaybackInfo, Show, Track } from "../types";
-import { effectKindLabel } from "../types";
+import type { AudioAnalysis, InteractionMode, PlaybackInfo, Show } from "../types";
 import type { WaveformData } from "../hooks/useAudio";
-import { makeEffectKey } from "../utils/effectKey";
 import { getEffectiveZoom } from "../utils/cssZoom";
 import { sectionColor } from "../utils/sectionColor";
+import {
+  LABEL_WIDTH,
+  BASE_LANE_HEIGHT,
+  LANE_GAP,
+  ROW_PADDING,
+  RULER_HEIGHT,
+  WAVEFORM_LANE_HEIGHT,
+  MIN_PX_PER_SEC,
+  MAX_PX_PER_SEC,
+  DEFAULT_PX_PER_SEC,
+  ZOOM_FACTOR,
+  DRAG_THRESHOLD,
+} from "../utils/timelineConstants";
+import { buildFixtureTrackMap, computeStackedLayoutFast } from "../utils/timelineLayout";
+import { drawWaveform } from "../utils/drawWaveform";
+import { useTimelineDrag } from "../hooks/useTimelineDrag";
+import type { DragState } from "../hooks/useTimelineDrag";
 
 interface TimelineProps {
   show: Show | null;
@@ -37,221 +52,10 @@ interface TimelineProps {
   analysis?: AudioAnalysis | null;
 }
 
-const LABEL_WIDTH = 160;
-const BASE_LANE_HEIGHT = 24;
-const LANE_GAP = 2;
-const ROW_PADDING = 2;
-const MIN_ROW_HEIGHT = 48;
-const RULER_HEIGHT = 28;
-const WAVEFORM_LANE_HEIGHT = 48;
-const MIN_PX_PER_SEC = 10;
-const MAX_PX_PER_SEC = 500;
-const DEFAULT_PX_PER_SEC = 40;
-const ZOOM_FACTOR = 1.15;
-const DRAG_THRESHOLD = 3;
-const MIN_DURATION = 0.1;
-
 function formatRulerTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return m > 0 ? `${m}:${s.toString().padStart(2, "0")}` : `${s}s`;
-}
-
-/** Resolve a group to its fixture IDs with memoization. */
-function resolveGroupCached(
-  groupId: number,
-  show: Show,
-  cache: Map<number, Set<number>>,
-  visited?: Set<number>,
-): Set<number> {
-  const cached = cache.get(groupId);
-  if (cached) return cached;
-
-  const seen = visited ?? new Set<number>();
-  if (seen.has(groupId)) return new Set();
-  seen.add(groupId);
-
-  const group = show.groups.find((g) => g.id === groupId);
-  if (!group) {
-    cache.set(groupId, new Set());
-    return new Set();
-  }
-
-  const ids = new Set<number>();
-  for (const m of group.members) {
-    if ("Fixture" in m) ids.add((m as { Fixture: number }).Fixture);
-    else if ("Group" in m) {
-      for (const fid of resolveGroupCached((m as { Group: number }).Group, show, cache, seen)) {
-        ids.add(fid);
-      }
-    }
-  }
-  cache.set(groupId, ids);
-  return ids;
-}
-
-/** Build a Map from fixtureId → Set<trackIndex>. O(tracks + groups) total. */
-function buildFixtureTrackMap(
-  show: Show,
-  sequence: { tracks: Track[] },
-): Map<number, Set<number>> {
-  const allFixtureIds = new Set(show.fixtures.map((f) => f.id));
-  const groupCache = new Map<number, Set<number>>();
-  const map = new Map<number, Set<number>>();
-
-  for (let trackIdx = 0; trackIdx < sequence.tracks.length; trackIdx++) {
-    const target = sequence.tracks[trackIdx].target;
-    let fixtureIds: Iterable<number>;
-
-    if (target === "All") {
-      fixtureIds = allFixtureIds;
-    } else if ("Fixtures" in target) {
-      fixtureIds = target.Fixtures;
-    } else if ("Group" in target) {
-      fixtureIds = resolveGroupCached(target.Group, show, groupCache);
-    } else {
-      continue;
-    }
-
-    for (const fid of fixtureIds) {
-      let set = map.get(fid);
-      if (!set) {
-        set = new Set();
-        map.set(fid, set);
-      }
-      set.add(trackIdx);
-    }
-  }
-
-  return map;
-}
-
-interface PlacedEffect {
-  key: string;
-  trackIndex: number;
-  effectIndex: number;
-  startSec: number;
-  durationSec: number;
-  blendMode: BlendMode;
-  kind: string;
-  lane: number;
-}
-
-interface StackedRow {
-  fixtureId: number;
-  effects: PlacedEffect[];
-  laneCount: number;
-  rowHeight: number;
-}
-
-/** Greedy lane assignment using pre-computed track indices. */
-function computeStackedLayoutFast(
-  fixtureId: number,
-  sequence: { tracks: Track[] },
-  trackIndices: Set<number>,
-): StackedRow {
-  const effects: PlacedEffect[] = [];
-
-  for (const trackIdx of trackIndices) {
-    const track = sequence.tracks[trackIdx];
-    for (let effectIdx = 0; effectIdx < track.effects.length; effectIdx++) {
-      const effect = track.effects[effectIdx];
-      effects.push({
-        key: makeEffectKey(trackIdx, effectIdx),
-        trackIndex: trackIdx,
-        effectIndex: effectIdx,
-        startSec: effect.time_range.start,
-        durationSec: effect.time_range.end - effect.time_range.start,
-        blendMode: effect.blend_mode,
-        kind: effectKindLabel(effect.kind),
-        lane: 0,
-      });
-    }
-  }
-
-  // Sort by start time for greedy assignment
-  effects.sort((a, b) => a.startSec - b.startSec);
-
-  // laneEnds[i] = the end time of the last effect placed in lane i
-  const laneEnds: number[] = [];
-
-  for (const effect of effects) {
-    const endSec = effect.startSec + effect.durationSec;
-    let assignedLane = -1;
-    for (let i = 0; i < laneEnds.length; i++) {
-      if (effect.startSec >= laneEnds[i]) {
-        assignedLane = i;
-        laneEnds[i] = endSec;
-        break;
-      }
-    }
-    if (assignedLane === -1) {
-      assignedLane = laneEnds.length;
-      laneEnds.push(endSec);
-    }
-    effect.lane = assignedLane;
-  }
-
-  const laneCount = Math.max(laneEnds.length, 1);
-  const rowHeight = Math.max(laneCount * BASE_LANE_HEIGHT + ROW_PADDING * 2, MIN_ROW_HEIGHT);
-
-  return { fixtureId, effects, laneCount, rowHeight };
-}
-
-// ── Drag state types ────────────────────────────────────────────────
-
-type DragState =
-  | {
-      type: "resize";
-      key: string;
-      trackIndex: number;
-      effectIndex: number;
-      edge: "left" | "right";
-      originalStart: number;
-      originalEnd: number;
-      startClientX: number;
-    }
-  | {
-      type: "move";
-      key: string;
-      trackIndex: number;
-      effectIndex: number;
-      originalStart: number;
-      originalEnd: number;
-      originalFixtureId: number;
-      startClientX: number;
-      startClientY: number;
-      didDrag: boolean;
-    }
-  | {
-      type: "marquee";
-      startClientX: number;
-      startClientY: number;
-      shiftHeld: boolean;
-      /** Selection snapshot at drag start (for shift+marquee additive) */
-      baseSelection: Set<string>;
-    }
-  | {
-      type: "swipe";
-      altHeld: boolean;
-      /** Keys swiped during this drag */
-      swipedKeys: Set<string>;
-      /** Selection snapshot at drag start */
-      baseSelection: Set<string>;
-    };
-
-interface DragPreview {
-  key: string;
-  start: number;
-  end: number;
-  targetFixtureId?: number;
-}
-
-interface MarqueeRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 }
 
 export function Timeline({
@@ -278,11 +82,6 @@ export function Timeline({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [pxPerSec, setPxPerSec] = useState(DEFAULT_PX_PER_SEC);
   const [hoveredEffect, setHoveredEffect] = useState<string | null>(null);
-  const [dragState, setDragState] = useState<DragState | null>(null);
-  const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
-  const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
-  const dragStateRef = useRef<DragState | null>(null);
-  const justFinishedDragRef = useRef(false);
   const pxPerSecRef = useRef(pxPerSec);
   pxPerSecRef.current = pxPerSec;
   const waveformLaneCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -295,7 +94,7 @@ export function Timeline({
 
   const contentWidth = duration * pxPerSec;
 
-  // Pre-compute fixture→tracks map: O(tracks + groups) instead of O(fixtures x tracks x groups)
+  // Pre-compute fixture->tracks map: O(tracks + groups) instead of O(fixtures x tracks x groups)
   const fixtureTrackMap = useMemo(() => {
     if (!show || !sequence) return new Map<number, Set<number>>();
     return buildFixtureTrackMap(show, sequence);
@@ -412,62 +211,34 @@ export function Timeline({
     [pxPerSec, duration],
   );
 
-  /** Get fixture ID from a clientY position relative to the track area. */
-  const getFixtureIdFromClientY = useCallback(
-    (clientY: number) => {
-      const container = scrollContainerRef.current;
-      if (!container || rowOffsets.length === 0) return null;
-      const rect = container.getBoundingClientRect();
-      const zoom = getEffectiveZoom(container);
-      const waveH = waveform ? WAVEFORM_LANE_HEIGHT : 0;
-      const y = (clientY - rect.top) / zoom - RULER_HEIGHT - waveH + container.scrollTop;
-      for (const row of rowOffsets) {
-        if (y >= row.top && y < row.bottom) return row.fixtureId;
-      }
-      // Clamp: return first or last row
-      if (y < 0) return rowOffsets[0].fixtureId;
-      return rowOffsets[rowOffsets.length - 1].fixtureId;
-    },
-    [rowOffsets, waveform],
-  );
+  // ── Drag hook ──────────────────────────────────────────────────────
 
-  /** Hit-test which effect keys fall inside a screen-space rectangle (relative to track area). */
-  const getEffectsInRect = useCallback(
-    (rectX: number, rectY: number, rectW: number, rectH: number) => {
-      // Convert screen rect to time/row space
-      const container = scrollContainerRef.current;
-      if (!container) return new Set<string>();
-      const containerRect = container.getBoundingClientRect();
-      const waveH = waveform ? WAVEFORM_LANE_HEIGHT : 0;
-
-      // rectX/rectY are client coords; convert to content space
-      const scrollLeft = container.scrollLeft;
-      const scrollTop = container.scrollTop;
-      const contentX = rectX - containerRect.left + scrollLeft;
-      const contentY = rectY - containerRect.top - RULER_HEIGHT - waveH + scrollTop;
-
-      const timeLeft = contentX / pxPerSec;
-      const timeRight = (contentX + rectW) / pxPerSec;
-      const yTop = contentY;
-      const yBottom = contentY + rectH;
-
-      const keys = new Set<string>();
-      for (const row of stackedRows) {
-        const rowInfo = rowOffsets.find((r) => r.fixtureId === row.fixtureId);
-        if (!rowInfo) continue;
-        // Check vertical overlap between marquee and this row
-        if (rowInfo.bottom <= yTop || rowInfo.top >= yBottom) continue;
-        for (const effect of row.effects) {
-          const effEnd = effect.startSec + effect.durationSec;
-          // Check time overlap
-          if (effEnd <= timeLeft || effect.startSec >= timeRight) continue;
-          keys.add(effect.key);
-        }
-      }
-      return keys;
-    },
-    [pxPerSec, stackedRows, rowOffsets, waveform],
-  );
+  const {
+    dragState,
+    dragPreview,
+    marqueeRect,
+    justFinishedDragRef,
+    handleResizeMouseDown,
+    handleMoveMouseDown,
+    handleTrackAreaMouseDown,
+    startSwipeDrag,
+    getFixtureIdFromClientY,
+  } = useTimelineDrag({
+    duration,
+    pxPerSecRef,
+    scrollContainerRef,
+    selectedEffects,
+    onSelectionChange,
+    mode,
+    waveform: waveform ?? null,
+    stackedRows,
+    rowOffsets,
+    pxPerSec,
+    onMoveEffect,
+    onResizeEffect,
+    onRefresh,
+    sequenceIndex: playback?.sequence_index,
+  });
 
   const handleTrackAreaClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -484,7 +255,7 @@ export function Timeline({
         onSelectionChange(new Set());
       }
     },
-    [timeFromClientX, onSeek, onSelectionChange],
+    [timeFromClientX, onSeek, onSelectionChange, justFinishedDragRef],
   );
 
   const handleTrackAreaDoubleClick = useCallback(
@@ -579,319 +350,18 @@ export function Timeline({
   // The effective region to display (committed or being dragged)
   const displayRegion = rulerDragPreview ?? region;
 
-  // ── Track area mousedown (marquee in Select mode, swipe in Swipe mode) ──
-
-  const handleTrackAreaMouseDown = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      // Don't interfere with effect blocks
-      if ((e.target as HTMLElement).closest("[data-effect-key]")) return;
-
-      if (mode === "select") {
-        // Start marquee selection
-        e.preventDefault();
-        const state: DragState = {
-          type: "marquee",
-          startClientX: e.clientX,
-          startClientY: e.clientY,
-          shiftHeld: e.shiftKey,
-          baseSelection: e.shiftKey ? new Set(selectedEffects) : new Set(),
-        };
-        setDragState(state);
-        dragStateRef.current = state;
-      } else if (mode === "swipe") {
-        // Start swipe selection
-        e.preventDefault();
-        const state: DragState = {
-          type: "swipe",
-          altHeld: e.altKey,
-          swipedKeys: new Set(),
-          baseSelection: new Set(selectedEffects),
-        };
-        setDragState(state);
-        dragStateRef.current = state;
-      }
-    },
-    [mode, selectedEffects],
-  );
-
-  // ── Resize handle mousedown ─────────────────────────────────────
-
-  const handleResizeMouseDown = useCallback(
-    (e: React.MouseEvent, placed: PlacedEffect, edge: "left" | "right") => {
-      e.stopPropagation();
-      e.preventDefault();
-      const state: DragState = {
-        type: "resize",
-        key: placed.key,
-        trackIndex: placed.trackIndex,
-        effectIndex: placed.effectIndex,
-        edge,
-        originalStart: placed.startSec,
-        originalEnd: placed.startSec + placed.durationSec,
-        startClientX: e.clientX,
-      };
-      setDragState(state);
-      dragStateRef.current = state;
-    },
-    [],
-  );
-
-  // ── Move mousedown (on effect body) ────────────────────────────
-
-  const handleMoveMouseDown = useCallback(
-    (e: React.MouseEvent, placed: PlacedEffect, fixtureId: number) => {
-      // Don't start move if clicking on a resize handle
-      if ((e.target as HTMLElement).dataset.resizeHandle) return;
-      e.stopPropagation();
-      e.preventDefault();
-      const state: DragState = {
-        type: "move",
-        key: placed.key,
-        trackIndex: placed.trackIndex,
-        effectIndex: placed.effectIndex,
-        originalStart: placed.startSec,
-        originalEnd: placed.startSec + placed.durationSec,
-        originalFixtureId: fixtureId,
-        startClientX: e.clientX,
-        startClientY: e.clientY,
-        didDrag: false,
-      };
-      setDragState(state);
-      dragStateRef.current = state;
-    },
-    [],
-  );
-
-  // ── Global mousemove/mouseup for drag operations ──────────────
-
-  // Stable refs for callbacks used in the global effect
-  const selectedEffectsRef = useRef(selectedEffects);
-  selectedEffectsRef.current = selectedEffects;
-  const onSelectionChangeRef = useRef(onSelectionChange);
-  onSelectionChangeRef.current = onSelectionChange;
-  const getEffectsInRectRef = useRef(getEffectsInRect);
-  getEffectsInRectRef.current = getEffectsInRect;
-  useEffect(() => {
-    function handleMouseMove(e: MouseEvent) {
-      const ds = dragStateRef.current;
-      if (!ds) return;
-
-      if (ds.type === "resize") {
-        const pps = pxPerSecRef.current;
-        const container = scrollContainerRef.current;
-        const zoom = container ? getEffectiveZoom(container) : 1;
-        const deltaPx = (e.clientX - ds.startClientX) / zoom;
-        const deltaSec = deltaPx / pps;
-        let newStart = ds.originalStart;
-        let newEnd = ds.originalEnd;
-        if (ds.edge === "left") {
-          newStart = Math.max(0, ds.originalStart + deltaSec);
-          if (newEnd - newStart < MIN_DURATION) newStart = newEnd - MIN_DURATION;
-        } else {
-          newEnd = Math.min(duration, ds.originalEnd + deltaSec);
-          if (newEnd - newStart < MIN_DURATION) newEnd = newStart + MIN_DURATION;
-        }
-        newStart = Math.max(0, newStart);
-        newEnd = Math.min(duration, newEnd);
-        setDragPreview({ key: ds.key, start: newStart, end: newEnd });
-      } else if (ds.type === "move") {
-        const pps = pxPerSecRef.current;
-        const container = scrollContainerRef.current;
-        const zoom = container ? getEffectiveZoom(container) : 1;
-        const deltaPx = (e.clientX - ds.startClientX) / zoom;
-        const deltaSec = deltaPx / pps;
-        const totalDelta =
-          Math.abs(e.clientX - ds.startClientX) + Math.abs(e.clientY - ds.startClientY);
-        if (!ds.didDrag && totalDelta < DRAG_THRESHOLD) return;
-        ds.didDrag = true;
-
-        const dur = ds.originalEnd - ds.originalStart;
-        let newStart = ds.originalStart + deltaSec;
-        newStart = Math.max(0, Math.min(newStart, duration - dur));
-        const newEnd = newStart + dur;
-        const targetFixtureId = getFixtureIdFromClientY(e.clientY) ?? ds.originalFixtureId;
-        setDragPreview({ key: ds.key, start: newStart, end: newEnd, targetFixtureId });
-      } else if (ds.type === "marquee") {
-        // Update marquee rectangle (use min/max to handle any drag direction)
-        const x = Math.min(e.clientX, ds.startClientX);
-        const y = Math.min(e.clientY, ds.startClientY);
-        const w = Math.abs(e.clientX - ds.startClientX);
-        const h = Math.abs(e.clientY - ds.startClientY);
-        setMarqueeRect({ x, y, width: w, height: h });
-
-        // Live-update selection based on effects inside marquee
-        const inside = getEffectsInRectRef.current(x, y, w, h);
-        if (ds.shiftHeld) {
-          // Additive: base selection + marquee contents
-          const next = new Set(ds.baseSelection);
-          for (const k of inside) next.add(k);
-          onSelectionChangeRef.current(next);
-        } else {
-          onSelectionChangeRef.current(inside);
-        }
-      } else if (ds.type === "swipe") {
-        // Check element under cursor for effect keys
-        const el = document.elementFromPoint(e.clientX, e.clientY);
-        if (el instanceof HTMLElement) {
-          const effectEl = el.closest("[data-effect-key]");
-          if (effectEl instanceof HTMLElement) {
-            const key = effectEl.dataset.effectKey;
-            if (key && !ds.swipedKeys.has(key)) {
-              ds.swipedKeys.add(key);
-              // Update selection
-              const next = new Set(ds.baseSelection);
-              if (ds.altHeld) {
-                // Alt: remove swiped keys
-                for (const k of ds.swipedKeys) next.delete(k);
-              } else {
-                // Normal: add swiped keys
-                for (const k of ds.swipedKeys) next.add(k);
-              }
-              onSelectionChangeRef.current(next);
-            }
-          }
-        }
-      }
-    }
-
-    async function handleMouseUp(e: MouseEvent) {
-      const ds = dragStateRef.current;
-      if (!ds) return;
-
-      dragStateRef.current = null;
-      setDragState(null);
-
-      if (ds.type === "resize") {
-        const pps = pxPerSecRef.current;
-        const container = scrollContainerRef.current;
-        const zoom = container ? getEffectiveZoom(container) : 1;
-        const deltaPx = (e.clientX - ds.startClientX) / zoom;
-        const deltaSec = deltaPx / pps;
-        let newStart = ds.originalStart;
-        let newEnd = ds.originalEnd;
-        if (ds.edge === "left") {
-          newStart = Math.max(0, ds.originalStart + deltaSec);
-          if (newEnd - newStart < MIN_DURATION) newStart = newEnd - MIN_DURATION;
-        } else {
-          newEnd = Math.min(duration, ds.originalEnd + deltaSec);
-          if (newEnd - newStart < MIN_DURATION) newEnd = newStart + MIN_DURATION;
-        }
-        newStart = Math.max(0, newStart);
-        newEnd = Math.min(duration, newEnd);
-
-        if (onResizeEffect) {
-          try {
-            await onResizeEffect(ds.trackIndex, ds.effectIndex, newStart, newEnd);
-          } catch (err) {
-            console.error("[VibeLights] Resize failed:", err);
-          }
-        }
-      } else if (ds.type === "move") {
-        if (!ds.didDrag) {
-          // It was a click, not a drag — handle selection
-          const sel = selectedEffectsRef.current;
-          if (e.shiftKey) {
-            const next = new Set(sel);
-            if (next.has(ds.key)) next.delete(ds.key);
-            else next.add(ds.key);
-            onSelectionChangeRef.current(next);
-          } else {
-            onSelectionChangeRef.current(new Set([ds.key]));
-          }
-        } else if (onMoveEffect) {
-          const pps = pxPerSecRef.current;
-          const container = scrollContainerRef.current;
-          const zoom = container ? getEffectiveZoom(container) : 1;
-          const deltaSec = (e.clientX - ds.startClientX) / zoom / pps;
-          const dur = ds.originalEnd - ds.originalStart;
-          let newStart = ds.originalStart + deltaSec;
-          newStart = Math.max(0, Math.min(newStart, duration - dur));
-          const newEnd = newStart + dur;
-          const targetFixtureId = getFixtureIdFromClientY(e.clientY) ?? ds.originalFixtureId;
-
-          try {
-            await onMoveEffect(ds.trackIndex, ds.effectIndex, targetFixtureId, newStart, newEnd);
-          } catch (err) {
-            console.error("[VibeLights] Move failed:", err);
-          }
-        }
-      } else if (ds.type === "marquee") {
-        setMarqueeRect(null);
-        // Only suppress the click event if the mouse actually moved (real drag).
-        // Zero-distance clicks fall through to handleTrackAreaClick → seek + clear selection.
-        const dist = Math.abs(e.clientX - ds.startClientX) + Math.abs(e.clientY - ds.startClientY);
-        if (dist >= DRAG_THRESHOLD) {
-          justFinishedDragRef.current = true;
-        }
-      } else if (ds.type === "swipe") {
-        // Only suppress click if effects were actually swiped
-        if (ds.swipedKeys.size > 0) {
-          justFinishedDragRef.current = true;
-        }
-      }
-
-      setDragPreview(null);
-    }
-
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [
-    duration,
-    playback?.sequence_index,
-    onRefresh,
-    onMoveEffect,
-    getFixtureIdFromClientY,
-  ]);
-
   // Waveform canvas drawing
-  const drawWaveform = useCallback(
+  const drawWaveformCb = useCallback(
     (canvas: HTMLCanvasElement | null, height: number, alpha: number) => {
-      if (!canvas || !waveform) return;
-      const width = Math.ceil(contentWidth);
-      if (width <= 0 || height <= 0) return;
-
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
-      canvas.style.width = `${width}px`;
-      canvas.style.height = `${height}px`;
-
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      ctx.scale(dpr, dpr);
-      ctx.clearRect(0, 0, width, height);
-
-      const { peaks, duration: audioDuration } = waveform;
-      if (audioDuration <= 0 || peaks.length === 0) return;
-
-      ctx.fillStyle = getComputedStyle(canvas).getPropertyValue("--primary").trim() || "#6366f1";
-      ctx.globalAlpha = alpha;
-
-      const centerY = height / 2;
-      const maxBarHeight = height / 2;
-
-      for (let px = 0; px < width; px++) {
-        const timeSec = px / pxPerSec;
-        const peakIndex = Math.floor((timeSec / audioDuration) * peaks.length);
-        if (peakIndex < 0 || peakIndex >= peaks.length) continue;
-        const amplitude = peaks[peakIndex];
-        const barH = amplitude * maxBarHeight;
-        if (barH < 0.5) continue;
-        ctx.fillRect(px, centerY - barH, 1, barH * 2);
-      }
+      drawWaveform(canvas, height, alpha, waveform, contentWidth, pxPerSec);
     },
     [waveform, contentWidth, pxPerSec],
   );
 
   // Draw waveform lane
   useEffect(() => {
-    drawWaveform(waveformLaneCanvasRef.current, WAVEFORM_LANE_HEIGHT, 0.7);
-  }, [drawWaveform]);
+    drawWaveformCb(waveformLaneCanvasRef.current, WAVEFORM_LANE_HEIGHT, 0.7);
+  }, [drawWaveformCb]);
 
   // Scroll/resize tracking for virtualization
   useEffect(() => {
@@ -922,12 +392,6 @@ export function Timeline({
     if (!container || !labels) return;
 
     const syncScroll = () => {
-      // Both the ruler and waveform are sticky in the main scroll container,
-      // so they always occupy RULER_HEIGHT + WAVEFORM_LANE_HEIGHT at the top.
-      // The label panel has matching fixed-height spacers for the ruler and
-      // waveform labels, so the label scroll area and the track content area
-      // start at the same vertical offset. Syncing scrollTop directly keeps
-      // labels perfectly aligned with their corresponding track rows.
       labels.scrollTop = container.scrollTop;
     };
 
@@ -1288,22 +752,7 @@ export function Timeline({
                             if (mode === "edit") {
                               handleMoveMouseDown(e, placed, row.fixtureId);
                             } else if (mode === "swipe") {
-                              // In swipe mode, mousedown on effect starts swipe
-                              e.stopPropagation();
-                              e.preventDefault();
-                              const state: DragState = {
-                                type: "swipe",
-                                altHeld: e.altKey,
-                                swipedKeys: new Set([placed.key]),
-                                baseSelection: new Set(selectedEffects),
-                              };
-                              setDragState(state);
-                              dragStateRef.current = state;
-                              // Immediately update selection
-                              const next = new Set(selectedEffects);
-                              if (e.altKey) next.delete(placed.key);
-                              else next.add(placed.key);
-                              onSelectionChange(next);
+                              startSwipeDrag(e, placed.key);
                             }
                           }}
                           onMouseEnter={() => !dragState && setHoveredEffect(placed.key)}

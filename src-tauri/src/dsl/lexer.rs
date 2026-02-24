@@ -62,6 +62,10 @@ pub enum Token {
     Or,        // ||
     Bang,      // !
     Pipe,      // |
+    Ampersand, // &
+    Caret,     // ^
+    Shl,       // <<
+    Shr,       // >>
     Eq,        // =
     Question,  // ?
     FatArrow,  // =>
@@ -162,12 +166,10 @@ impl<'a> Lexer<'a> {
                         self.pos += 1;
                         self.push(Token::And, start, self.pos);
                     } else {
-                        self.errors.push(CompileError::lexer(
-                            "Expected '&&' for logical AND",
-                            Span::new(start, self.pos),
-                        ));
+                        self.push(Token::Ampersand, start, self.pos);
                     }
                 }
+                b'^' => { self.pos += 1; self.push(Token::Caret, start, self.pos); }
                 b'-' => {
                     self.pos += 1;
                     if self.peek() == Some(b'>') {
@@ -182,6 +184,9 @@ impl<'a> Lexer<'a> {
                     if self.peek() == Some(b'=') {
                         self.pos += 1;
                         self.push(Token::Le, start, self.pos);
+                    } else if self.peek() == Some(b'<') {
+                        self.pos += 1;
+                        self.push(Token::Shl, start, self.pos);
                     } else {
                         self.push(Token::Lt, start, self.pos);
                     }
@@ -191,6 +196,9 @@ impl<'a> Lexer<'a> {
                     if self.peek() == Some(b'=') {
                         self.pos += 1;
                         self.push(Token::Ge, start, self.pos);
+                    } else if self.peek() == Some(b'>') {
+                        self.pos += 1;
+                        self.push(Token::Shr, start, self.pos);
                     } else {
                         self.push(Token::Gt, start, self.pos);
                     }
@@ -298,11 +306,15 @@ impl<'a> Lexer<'a> {
                 | Token::Gt
                 | Token::Le
                 | Token::Ge
+                | Token::Shl
+                | Token::Shr
                 | Token::EqEq
                 | Token::Ne
                 | Token::And
                 | Token::Or
                 | Token::Pipe
+                | Token::Ampersand
+                | Token::Caret
                 | Token::Eq
                 | Token::Question
                 | Token::FatArrow
@@ -329,11 +341,15 @@ impl<'a> Lexer<'a> {
                 | Token::Gt
                 | Token::Le
                 | Token::Ge
+                | Token::Shl
+                | Token::Shr
                 | Token::EqEq
                 | Token::Ne
                 | Token::And
                 | Token::Or
                 | Token::Pipe
+                | Token::Ampersand
+                | Token::Caret
                 | Token::Dot
                 | Token::Question
         )
@@ -702,6 +718,34 @@ mod tests {
         assert_eq!(tokens, vec![
             Token::Ident("a".into()), Token::Star, Token::Ident("b".into()),
             Token::StarStar, Token::Ident("c".into()), Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn bitwise_operators() {
+        let tokens = tok("& ^ << >>");
+        assert_eq!(tokens, vec![
+            Token::Ampersand, Token::Caret, Token::Shl, Token::Shr, Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn shift_vs_comparison() {
+        let tokens = tok("a << b <= c >> d >= e");
+        assert_eq!(tokens, vec![
+            Token::Ident("a".into()), Token::Shl, Token::Ident("b".into()),
+            Token::Le, Token::Ident("c".into()), Token::Shr,
+            Token::Ident("d".into()), Token::Ge, Token::Ident("e".into()),
+            Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn ampersand_vs_and() {
+        let tokens = tok("a & b && c");
+        assert_eq!(tokens, vec![
+            Token::Ident("a".into()), Token::Ampersand, Token::Ident("b".into()),
+            Token::And, Token::Ident("c".into()), Token::Eof,
         ]);
     }
 

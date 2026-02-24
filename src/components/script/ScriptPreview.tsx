@@ -7,9 +7,13 @@ interface Props {
   currentTime: number;
   playing: boolean;
   pixelCount: number;
+  duration: number;
   onScrub: (t: number) => void;
   onTogglePlay: () => void;
+  onDurationChange: (d: number) => void;
 }
+
+const DURATION_PRESETS = [1, 2, 5, 10, 30];
 
 export function ScriptPreview({
   heatmap,
@@ -17,8 +21,10 @@ export function ScriptPreview({
   currentTime,
   playing,
   pixelCount,
+  duration,
   onScrub,
   onTogglePlay,
+  onDurationChange,
 }: Props) {
   const stripCanvasRef = useRef<HTMLCanvasElement>(null);
   const heatmapCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -125,12 +131,14 @@ export function ScriptPreview({
       <div className="flex items-center gap-2">
         <button
           onClick={onTogglePlay}
+          aria-label={playing ? "Pause preview" : "Play preview"}
           className="border-border bg-surface text-text-2 hover:text-text rounded border px-2 py-0.5 text-[10px]"
         >
           {playing ? "Pause" : "Play"}
         </button>
         <input
           type="range"
+          aria-label="Preview time"
           min={0}
           max={1}
           step={0.001}
@@ -139,8 +147,26 @@ export function ScriptPreview({
           className="flex-1"
         />
         <span className="text-text-2 w-10 text-right font-mono text-[10px]">
-          {currentTime.toFixed(2)}
+          {(currentTime * duration).toFixed(1)}s
         </span>
+      </div>
+
+      {/* Duration presets */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-text-2 text-[10px]">Duration:</span>
+        {DURATION_PRESETS.map((d) => (
+          <button
+            key={d}
+            onClick={() => onDurationChange(d)}
+            className={`rounded px-1.5 py-0.5 text-[10px] transition-colors ${
+              duration === d
+                ? "bg-primary/15 text-primary border-primary/30 border"
+                : "border-border bg-surface text-text-2 hover:text-text border"
+            }`}
+          >
+            {d}s
+          </button>
+        ))}
       </div>
     </div>
   );

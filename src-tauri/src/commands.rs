@@ -126,7 +126,7 @@ pub async fn execute_vixen_import(
         tokio::time::Duration::from_secs(600),
         tokio::task::spawn_blocking(move || {
             let vixen_path = std::path::Path::new(&config.vixen_dir);
-            let config_path = vixen_path.join("SystemData").join("SystemConfig.xml");
+            let config_path = vixen_path.join(crate::import::VIXEN_SYSTEM_DATA_DIR).join(crate::import::VIXEN_SYSTEM_CONFIG_FILE);
 
             // Phase 1: Parse SystemConfig
             emit_progress(&app, "import", "Parsing system config...", 0.05, None);
@@ -538,7 +538,7 @@ pub fn tick(state: State<Arc<AppState>>, _dt: f64) -> Option<TickResult> {
 
     if playback.current_time >= effective_end {
         if playback.looping {
-            let loop_start = playback.region.map(|(s, _)| s).unwrap_or(0.0);
+            let loop_start = playback.region.map_or(0.0, |(s, _)| s);
             playback.current_time = loop_start;
             playback.last_tick = Some(now);
         } else {
