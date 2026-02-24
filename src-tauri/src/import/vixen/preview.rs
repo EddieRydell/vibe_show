@@ -5,7 +5,7 @@ use std::path::Path;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
-use super::vixen::ImportError;
+use crate::import::ImportError;
 
 // ── Internal types ──────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ pub struct VixenPreviewPixel {
 #[must_use]
 pub fn find_preview_file(vixen_dir: &Path) -> Option<std::path::PathBuf> {
     // Primary location: SystemData/ModuleStore.xml
-    let module_store = vixen_dir.join(super::VIXEN_SYSTEM_DATA_DIR).join(super::VIXEN_MODULE_STORE_FILE);
+    let module_store = vixen_dir.join(crate::import::VIXEN_SYSTEM_DATA_DIR).join(crate::import::VIXEN_MODULE_STORE_FILE);
     if module_store.exists() && file_contains_preview_marker(&module_store) {
         return Some(module_store);
     }
@@ -888,7 +888,6 @@ mod tests {
 
     #[test]
     fn test_parse_vixen3_module_store_format() {
-        // This mimics the real Vixen 3 ModuleStore.xml format with namespace prefixes
         let xml = br#"<?xml version="1.0" encoding="utf-8"?>
 <ModuleStore version="4">
   <ModuleData>
@@ -940,16 +939,13 @@ mod tests {
         assert_eq!(item.shape_type, "PreviewLine");
         assert_eq!(item.pixels.len(), 3);
 
-        // Pixels should be interpolated along the control points (100,200) → (500,200)
         assert_eq!(item.pixels[0].node_id, "guid-aaa");
         assert!((item.pixels[0].x - 100.0).abs() < 0.01);
         assert!((item.pixels[0].y - 200.0).abs() < 0.01);
 
-        // Middle pixel at t=0.5: (300, 200)
         assert_eq!(item.pixels[1].node_id, "guid-bbb");
         assert!((item.pixels[1].x - 300.0).abs() < 0.01);
 
-        // Last pixel at endpoint
         assert_eq!(item.pixels[2].node_id, "guid-ccc");
         assert!((item.pixels[2].x - 500.0).abs() < 0.01);
     }
@@ -983,18 +979,15 @@ mod tests {
         let item = &preview.display_items[0];
         assert_eq!(item.pixels.len(), 3);
 
-        // First pixel at start of polyline
         assert!((item.pixels[0].x).abs() < 0.01);
         assert!((item.pixels[0].y).abs() < 0.01);
 
-        // Last pixel at end of polyline
         assert!((item.pixels[2].x - 500.0).abs() < 0.01);
         assert!((item.pixels[2].y - 500.0).abs() < 0.01);
     }
 
     #[test]
     fn test_parse_standalone_format_with_positions() {
-        // Standalone format where pixels have direct X/Y attributes
         let xml = br#"<?xml version="1.0"?>
 <Preview>
     <Width>1920</Width>
@@ -1029,32 +1022,26 @@ mod tests {
         let pixels = interpolate_pixels(&ids, &points);
 
         assert_eq!(pixels.len(), 3);
-        assert!((pixels[0].x).abs() < 0.01); // 0.0
-        assert!((pixels[1].x - 50.0).abs() < 0.01); // 50.0
-        assert!((pixels[2].x - 100.0).abs() < 0.01); // 100.0
+        assert!((pixels[0].x).abs() < 0.01);
+        assert!((pixels[1].x - 50.0).abs() < 0.01);
+        assert!((pixels[2].x - 100.0).abs() < 0.01);
     }
 
     #[test]
     fn test_interpolate_pixels_polyline() {
-        // L-shape: (0,0) → (100,0) → (100,100), total length = 200
         let ids: Vec<String> = (0..5).map(|i| format!("n{}", i)).collect();
         let points = vec![(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)];
         let pixels = interpolate_pixels(&ids, &points);
 
         assert_eq!(pixels.len(), 5);
-        // First at (0,0)
         assert!((pixels[0].x).abs() < 0.01);
         assert!((pixels[0].y).abs() < 0.01);
-        // t=0.25 → dist=50 along first segment → (50, 0)
         assert!((pixels[1].x - 50.0).abs() < 0.01);
         assert!((pixels[1].y).abs() < 0.01);
-        // t=0.5 → dist=100 → corner at (100, 0)
         assert!((pixels[2].x - 100.0).abs() < 0.01);
         assert!((pixels[2].y).abs() < 0.01);
-        // t=0.75 → dist=150 → (100, 50)
         assert!((pixels[3].x - 100.0).abs() < 0.01);
         assert!((pixels[3].y - 50.0).abs() < 0.01);
-        // Last at (100, 100)
         assert!((pixels[4].x - 100.0).abs() < 0.01);
         assert!((pixels[4].y - 100.0).abs() < 0.01);
     }
@@ -1066,7 +1053,6 @@ mod tests {
         let pixels = interpolate_pixels(&ids, &points);
 
         assert_eq!(pixels.len(), 2);
-        // Fallback to (0,0)
         assert!((pixels[0].x).abs() < 0.01);
     }
 
@@ -1178,10 +1164,6 @@ mod tests {
 
     #[test]
     fn test_multiple_preview_sections() {
-        // ModuleStore.xml can have multiple VixenPreviewData sections
-        // (multiple display configurations). Each section contains the full
-        // fixture set for its own canvas size. We pick the section with the
-        // most display items to avoid duplicating fixtures.
         let xml = br#"<?xml version="1.0"?>
 <ModuleStore>
   <ModuleData>
@@ -1228,14 +1210,9 @@ mod tests {
 </ModuleStore>"#;
 
         let preview = parse_preview_xml(xml).unwrap();
-        // Should use the section with the most display items (second section
-        // has 2 pixels vs 1, so same item count but more content — tied sections
-        // both have 1 item, but second wins via max_by_key tie-breaking)
         assert_eq!(preview.width, 1920);
         assert_eq!(preview.height, 1080);
-        // Only items from the chosen section (not merged)
         assert_eq!(preview.display_items.len(), 1);
         assert_eq!(preview.display_items[0].pixels.len(), 2);
     }
-
 }

@@ -1,22 +1,6 @@
-/** Tauri IPC event names for preview window communication. */
-export const EVENT_SHOW_REFRESHED = "show-refreshed";
-export const EVENT_SELECTION_CHANGED = "selection-changed";
-
-/** Tauri window label for the detached preview. */
-export const PREVIEW_WINDOW_LABEL = "preview";
-
-/** URL parameter value that identifies the preview window. */
-export const VIEW_PREVIEW = "preview";
-
-/** localStorage key for persisted UI settings (theme, accent, scale). */
-export const STORAGE_KEY_UI_SETTINGS = "ui-settings";
-
-/** Supported audio file extensions for import. */
-export const AUDIO_EXTENSIONS = ["mp3", "wav", "ogg", "flac", "m4a", "aac"];
+import type { Color, ColorStop, CurvePoint } from "./types";
 
 // ── Curve Presets ──────────────────────────────────────────────────
-
-import type { Color, ColorStop, CurvePoint } from "./types";
 
 export interface CurvePreset {
   name: string;

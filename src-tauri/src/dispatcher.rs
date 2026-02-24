@@ -481,20 +481,7 @@ impl CommandDispatcher {
                 let time_range = TimeRange::new(*start, *end).ok_or(AppError::ValidationError {
                     message: format!("Invalid time range: {start}..{end}"),
                 })?;
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
-                let track = sequence
-                    .tracks
-                    .get_mut(*track_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "track".into(),
-                        index: *track_index,
-                    })?;
+                let track = track_mut(show, *sequence_index, *track_index)?;
                 let effect = EffectInstance {
                     kind: kind.clone(),
                     params: EffectParams::new(),
@@ -502,7 +489,6 @@ impl CommandDispatcher {
                     blend_mode: *blend_mode,
                     opacity: *opacity,
                 };
-                // Insert sorted by start time for efficient binary-search evaluation.
                 let insert_pos = track.effects.partition_point(|e| {
                     e.time_range.start() < time_range.start()
                 });
@@ -514,26 +500,15 @@ impl CommandDispatcher {
                 sequence_index,
                 targets,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 let mut by_track: std::collections::HashMap<usize, Vec<usize>> =
                     std::collections::HashMap::new();
                 for (track_idx, effect_idx) in targets {
                     by_track.entry(*track_idx).or_default().push(*effect_idx);
                 }
                 for (track_idx, mut effect_indices) in by_track {
-                    let track = sequence
-                        .tracks
-                        .get_mut(track_idx)
-                        .ok_or(AppError::InvalidIndex {
-                            what: "track".into(),
-                            index: track_idx,
-                        })?;
+                    let track = sequence.tracks.get_mut(track_idx)
+                        .ok_or(AppError::InvalidIndex { what: "track".into(), index: track_idx })?;
                     effect_indices.sort_unstable();
                     effect_indices.dedup();
                     for &idx in effect_indices.iter().rev() {
@@ -552,27 +527,7 @@ impl CommandDispatcher {
                 key,
                 value,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
-                let track = sequence
-                    .tracks
-                    .get_mut(*track_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "track".into(),
-                        index: *track_index,
-                    })?;
-                let effect = track
-                    .effects
-                    .get_mut(*effect_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "effect".into(),
-                        index: *effect_index,
-                    })?;
+                let effect = effect_mut(show, *sequence_index, *track_index, *effect_index)?;
                 effect.params.set_mut(key.clone(), value.clone());
                 Ok(CommandResult::Bool(true))
             }
@@ -587,29 +542,10 @@ impl CommandDispatcher {
                 let time_range = TimeRange::new(*start, *end).ok_or(AppError::ValidationError {
                     message: format!("Invalid time range: {start}..{end}"),
                 })?;
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
-                let track = sequence
-                    .tracks
-                    .get_mut(*track_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "track".into(),
-                        index: *track_index,
-                    })?;
-                let effect = track
-                    .effects
-                    .get_mut(*effect_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "effect".into(),
-                        index: *effect_index,
-                    })?;
+                let track = track_mut(show, *sequence_index, *track_index)?;
+                let effect = track.effects.get_mut(*effect_index)
+                    .ok_or(AppError::InvalidIndex { what: "effect".into(), index: *effect_index })?;
                 effect.time_range = time_range;
-                // Re-sort to maintain start-time ordering for binary search.
                 track.effects.sort_by(|a, b| {
                     a.time_range
                         .start()
@@ -625,46 +561,24 @@ impl CommandDispatcher {
                 effect_index,
                 to_track,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
-                if *from_track >= sequence.tracks.len() {
-                    return Err(AppError::InvalidIndex {
-                        what: "source track".into(),
-                        index: *from_track,
-                    });
+                let sequence = seq_mut(show, *sequence_index)?;
+                let from = sequence.tracks.get(*from_track)
+                    .ok_or(AppError::InvalidIndex { what: "source track".into(), index: *from_track })?;
+                if *effect_index >= from.effects.len() {
+                    return Err(AppError::InvalidIndex { what: "effect".into(), index: *effect_index });
                 }
                 if *to_track >= sequence.tracks.len() {
-                    return Err(AppError::InvalidIndex {
-                        what: "destination track".into(),
-                        index: *to_track,
-                    });
-                }
-                let from = sequence.tracks.get(*from_track).ok_or_else(|| {
-                    AppError::InvalidIndex {
-                        what: "source track".into(),
-                        index: *from_track,
-                    }
-                })?;
-                if *effect_index >= from.effects.len() {
-                    return Err(AppError::InvalidIndex {
-                        what: "effect".into(),
-                        index: *effect_index,
-                    });
+                    return Err(AppError::InvalidIndex { what: "destination track".into(), index: *to_track });
                 }
                 let effect = sequence.tracks.get_mut(*from_track)
-                    .ok_or_else(|| AppError::InvalidIndex { what: "source track".into(), index: *from_track })?
+                    .ok_or(AppError::InvalidIndex { what: "source track".into(), index: *from_track })?
                     .effects.remove(*effect_index);
-                let dest_track = sequence.tracks.get_mut(*to_track)
-                    .ok_or_else(|| AppError::InvalidIndex { what: "destination track".into(), index: *to_track })?;
-                let insert_pos = dest_track.effects.partition_point(|e| {
+                let dest = sequence.tracks.get_mut(*to_track)
+                    .ok_or(AppError::InvalidIndex { what: "destination track".into(), index: *to_track })?;
+                let insert_pos = dest.effects.partition_point(|e| {
                     e.time_range.start() < effect.time_range.start()
                 });
-                dest_track.effects.insert(insert_pos, effect);
+                dest.effects.insert(insert_pos, effect);
                 Ok(CommandResult::Index(insert_pos))
             }
 
@@ -673,13 +587,7 @@ impl CommandDispatcher {
                 name,
                 target,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 let track = crate::model::Track {
                     name: name.clone(),
                     target: target.clone(),
@@ -693,18 +601,9 @@ impl CommandDispatcher {
                 sequence_index,
                 track_index,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 if *track_index >= sequence.tracks.len() {
-                    return Err(AppError::InvalidIndex {
-                        what: "track".into(),
-                        index: *track_index,
-                    });
+                    return Err(AppError::InvalidIndex { what: "track".into(), index: *track_index });
                 }
                 sequence.tracks.remove(*track_index);
                 Ok(CommandResult::Unit)
@@ -717,13 +616,7 @@ impl CommandDispatcher {
                 duration,
                 frame_rate,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 if let Some(n) = name {
                     sequence.name.clone_from(n);
                 }
@@ -754,13 +647,7 @@ impl CommandDispatcher {
                 name,
                 source,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 sequence.scripts.insert(name.clone(), source.clone());
                 Ok(CommandResult::Unit)
             }
@@ -769,13 +656,7 @@ impl CommandDispatcher {
                 sequence_index,
                 name,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 sequence.scripts.remove(name);
                 Ok(CommandResult::Unit)
             }
@@ -785,16 +666,9 @@ impl CommandDispatcher {
                 old_name,
                 new_name,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 if let Some(source) = sequence.scripts.remove(old_name) {
                     sequence.scripts.insert(new_name.clone(), source);
-                    // Update any Script effect kinds that reference the old name
                     for track in &mut sequence.tracks {
                         for effect in &mut track.effects {
                             if effect.kind == EffectKind::Script(old_name.clone()) {
@@ -811,13 +685,7 @@ impl CommandDispatcher {
                 name,
                 gradient,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 sequence.gradient_library.insert(name.clone(), gradient.clone());
                 Ok(CommandResult::Unit)
             }
@@ -826,13 +694,7 @@ impl CommandDispatcher {
                 sequence_index,
                 name,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 sequence.gradient_library.remove(name);
                 Ok(CommandResult::Unit)
             }
@@ -842,16 +704,9 @@ impl CommandDispatcher {
                 old_name,
                 new_name,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 if let Some(gradient) = sequence.gradient_library.remove(old_name) {
                     sequence.gradient_library.insert(new_name.clone(), gradient);
-                    // Update all GradientRef params that referenced the old name
                     for track in &mut sequence.tracks {
                         for effect in &mut track.effects {
                             for val in effect.params.values_mut() {
@@ -870,13 +725,7 @@ impl CommandDispatcher {
                 name,
                 curve,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 sequence.curve_library.insert(name.clone(), curve.clone());
                 Ok(CommandResult::Unit)
             }
@@ -885,13 +734,7 @@ impl CommandDispatcher {
                 sequence_index,
                 name,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 sequence.curve_library.remove(name);
                 Ok(CommandResult::Unit)
             }
@@ -901,16 +744,9 @@ impl CommandDispatcher {
                 old_name,
                 new_name,
             } => {
-                let sequence = show
-                    .sequences
-                    .get_mut(*sequence_index)
-                    .ok_or(AppError::InvalidIndex {
-                        what: "sequence".into(),
-                        index: *sequence_index,
-                    })?;
+                let sequence = seq_mut(show, *sequence_index)?;
                 if let Some(curve) = sequence.curve_library.remove(old_name) {
                     sequence.curve_library.insert(new_name.clone(), curve);
-                    // Update all CurveRef params that referenced the old name
                     for track in &mut sequence.tracks {
                         for effect in &mut track.effects {
                             for val in effect.params.values_mut() {
@@ -933,4 +769,43 @@ impl CommandDispatcher {
             }
         }
     }
+}
+
+/// Get a mutable reference to a sequence by index.
+fn seq_mut(show: &mut crate::model::Show, index: usize) -> Result<&mut Sequence, AppError> {
+    show.sequences.get_mut(index).ok_or(AppError::InvalidIndex {
+        what: "sequence".into(),
+        index,
+    })
+}
+
+/// Get a mutable reference to a track by sequence + track index.
+fn track_mut(
+    show: &mut crate::model::Show,
+    seq_index: usize,
+    track_index: usize,
+) -> Result<&mut crate::model::Track, AppError> {
+    seq_mut(show, seq_index)?
+        .tracks
+        .get_mut(track_index)
+        .ok_or(AppError::InvalidIndex {
+            what: "track".into(),
+            index: track_index,
+        })
+}
+
+/// Get a mutable reference to an effect by sequence + track + effect index.
+fn effect_mut(
+    show: &mut crate::model::Show,
+    seq_index: usize,
+    track_index: usize,
+    effect_index: usize,
+) -> Result<&mut EffectInstance, AppError> {
+    track_mut(show, seq_index, track_index)?
+        .effects
+        .get_mut(effect_index)
+        .ok_or(AppError::InvalidIndex {
+            what: "effect".into(),
+            index: effect_index,
+        })
 }

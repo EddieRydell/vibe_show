@@ -27,6 +27,7 @@ __pycache__/
 
 # Generated Tauri icons (regenerate with: pnpm tauri icon)
 src-tauri/icons/*.png
+!src-tauri/icons/icon.png
 src-tauri/icons/*.icns
 src-tauri/icons/android/
 src-tauri/icons/ios/

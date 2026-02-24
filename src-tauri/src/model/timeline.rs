@@ -277,6 +277,54 @@ pub enum ParamValue {
     PathRef(String),
 }
 
+/// Generate a `ParamValue::as_*` accessor that copies a `Copy` inner value.
+macro_rules! param_copy {
+    ($method:ident, $variant:ident, $ty:ty) => {
+        pub fn $method(&self) -> Option<$ty> {
+            match self {
+                ParamValue::$variant(v) => Some(*v),
+                _ => None,
+            }
+        }
+    };
+}
+
+/// Generate a `ParamValue::as_*` accessor that borrows an inner value as a slice.
+macro_rules! param_slice {
+    ($method:ident, $variant:ident, $elem:ty) => {
+        pub fn $method(&self) -> Option<&[$elem]> {
+            match self {
+                ParamValue::$variant(v) => Some(v),
+                _ => None,
+            }
+        }
+    };
+}
+
+/// Generate a `ParamValue::as_*` accessor that borrows an inner value as `&str`.
+macro_rules! param_str {
+    ($method:ident, $variant:ident) => {
+        pub fn $method(&self) -> Option<&str> {
+            match self {
+                ParamValue::$variant(v) => Some(v),
+                _ => None,
+            }
+        }
+    };
+}
+
+/// Generate a `ParamValue::as_*` accessor that borrows a reference to the inner value.
+macro_rules! param_ref {
+    ($method:ident, $variant:ident, $ty:ty) => {
+        pub fn $method(&self) -> Option<&$ty> {
+            match self {
+                ParamValue::$variant(v) => Some(v),
+                _ => None,
+            }
+        }
+    };
+}
+
 impl ParamValue {
     pub fn as_float(&self) -> Option<f64> {
         match self {
@@ -286,61 +334,22 @@ impl ParamValue {
         }
     }
 
-    pub fn as_int(&self) -> Option<i32> {
-        match self {
-            ParamValue::Int(v) => Some(*v),
-            _ => None,
-        }
-    }
+    param_copy!(as_int, Int, i32);
+    param_copy!(as_bool, Bool, bool);
+    param_copy!(as_color, Color, Color);
+    param_copy!(as_color_mode, ColorMode, ColorMode);
 
-    pub fn as_bool(&self) -> Option<bool> {
-        match self {
-            ParamValue::Bool(v) => Some(*v),
-            _ => None,
-        }
-    }
+    param_slice!(as_color_list, ColorList, Color);
+    param_slice!(as_flag_set, FlagSet, String);
 
-    pub fn as_color(&self) -> Option<Color> {
-        match self {
-            ParamValue::Color(v) => Some(*v),
-            _ => None,
-        }
-    }
+    param_str!(as_text, Text);
+    param_str!(as_enum_variant, EnumVariant);
+    param_str!(as_gradient_ref, GradientRef);
+    param_str!(as_curve_ref, CurveRef);
+    param_str!(as_path_ref, PathRef);
 
-    pub fn as_color_list(&self) -> Option<&[Color]> {
-        match self {
-            ParamValue::ColorList(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub fn as_text(&self) -> Option<&str> {
-        match self {
-            ParamValue::Text(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub fn as_curve(&self) -> Option<&Curve> {
-        match self {
-            ParamValue::Curve(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub fn as_color_gradient(&self) -> Option<&ColorGradient> {
-        match self {
-            ParamValue::ColorGradient(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub fn as_color_mode(&self) -> Option<ColorMode> {
-        match self {
-            ParamValue::ColorMode(v) => Some(*v),
-            _ => None,
-        }
-    }
+    param_ref!(as_curve, Curve, Curve);
+    param_ref!(as_color_gradient, ColorGradient, ColorGradient);
 
     /// Extract a `WipeDirection`. Also accepts `ParamValue::Text` for backward
     /// compatibility with existing serialized data and import pipelines.
@@ -348,41 +357,6 @@ impl ParamValue {
         match self {
             ParamValue::WipeDirection(d) => Some(*d),
             ParamValue::Text(s) => crate::util::from_serde_str(s),
-            _ => None,
-        }
-    }
-
-    pub fn as_enum_variant(&self) -> Option<&str> {
-        match self {
-            ParamValue::EnumVariant(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub fn as_flag_set(&self) -> Option<&[String]> {
-        match self {
-            ParamValue::FlagSet(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub fn as_gradient_ref(&self) -> Option<&str> {
-        match self {
-            ParamValue::GradientRef(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub fn as_curve_ref(&self) -> Option<&str> {
-        match self {
-            ParamValue::CurveRef(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    pub fn as_path_ref(&self) -> Option<&str> {
-        match self {
-            ParamValue::PathRef(v) => Some(v),
             _ => None,
         }
     }
@@ -430,6 +404,24 @@ pub struct EffectParams(
     HashMap<ParamKey, ParamValue>,
 );
 
+/// Generate an owned-value `*_or` accessor on `EffectParams`.
+macro_rules! owned_or {
+    ($method:ident, $accessor:ident, $ty:ty) => {
+        pub fn $method(&self, key: ParamKey, default: $ty) -> $ty {
+            self.get(key).and_then(ParamValue::$accessor).unwrap_or(default)
+        }
+    };
+}
+
+/// Generate a borrowed-value `*_or` accessor on `EffectParams`.
+macro_rules! ref_or {
+    ($method:ident, $accessor:ident, $ty:ty) => {
+        pub fn $method<'a>(&'a self, key: ParamKey, default: &'a $ty) -> &'a $ty {
+            self.get(key).and_then(ParamValue::$accessor).unwrap_or(default)
+        }
+    };
+}
+
 impl EffectParams {
     pub fn new() -> Self {
         Self(HashMap::new())
@@ -453,76 +445,23 @@ impl EffectParams {
         &self.0
     }
 
-    /// Get a float param with a default fallback.
-    pub fn float_or(&self, key: ParamKey, default: f64) -> f64 {
-        self.get(key).and_then(ParamValue::as_float).unwrap_or(default)
-    }
+    owned_or!(float_or, as_float, f64);
+    owned_or!(bool_or, as_bool, bool);
+    owned_or!(color_or, as_color, Color);
+    owned_or!(color_mode_or, as_color_mode, ColorMode);
+    owned_or!(wipe_direction_or, as_wipe_direction, WipeDirection);
 
-    /// Get a color param with a default fallback.
-    pub fn color_or(&self, key: ParamKey, default: Color) -> Color {
-        self.get(key).and_then(ParamValue::as_color).unwrap_or(default)
-    }
+    ref_or!(color_list_or, as_color_list, [Color]);
+    ref_or!(curve_or, as_curve, Curve);
+    ref_or!(gradient_or, as_color_gradient, ColorGradient);
+    ref_or!(flag_set_or, as_flag_set, [String]);
 
-    /// Get a color list param with a default fallback.
-    pub fn color_list_or<'a>(&'a self, key: ParamKey, default: &'a [Color]) -> &'a [Color] {
-        self.get(key)
-            .and_then(ParamValue::as_color_list)
-            .unwrap_or(default)
-    }
-
-    /// Get a bool param with a default fallback.
-    pub fn bool_or(&self, key: ParamKey, default: bool) -> bool {
-        self.get(key).and_then(ParamValue::as_bool).unwrap_or(default)
-    }
-
-    /// Get a curve param with a default fallback.
-    pub fn curve_or<'a>(&'a self, key: ParamKey, default: &'a Curve) -> &'a Curve {
-        self.get(key)
-            .and_then(ParamValue::as_curve)
-            .unwrap_or(default)
-    }
-
-    /// Get a color gradient param with a default fallback.
-    pub fn gradient_or<'a>(&'a self, key: ParamKey, default: &'a ColorGradient) -> &'a ColorGradient {
-        self.get(key)
-            .and_then(ParamValue::as_color_gradient)
-            .unwrap_or(default)
-    }
-
-    /// Get a color mode param with a default fallback.
-    pub fn color_mode_or(&self, key: ParamKey, default: ColorMode) -> ColorMode {
-        self.get(key)
-            .and_then(ParamValue::as_color_mode)
-            .unwrap_or(default)
-    }
-
-    /// Get a text param with a default fallback.
     pub fn text_or<'a>(&'a self, key: ParamKey, default: &'a str) -> &'a str {
-        self.get(key)
-            .and_then(|v| v.as_text())
-            .unwrap_or(default)
+        self.get(key).and_then(|v| v.as_text()).unwrap_or(default)
     }
 
-    /// Get a wipe direction param with a default fallback.
-    /// Also accepts `ParamValue::Text` for backward compatibility.
-    pub fn wipe_direction_or(&self, key: ParamKey, default: WipeDirection) -> WipeDirection {
-        self.get(key)
-            .and_then(ParamValue::as_wipe_direction)
-            .unwrap_or(default)
-    }
-
-    /// Get an enum variant param with a default fallback.
     pub fn enum_or<'a>(&'a self, key: ParamKey, default: &'a str) -> &'a str {
-        self.get(key)
-            .and_then(ParamValue::as_enum_variant)
-            .unwrap_or(default)
-    }
-
-    /// Get a flag set param with a default fallback.
-    pub fn flag_set_or<'a>(&'a self, key: ParamKey, default: &'a [String]) -> &'a [String] {
-        self.get(key)
-            .and_then(ParamValue::as_flag_set)
-            .unwrap_or(default)
+        self.get(key).and_then(ParamValue::as_enum_variant).unwrap_or(default)
     }
 
     /// Returns true if any parameter value is a library reference.
