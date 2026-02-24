@@ -269,9 +269,9 @@ pub enum ParamValue {
     EnumVariant(String),
     /// A set of selected flags from a DSL-defined flags type.
     FlagSet(Vec<String>),
-    /// Reference to a gradient in the sequence's gradient_library by name.
+    /// Reference to a gradient in the global library by name.
     GradientRef(String),
-    /// Reference to a curve in the sequence's curve_library by name.
+    /// Reference to a curve in the global library by name.
     CurveRef(String),
     /// Reference to a motion path in the sequence's motion_paths by name.
     PathRef(String),
@@ -567,15 +567,6 @@ pub struct Sequence {
     pub audio_file: Option<String>,
     /// Tracks layered bottom (index 0) to top.
     pub tracks: Vec<Track>,
-    /// DSL effect scripts. Key = script name, Value = source code.
-    #[serde(default)]
-    pub scripts: HashMap<String, String>,
-    /// Reusable color gradients. Key = library item name.
-    #[serde(default)]
-    pub gradient_library: HashMap<String, ColorGradient>,
-    /// Reusable curves. Key = library item name.
-    #[serde(default)]
-    pub curve_library: HashMap<String, Curve>,
     /// Named motion paths. Key = path name.
     #[serde(default)]
     pub motion_paths: HashMap<String, MotionPath>,

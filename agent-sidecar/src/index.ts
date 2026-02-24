@@ -60,7 +60,7 @@ const server = createServer(async (req, res) => {
 
     if (method === "POST" && url === "/chat") {
       const body = await readBody(req);
-      let parsed: { message?: string; sessionId?: string };
+      let parsed: { message?: string; sessionId?: string; context?: string };
       try {
         parsed = JSON.parse(body);
       } catch {
@@ -75,7 +75,7 @@ const server = createServer(async (req, res) => {
       }
 
       // Run the agent query — streams SSE events
-      await runAgentQuery(config, message, res, parsed.sessionId);
+      await runAgentQuery(config, message, res, parsed.sessionId, parsed.context);
       return;
     }
 

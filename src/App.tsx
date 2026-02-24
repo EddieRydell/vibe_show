@@ -107,9 +107,6 @@ export default function App() {
     [chatOpen, toggleChat, handleOpenSettings],
   );
 
-  // Derive a key that changes when the active sequence changes
-  const sequenceKey = screen.kind === "editor" ? `${screen.profileSlug}/${screen.sequenceSlug}` : "";
-
   let content: React.ReactNode;
   switch (screen.kind) {
     case "loading":
@@ -197,7 +194,7 @@ export default function App() {
             open={chatOpen}
             onClose={toggleChat}
             onRefresh={() => refreshRef.current?.()}
-            sequenceKey={sequenceKey}
+            screen={screen}
           />
         </div>
         <ProgressOverlay operations={progressOps} />

@@ -4,6 +4,7 @@ import { VibeLightsClient } from "./vibelights-client.js";
 export async function buildSystemPrompt(
   client: VibeLightsClient,
   dataDir: string,
+  context?: string,
 ): Promise<string> {
   const lines: string[] = [];
 
@@ -72,9 +73,9 @@ export async function buildSystemPrompt(
   lines.push("## Key commands");
   lines.push("**Query**: get_show, get_show_description, get_effect_catalog, get_effect_detail");
   lines.push("**Edit**: add_effect, update_effect_param, update_effect_time, delete_effects, add_track, batch_edit");
-  lines.push("**Script**: write_script, get_script_source, list_scripts, get_dsl_reference, compile_script_preview");
+  lines.push("**Script**: write_global_script, get_global_script_source, list_global_scripts, get_dsl_reference, compile_script_preview");
   lines.push("**Analysis**: get_analysis_summary, get_beats_in_range, get_sections, get_analysis_detail");
-  lines.push("**Library**: set_gradient, set_curve, list_profile_gradients, list_profile_scripts");
+  lines.push("**Library**: list_global_library, set_global_gradient, set_global_curve, list_global_gradients, list_global_curves, list_global_scripts");
   lines.push("**Sequence**: save_current_sequence, list_sequences, open_sequence");
   lines.push("**Profile**: list_profiles, open_profile, get_design_guide");
   lines.push("Use vibelights_help({topic: \"category\"}) for full details on any category.");
@@ -83,6 +84,7 @@ export async function buildSystemPrompt(
   // Data directory layout
   lines.push("## Data directory");
   lines.push(`Path: ${dataDir}`);
+  lines.push("  libraries.json — global gradients, curves, scripts");
   lines.push("  profiles/{slug}/profile.json — fixtures, groups, layout");
   lines.push("  profiles/{slug}/sequences/{slug}.json — tracks, effects, timing");
   lines.push("  profiles/{slug}/media/ — audio files");
@@ -152,6 +154,12 @@ export async function buildSystemPrompt(
     }
   } catch {
     // VibeLights API not responding yet — omit state section
+  }
+
+  if (context) {
+    lines.push("");
+    lines.push("## User context");
+    lines.push(`Screen: ${context}`);
   }
 
   lines.push("");

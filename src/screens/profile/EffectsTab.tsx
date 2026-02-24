@@ -18,7 +18,7 @@ export function EffectsTab({ setError, onOpenScript }: Props) {
   }, []);
 
   const refreshScripts = useCallback(() => {
-    cmd.listProfileScripts()
+    cmd.listGlobalScripts()
       .then(setScripts)
       .catch((e) => setError(String(e)));
   }, [setError]);
@@ -28,7 +28,7 @@ export function EffectsTab({ setError, onOpenScript }: Props) {
 
   const handleDeleteScript = useCallback(() => {
     if (!deleteTarget) return;
-    cmd.deleteProfileScript(deleteTarget)
+    cmd.deleteGlobalScript(deleteTarget)
       .then(refreshScripts)
       .catch((e) => setError(String(e)));
     setDeleteTarget(null);

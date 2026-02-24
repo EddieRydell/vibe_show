@@ -20,7 +20,7 @@ pub fn get_show(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
 }
 
 pub fn get_effect_catalog(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
-    let show = state.show.lock();
+    let _show = state.show.lock();
     let mut catalog = Vec::new();
 
     // Built-in effects
@@ -47,9 +47,10 @@ pub fn get_effect_catalog(state: &Arc<AppState>) -> Result<CommandOutput, AppErr
         }
     }
 
-    // Script effects
-    if let Some(seq) = show.sequences.first() {
-        for (script_name, source) in &seq.scripts {
+    // Script effects from global library
+    {
+        let libs = state.global_libraries.lock();
+        for (script_name, source) in &libs.scripts {
             let mut entry = serde_json::json!({
                 "kind": format!("Script(\"{script_name}\")"),
                 "name": script_name,

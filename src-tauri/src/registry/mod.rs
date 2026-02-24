@@ -12,9 +12,9 @@ use params::{
     CreateSequenceParams, DeleteEffectsParams, DeleteTrackParams, GetAnalysisDetailParams,
     GetBeatsInRangeParams, GetEffectDetailParams, ImportMediaParams, ImportVixenParams,
     ImportVixenProfileParams, ImportVixenSequenceParams, InitializeDataDirParams,
-    LinkEffectToLibraryParams, MoveEffectToTrackParams, NameParams, RenameParams,
-    ScanVixenDirectoryParams, SeekParams, SetLibraryCurveParams, SetLibraryGradientParams,
-    SetLlmConfigParams, SetLoopingParams, SetProfileCurveParams, SetProfileGradientParams,
+    MoveEffectToTrackParams, NameParams, RenameParams,
+    ScanVixenDirectoryParams, SeekParams,
+    SetLlmConfigParams, SetLoopingParams, SetGlobalCurveParams, SetGlobalGradientParams,
     SetRegionParams, SlugParams, UpdateEffectParamParams, UpdateEffectTimeRangeParams,
     UpdateProfileFixturesParams, UpdateProfileLayoutParams, UpdateProfileSetupParams,
     UpdateSequenceSettingsParams, WriteScriptParams,
@@ -66,43 +66,28 @@ pub enum Command {
     GetAnalysisDetail(GetAnalysisDetailParams),
     GetAnalysis,
 
-    // ── Library (sequence) ──────────────────────────────────
-    ListLibrary,
-    SetLibraryGradient(SetLibraryGradientParams),
-    SetLibraryCurve(SetLibraryCurveParams),
-    DeleteLibraryGradient(NameParams),
-    DeleteLibraryCurve(NameParams),
-    LinkEffectToLibrary(LinkEffectToLibraryParams),
-    ListLibraryGradients,
-    ListLibraryCurves,
-    RenameLibraryGradient(RenameParams),
-    RenameLibraryCurve(RenameParams),
+    // ── Library (global) ────────────────────────────────────
+    ListGlobalLibrary,
+    ListGlobalGradients,
+    SetGlobalGradient(SetGlobalGradientParams),
+    DeleteGlobalGradient(NameParams),
+    RenameGlobalGradient(RenameParams),
+    ListGlobalCurves,
+    SetGlobalCurve(SetGlobalCurveParams),
+    DeleteGlobalCurve(NameParams),
+    RenameGlobalCurve(RenameParams),
 
-    // ── Library (profile) ───────────────────────────────────
-    ListProfileGradients,
-    SetProfileGradient(SetProfileGradientParams),
-    DeleteProfileGradient(NameParams),
-    RenameProfileGradient(RenameParams),
-    ListProfileCurves,
-    SetProfileCurve(SetProfileCurveParams),
-    DeleteProfileCurve(NameParams),
-    RenameProfileCurve(RenameParams),
-    SetProfileScript(WriteScriptParams),
-    CompileProfileScript(WriteScriptParams),
-
-    // ── Script ──────────────────────────────────────────────
+    // ── Script (global) ────────────────────────────────────
     GetDslReference,
-    WriteScript(WriteScriptParams),
-    GetScriptSource(NameParams),
-    DeleteScript(NameParams),
-    ListScripts,
-    WriteProfileScript(WriteScriptParams),
-    ListProfileScripts,
-    GetProfileScriptSource(NameParams),
-    DeleteProfileScript(NameParams),
+    WriteGlobalScript(WriteScriptParams),
+    SetGlobalScript(WriteScriptParams),
+    CompileGlobalScript(WriteScriptParams),
+    ListGlobalScripts,
+    GetGlobalScriptSource(NameParams),
+    DeleteGlobalScript(NameParams),
     CompileScript(CompileScriptParams),
     CompileScriptPreview(CompileScriptPreviewParams),
-    RenameScript(RenameParams),
+    RenameGlobalScript(RenameParams),
     GetScriptParams(NameParams),
 
     // ── Settings ────────────────────────────────────────────
@@ -370,190 +355,110 @@ impl Command {
                 undoable: false,
             },
 
-            // ── Library ─────────────────────────────────────
-            Command::ListLibrary => CommandInfo {
-                name: "list_library",
-                description: "List all gradients, curves, and scripts in the sequence library.",
+            // ── Library (global) ────────────────────────────
+            Command::ListGlobalLibrary => CommandInfo {
+                name: "list_global_library",
+                description: "List all gradients, curves, and scripts in the global library.",
                 category: CommandCategory::Library,
                 undoable: false,
             },
-            Command::SetLibraryGradient(_) => CommandInfo {
-                name: "set_library_gradient",
-                description: "Create or update a named gradient in the sequence library.",
-                category: CommandCategory::Library,
-                undoable: true,
-            },
-            Command::SetLibraryCurve(_) => CommandInfo {
-                name: "set_library_curve",
-                description: "Create or update a named curve in the sequence library.",
-                category: CommandCategory::Library,
-                undoable: true,
-            },
-            Command::DeleteLibraryGradient(_) => CommandInfo {
-                name: "delete_library_gradient",
-                description: "Delete a named gradient from the library.",
-                category: CommandCategory::Library,
-                undoable: true,
-            },
-            Command::DeleteLibraryCurve(_) => CommandInfo {
-                name: "delete_library_curve",
-                description: "Delete a named curve from the library.",
-                category: CommandCategory::Library,
-                undoable: true,
-            },
-            Command::LinkEffectToLibrary(_) => CommandInfo {
-                name: "link_effect_to_library",
-                description: "Link an effect parameter to a library item by name.",
-                category: CommandCategory::Library,
-                undoable: true,
-            },
-            Command::ListLibraryGradients => CommandInfo {
-                name: "list_library_gradients",
-                description: "List all gradients in the sequence library with their data.",
+            Command::ListGlobalGradients => CommandInfo {
+                name: "list_global_gradients",
+                description: "List all gradients in the global library with their data.",
                 category: CommandCategory::Library,
                 undoable: false,
             },
-            Command::ListLibraryCurves => CommandInfo {
-                name: "list_library_curves",
-                description: "List all curves in the sequence library with their data.",
+            Command::SetGlobalGradient(_) => CommandInfo {
+                name: "set_global_gradient",
+                description: "Create or update a named gradient in the global library.",
                 category: CommandCategory::Library,
                 undoable: false,
             },
-            Command::RenameLibraryGradient(_) => CommandInfo {
-                name: "rename_library_gradient",
-                description: "Rename a gradient in the sequence library.",
-                category: CommandCategory::Library,
-                undoable: true,
-            },
-            Command::RenameLibraryCurve(_) => CommandInfo {
-                name: "rename_library_curve",
-                description: "Rename a curve in the sequence library.",
-                category: CommandCategory::Library,
-                undoable: true,
-            },
-
-            // ── Library (profile) ────────────────────────────
-            Command::ListProfileGradients => CommandInfo {
-                name: "list_profile_gradients",
-                description: "List all gradients in the profile library.",
+            Command::DeleteGlobalGradient(_) => CommandInfo {
+                name: "delete_global_gradient",
+                description: "Delete a gradient from the global library.",
                 category: CommandCategory::Library,
                 undoable: false,
             },
-            Command::SetProfileGradient(_) => CommandInfo {
-                name: "set_profile_gradient",
-                description: "Create or update a named gradient in the profile library.",
+            Command::RenameGlobalGradient(_) => CommandInfo {
+                name: "rename_global_gradient",
+                description: "Rename a gradient in the global library.",
                 category: CommandCategory::Library,
                 undoable: false,
             },
-            Command::DeleteProfileGradient(_) => CommandInfo {
-                name: "delete_profile_gradient",
-                description: "Delete a gradient from the profile library.",
+            Command::ListGlobalCurves => CommandInfo {
+                name: "list_global_curves",
+                description: "List all curves in the global library with their data.",
                 category: CommandCategory::Library,
                 undoable: false,
             },
-            Command::RenameProfileGradient(_) => CommandInfo {
-                name: "rename_profile_gradient",
-                description: "Rename a gradient in the profile library.",
+            Command::SetGlobalCurve(_) => CommandInfo {
+                name: "set_global_curve",
+                description: "Create or update a named curve in the global library.",
                 category: CommandCategory::Library,
                 undoable: false,
             },
-            Command::ListProfileCurves => CommandInfo {
-                name: "list_profile_curves",
-                description: "List all curves in the profile library.",
+            Command::DeleteGlobalCurve(_) => CommandInfo {
+                name: "delete_global_curve",
+                description: "Delete a curve from the global library.",
                 category: CommandCategory::Library,
                 undoable: false,
             },
-            Command::SetProfileCurve(_) => CommandInfo {
-                name: "set_profile_curve",
-                description: "Create or update a named curve in the profile library.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-            Command::DeleteProfileCurve(_) => CommandInfo {
-                name: "delete_profile_curve",
-                description: "Delete a curve from the profile library.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-            Command::RenameProfileCurve(_) => CommandInfo {
-                name: "rename_profile_curve",
-                description: "Rename a curve in the profile library.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-            Command::SetProfileScript(_) => CommandInfo {
-                name: "set_profile_script",
-                description: "Save a script to the profile library without compiling.",
-                category: CommandCategory::Library,
-                undoable: false,
-            },
-            Command::CompileProfileScript(_) => CommandInfo {
-                name: "compile_profile_script",
-                description: "Compile and save a script to the profile library.",
+            Command::RenameGlobalCurve(_) => CommandInfo {
+                name: "rename_global_curve",
+                description: "Rename a curve in the global library.",
                 category: CommandCategory::Library,
                 undoable: false,
             },
 
-            // ── Script ──────────────────────────────────────
+            // ── Script (global) ────────────────────────────
             Command::GetDslReference => CommandInfo {
                 name: "get_dsl_reference",
                 description: "Get the complete DSL language reference.",
                 category: CommandCategory::Script,
                 undoable: false,
             },
-            Command::WriteScript(_) => CommandInfo {
-                name: "write_script",
-                description: "Compile and save a DSL script effect to the sequence.",
-                category: CommandCategory::Script,
-                undoable: true,
-            },
-            Command::GetScriptSource(_) => CommandInfo {
-                name: "get_script_source",
-                description: "Get the source code of a named script.",
+            Command::WriteGlobalScript(_) => CommandInfo {
+                name: "write_global_script",
+                description: "Compile and save a DSL script to the global library.",
                 category: CommandCategory::Script,
                 undoable: false,
             },
-            Command::DeleteScript(_) => CommandInfo {
-                name: "delete_script",
-                description: "Delete a script from the sequence.",
-                category: CommandCategory::Script,
-                undoable: true,
-            },
-            Command::ListScripts => CommandInfo {
-                name: "list_scripts",
-                description: "List all script names in the current sequence.",
+            Command::SetGlobalScript(_) => CommandInfo {
+                name: "set_global_script",
+                description: "Save a script to the global library without compiling.",
                 category: CommandCategory::Script,
                 undoable: false,
             },
-            Command::WriteProfileScript(_) => CommandInfo {
-                name: "write_profile_script",
-                description: "Compile and save a DSL script to the profile's script library.",
+            Command::CompileGlobalScript(_) => CommandInfo {
+                name: "compile_global_script",
+                description: "Compile and save a script to the global library.",
                 category: CommandCategory::Script,
                 undoable: false,
             },
-            Command::ListProfileScripts => CommandInfo {
-                name: "list_profile_scripts",
-                description: "List all script names in the profile's script library.",
+            Command::ListGlobalScripts => CommandInfo {
+                name: "list_global_scripts",
+                description: "List all script names in the global library.",
                 category: CommandCategory::Script,
                 undoable: false,
             },
-            Command::GetProfileScriptSource(_) => CommandInfo {
-                name: "get_profile_script_source",
-                description: "Get the source code of a named script from the profile library.",
+            Command::GetGlobalScriptSource(_) => CommandInfo {
+                name: "get_global_script_source",
+                description: "Get the source code of a named script from the global library.",
                 category: CommandCategory::Script,
                 undoable: false,
             },
-            Command::DeleteProfileScript(_) => CommandInfo {
-                name: "delete_profile_script",
-                description: "Delete a script from the profile's script library.",
+            Command::DeleteGlobalScript(_) => CommandInfo {
+                name: "delete_global_script",
+                description: "Delete a script from the global library.",
                 category: CommandCategory::Script,
                 undoable: false,
             },
             Command::CompileScript(_) => CommandInfo {
                 name: "compile_script",
-                description: "Compile and save a DSL script to the sequence.",
+                description: "Compile and save a DSL script to the global library.",
                 category: CommandCategory::Script,
-                undoable: true,
+                undoable: false,
             },
             Command::CompileScriptPreview(_) => CommandInfo {
                 name: "compile_script_preview",
@@ -561,11 +466,11 @@ impl Command {
                 category: CommandCategory::Script,
                 undoable: false,
             },
-            Command::RenameScript(_) => CommandInfo {
-                name: "rename_script",
-                description: "Rename a script in the sequence.",
+            Command::RenameGlobalScript(_) => CommandInfo {
+                name: "rename_global_script",
+                description: "Rename a script in the global library.",
                 category: CommandCategory::Script,
-                undoable: true,
+                undoable: false,
             },
             Command::GetScriptParams(_) => CommandInfo {
                 name: "get_script_params",

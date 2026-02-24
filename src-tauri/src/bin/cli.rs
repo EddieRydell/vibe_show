@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+use std::collections::HashMap;
+
 use clap::{Parser, Subcommand};
 use serde_json::Value;
 
@@ -273,6 +275,7 @@ async fn run_serve(
         agent_display_messages: Mutex::new(Vec::new()),
         agent_chats: Mutex::new(vibe_lights::chat::AgentChatsData::default()),
         cancellation: vibe_lights::state::CancellationRegistry::new(),
+        global_libraries: Mutex::new(Default::default()),
     });
 
     // Load global chat history
@@ -420,7 +423,7 @@ fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64,
 
     // Measure serialization overhead
     {
-        let frame = engine::evaluate(&show, 0, time, None, None);
+        let frame = engine::evaluate(&show, 0, time, None, None, &HashMap::new(), &HashMap::new());
         let json = serde_json::to_string(&frame).unwrap();
         eprintln!("Frame JSON size: {} bytes ({:.1} KB)", json.len(), json.len() as f64 / 1024.0);
         eprintln!("Frame fixture count: {}", frame.fixtures.len());
@@ -429,7 +432,7 @@ fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64,
 
         let start = std::time::Instant::now();
         for _ in 0..20 {
-            let f = engine::evaluate(&show, 0, time, None, None);
+            let f = engine::evaluate(&show, 0, time, None, None, &HashMap::new(), &HashMap::new());
             let j = serde_json::to_string(&f).unwrap();
             std::hint::black_box(&j);
         }
@@ -437,7 +440,7 @@ fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64,
         eprintln!("Eval + serialize: {ser_time:?}");
 
         // Measure serialize alone
-        let frame2 = engine::evaluate(&show, 0, time, None, None);
+        let frame2 = engine::evaluate(&show, 0, time, None, None, &HashMap::new(), &HashMap::new());
         let start2 = std::time::Instant::now();
         for _ in 0..20 {
             let j = serde_json::to_string(&frame2).unwrap();
@@ -449,14 +452,14 @@ fn run_bench(data_dir: &str, profile_slug: &str, sequence_slug: &str, time: f64,
 
     // Warmup
     eprintln!("\nWarmup...");
-    let _ = engine::evaluate(&show, 0, time, None, None);
+    let _ = engine::evaluate(&show, 0, time, None, None, &HashMap::new(), &HashMap::new());
 
     // Benchmark (evaluate only)
     eprintln!("Benchmarking {iterations} iterations at t={time}...\n");
     let mut times = Vec::with_capacity(iterations);
     for _ in 0..iterations {
         let start = Instant::now();
-        let frame = engine::evaluate(&show, 0, time, None, None);
+        let frame = engine::evaluate(&show, 0, time, None, None, &HashMap::new(), &HashMap::new());
         let elapsed = start.elapsed();
         times.push(elapsed);
         std::hint::black_box(&frame);

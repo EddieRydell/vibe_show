@@ -105,10 +105,10 @@ export function PropertyPanel({
 
   // Fetch library names for link dropdowns
   useEffect(() => {
-    cmd.listLibraryGradients()
+    cmd.listGlobalGradients()
       .then((items) => setGradientNames(items.map(([n]) => n)))
       .catch(console.warn);
-    cmd.listLibraryCurves()
+    cmd.listGlobalCurves()
       .then((items) => setCurveNames(items.map(([n]) => n)))
       .catch(console.warn);
   }, [selectedEffect]);

@@ -37,10 +37,11 @@ pub async fn send_chat_message(
     state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
     message: String,
+    context: Option<String>,
 ) -> Result<(), AppError> {
     let state_arc = (*state).clone();
     let emitter = crate::chat::TauriChatEmitter { app_handle };
-    ChatManager::send_message(state_arc, &emitter, message)
+    ChatManager::send_message(state_arc, &emitter, message, context.as_deref())
         .await
         .map_err(AppError::from)
 }
@@ -549,7 +550,8 @@ pub fn tick(state: State<Arc<AppState>>, _dt: f64) -> Option<TickResult> {
     }
 
     let scripts = state.script_cache.lock();
-    let frame = engine::evaluate(&show, playback.sequence_index, playback.current_time, None, Some(&scripts));
+    let libs = state.global_libraries.lock();
+    let frame = engine::evaluate(&show, playback.sequence_index, playback.current_time, None, Some(&scripts), &libs.gradients, &libs.curves);
     Some(TickResult {
         frame,
         current_time: playback.current_time,
@@ -571,7 +573,8 @@ pub fn get_frame(state: State<Arc<AppState>>, time: f64) -> Frame {
     let show = state.show.lock();
     let playback = state.playback.lock();
     let scripts = state.script_cache.lock();
-    engine::evaluate(&show, playback.sequence_index, time, None, Some(&scripts))
+    let libs = state.global_libraries.lock();
+    engine::evaluate(&show, playback.sequence_index, time, None, Some(&scripts), &libs.gradients, &libs.curves)
 }
 
 /// Evaluate and return a single frame at the given time, rendering only the
@@ -586,7 +589,8 @@ pub fn get_frame_filtered(
     let show = state.show.lock();
     let playback = state.playback.lock();
     let scripts = state.script_cache.lock();
-    engine::evaluate(&show, playback.sequence_index, time, Some(&effects), Some(&scripts))
+    let libs = state.global_libraries.lock();
+    engine::evaluate(&show, playback.sequence_index, time, Some(&effects), Some(&scripts), &libs.gradients, &libs.curves)
 }
 
 /// Pre-render an effect as a thumbnail image for the timeline.
@@ -740,12 +744,13 @@ pub async fn send_agent_message(
     state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
     message: String,
+    context: Option<String>,
 ) -> Result<(), AppError> {
     let state_arc = (*state).clone();
     let emitter = crate::chat::TauriChatEmitter {
         app_handle: app_handle.clone(),
     };
-    agent::send_message(&state_arc, &app_handle, &emitter, message).await
+    agent::send_message(&state_arc, &app_handle, &emitter, message, context.as_deref()).await
 }
 
 /// Cancel the in-flight agent query.
@@ -822,41 +827,18 @@ pub struct ScriptError {
 
 // ── Helper functions (used by registry handlers and kept commands) ─
 
-/// Recompile all scripts in the active sequence **and** the profile library
+/// Recompile all scripts from the global library
 /// (e.g., after loading a show from disk).
 /// Returns a list of scripts that failed to compile.
 pub fn recompile_all_scripts(state: &AppState) -> Vec<String> {
-    let sources: Vec<(String, String)> = state.with_show(|show| {
-        show.sequences
-            .first()
-            .map(|seq| seq.scripts.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default()
-    });
-
-    // Also load profile library scripts so their previews work.
-    let profile_sources: Vec<(String, String)> = (|| {
-        let slug = state.current_profile.lock().clone()?;
-        let data_dir = state::get_data_dir(state).ok()?;
-        let libs = profile::load_libraries(&data_dir, &slug).ok()?;
-        Some(libs.scripts.into_iter().collect::<Vec<_>>())
-    })()
-    .unwrap_or_default();
+    let sources: Vec<(String, String)> = {
+        let libs = state.global_libraries.lock();
+        libs.scripts.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    };
 
     let mut failures = Vec::new();
     let mut cache = state.script_cache.lock();
     cache.clear();
-
-    // Profile library scripts first (sequence scripts override on name collision)
-    for (name, source) in profile_sources {
-        match dsl::compile_source(&source) {
-            Ok(compiled) => {
-                cache.insert(name, std::sync::Arc::new(compiled));
-            }
-            Err(_) => {
-                failures.push(name);
-            }
-        }
-    }
 
     for (name, source) in sources {
         match dsl::compile_source(&source) {

@@ -10,9 +10,9 @@ use super::params::{
     CreateSequenceParams, DeleteEffectsParams, DeleteTrackParams, GetAnalysisDetailParams,
     GetBeatsInRangeParams, GetEffectDetailParams, ImportMediaParams, ImportVixenParams,
     ImportVixenProfileParams, ImportVixenSequenceParams, InitializeDataDirParams,
-    LinkEffectToLibraryParams, MoveEffectToTrackParams, NameParams, RenameParams,
-    ScanVixenDirectoryParams, SeekParams, SetLibraryCurveParams, SetLibraryGradientParams,
-    SetLlmConfigParams, SetLoopingParams, SetProfileCurveParams, SetProfileGradientParams,
+    MoveEffectToTrackParams, NameParams, RenameParams,
+    ScanVixenDirectoryParams, SeekParams,
+    SetLlmConfigParams, SetLoopingParams, SetGlobalCurveParams, SetGlobalGradientParams,
     SetRegionParams, SlugParams, UpdateEffectParamParams, UpdateEffectTimeRangeParams,
     UpdateProfileFixturesParams, UpdateProfileLayoutParams, UpdateProfileSetupParams,
     UpdateSequenceSettingsParams, WriteScriptParams,
@@ -156,108 +156,60 @@ pub fn command_registry() -> Vec<CommandRegistryEntry> {
         ),
         (Command::GetAnalysis.info(), empty_object_schema()),
 
-        // ── Library (sequence) ──────────────────────────────
-        (Command::ListLibrary.info(), empty_object_schema()),
+        // ── Library (global) ─────────────────────────────────
+        (Command::ListGlobalLibrary.info(), empty_object_schema()),
+        (Command::ListGlobalGradients.info(), empty_object_schema()),
         (
-            Command::SetLibraryGradient(SetLibraryGradientParams { name: String::new(), stops: vec![] }).info(),
-            schema_value::<SetLibraryGradientParams>(),
-        ),
-        (
-            Command::SetLibraryCurve(SetLibraryCurveParams { name: String::new(), points: vec![] }).info(),
-            schema_value::<SetLibraryCurveParams>(),
-        ),
-        (
-            Command::DeleteLibraryGradient(NameParams { name: String::new() }).info(),
-            schema_value::<NameParams>(),
-        ),
-        (
-            Command::DeleteLibraryCurve(NameParams { name: String::new() }).info(),
-            schema_value::<NameParams>(),
-        ),
-        (
-            Command::LinkEffectToLibrary(LinkEffectToLibraryParams {
-                track_index: 0, effect_index: 0, key: String::new(),
-                ref_type: String::new(), library_name: String::new(),
-            }).info(),
-            schema_value::<LinkEffectToLibraryParams>(),
-        ),
-        (Command::ListLibraryGradients.info(), empty_object_schema()),
-        (Command::ListLibraryCurves.info(), empty_object_schema()),
-        (
-            Command::RenameLibraryGradient(RenameParams { old_name: String::new(), new_name: String::new() }).info(),
-            schema_value::<RenameParams>(),
-        ),
-        (
-            Command::RenameLibraryCurve(RenameParams { old_name: String::new(), new_name: String::new() }).info(),
-            schema_value::<RenameParams>(),
-        ),
-
-        // ── Library (profile) ───────────────────────────────
-        (Command::ListProfileGradients.info(), empty_object_schema()),
-        (
-            Command::SetProfileGradient(SetProfileGradientParams {
+            Command::SetGlobalGradient(SetGlobalGradientParams {
                 name: String::new(), gradient: crate::model::ColorGradient::default(),
             }).info(),
-            schema_value::<SetProfileGradientParams>(),
+            schema_value::<SetGlobalGradientParams>(),
         ),
         (
-            Command::DeleteProfileGradient(NameParams { name: String::new() }).info(),
+            Command::DeleteGlobalGradient(NameParams { name: String::new() }).info(),
             schema_value::<NameParams>(),
         ),
         (
-            Command::RenameProfileGradient(RenameParams { old_name: String::new(), new_name: String::new() }).info(),
+            Command::RenameGlobalGradient(RenameParams { old_name: String::new(), new_name: String::new() }).info(),
             schema_value::<RenameParams>(),
         ),
-        (Command::ListProfileCurves.info(), empty_object_schema()),
+        (Command::ListGlobalCurves.info(), empty_object_schema()),
         (
-            Command::SetProfileCurve(SetProfileCurveParams {
+            Command::SetGlobalCurve(SetGlobalCurveParams {
                 name: String::new(), curve: crate::model::Curve::default(),
             }).info(),
-            schema_value::<SetProfileCurveParams>(),
+            schema_value::<SetGlobalCurveParams>(),
         ),
         (
-            Command::DeleteProfileCurve(NameParams { name: String::new() }).info(),
+            Command::DeleteGlobalCurve(NameParams { name: String::new() }).info(),
             schema_value::<NameParams>(),
         ),
         (
-            Command::RenameProfileCurve(RenameParams { old_name: String::new(), new_name: String::new() }).info(),
+            Command::RenameGlobalCurve(RenameParams { old_name: String::new(), new_name: String::new() }).info(),
             schema_value::<RenameParams>(),
         ),
-        (
-            Command::SetProfileScript(WriteScriptParams { name: String::new(), source: String::new() }).info(),
-            schema_value::<WriteScriptParams>(),
-        ),
-        (
-            Command::CompileProfileScript(WriteScriptParams { name: String::new(), source: String::new() }).info(),
-            schema_value::<WriteScriptParams>(),
-        ),
 
-        // ── Script ──────────────────────────────────────────
+        // ── Script (global) ────────────────────────────────
         (Command::GetDslReference.info(), empty_object_schema()),
         (
-            Command::WriteScript(WriteScriptParams { name: String::new(), source: String::new() }).info(),
+            Command::WriteGlobalScript(WriteScriptParams { name: String::new(), source: String::new() }).info(),
             schema_value::<WriteScriptParams>(),
         ),
         (
-            Command::GetScriptSource(NameParams { name: String::new() }).info(),
-            schema_value::<NameParams>(),
-        ),
-        (
-            Command::DeleteScript(NameParams { name: String::new() }).info(),
-            schema_value::<NameParams>(),
-        ),
-        (Command::ListScripts.info(), empty_object_schema()),
-        (
-            Command::WriteProfileScript(WriteScriptParams { name: String::new(), source: String::new() }).info(),
+            Command::SetGlobalScript(WriteScriptParams { name: String::new(), source: String::new() }).info(),
             schema_value::<WriteScriptParams>(),
         ),
-        (Command::ListProfileScripts.info(), empty_object_schema()),
         (
-            Command::GetProfileScriptSource(NameParams { name: String::new() }).info(),
+            Command::CompileGlobalScript(WriteScriptParams { name: String::new(), source: String::new() }).info(),
+            schema_value::<WriteScriptParams>(),
+        ),
+        (Command::ListGlobalScripts.info(), empty_object_schema()),
+        (
+            Command::GetGlobalScriptSource(NameParams { name: String::new() }).info(),
             schema_value::<NameParams>(),
         ),
         (
-            Command::DeleteProfileScript(NameParams { name: String::new() }).info(),
+            Command::DeleteGlobalScript(NameParams { name: String::new() }).info(),
             schema_value::<NameParams>(),
         ),
         (
@@ -269,7 +221,7 @@ pub fn command_registry() -> Vec<CommandRegistryEntry> {
             schema_value::<CompileScriptPreviewParams>(),
         ),
         (
-            Command::RenameScript(RenameParams { old_name: String::new(), new_name: String::new() }).info(),
+            Command::RenameGlobalScript(RenameParams { old_name: String::new(), new_name: String::new() }).info(),
             schema_value::<RenameParams>(),
         ),
         (
@@ -601,41 +553,27 @@ pub fn deserialize_from_tool_call(name: &str, input: &Value) -> Result<super::Co
         "get_sections" => Ok(Command::GetSections),
         "get_analysis_detail" => Ok(Command::GetAnalysisDetail(de(input)?)),
         "get_analysis" => Ok(Command::GetAnalysis),
-        // Library (sequence)
-        "list_library" => Ok(Command::ListLibrary),
-        "set_library_gradient" => Ok(Command::SetLibraryGradient(de(input)?)),
-        "set_library_curve" => Ok(Command::SetLibraryCurve(de(input)?)),
-        "delete_library_gradient" => Ok(Command::DeleteLibraryGradient(de(input)?)),
-        "delete_library_curve" => Ok(Command::DeleteLibraryCurve(de(input)?)),
-        "link_effect_to_library" => Ok(Command::LinkEffectToLibrary(de(input)?)),
-        "list_library_gradients" => Ok(Command::ListLibraryGradients),
-        "list_library_curves" => Ok(Command::ListLibraryCurves),
-        "rename_library_gradient" => Ok(Command::RenameLibraryGradient(de(input)?)),
-        "rename_library_curve" => Ok(Command::RenameLibraryCurve(de(input)?)),
-        // Library (profile)
-        "list_profile_gradients" => Ok(Command::ListProfileGradients),
-        "set_profile_gradient" => Ok(Command::SetProfileGradient(de(input)?)),
-        "delete_profile_gradient" => Ok(Command::DeleteProfileGradient(de(input)?)),
-        "rename_profile_gradient" => Ok(Command::RenameProfileGradient(de(input)?)),
-        "list_profile_curves" => Ok(Command::ListProfileCurves),
-        "set_profile_curve" => Ok(Command::SetProfileCurve(de(input)?)),
-        "delete_profile_curve" => Ok(Command::DeleteProfileCurve(de(input)?)),
-        "rename_profile_curve" => Ok(Command::RenameProfileCurve(de(input)?)),
-        "set_profile_script" => Ok(Command::SetProfileScript(de(input)?)),
-        "compile_profile_script" => Ok(Command::CompileProfileScript(de(input)?)),
-        // Script
+        // Library (global)
+        "list_global_library" => Ok(Command::ListGlobalLibrary),
+        "list_global_gradients" => Ok(Command::ListGlobalGradients),
+        "set_global_gradient" => Ok(Command::SetGlobalGradient(de(input)?)),
+        "delete_global_gradient" => Ok(Command::DeleteGlobalGradient(de(input)?)),
+        "rename_global_gradient" => Ok(Command::RenameGlobalGradient(de(input)?)),
+        "list_global_curves" => Ok(Command::ListGlobalCurves),
+        "set_global_curve" => Ok(Command::SetGlobalCurve(de(input)?)),
+        "delete_global_curve" => Ok(Command::DeleteGlobalCurve(de(input)?)),
+        "rename_global_curve" => Ok(Command::RenameGlobalCurve(de(input)?)),
+        // Script (global)
         "get_dsl_reference" => Ok(Command::GetDslReference),
-        "write_script" => Ok(Command::WriteScript(de(input)?)),
-        "get_script_source" => Ok(Command::GetScriptSource(de(input)?)),
-        "delete_script" => Ok(Command::DeleteScript(de(input)?)),
-        "list_scripts" => Ok(Command::ListScripts),
-        "write_profile_script" => Ok(Command::WriteProfileScript(de(input)?)),
-        "list_profile_scripts" => Ok(Command::ListProfileScripts),
-        "get_profile_script_source" => Ok(Command::GetProfileScriptSource(de(input)?)),
-        "delete_profile_script" => Ok(Command::DeleteProfileScript(de(input)?)),
+        "write_global_script" => Ok(Command::WriteGlobalScript(de(input)?)),
+        "set_global_script" => Ok(Command::SetGlobalScript(de(input)?)),
+        "compile_global_script" => Ok(Command::CompileGlobalScript(de(input)?)),
+        "list_global_scripts" => Ok(Command::ListGlobalScripts),
+        "get_global_script_source" => Ok(Command::GetGlobalScriptSource(de(input)?)),
+        "delete_global_script" => Ok(Command::DeleteGlobalScript(de(input)?)),
         "compile_script" => Ok(Command::CompileScript(de(input)?)),
         "compile_script_preview" => Ok(Command::CompileScriptPreview(de(input)?)),
-        "rename_script" => Ok(Command::RenameScript(de(input)?)),
+        "rename_global_script" => Ok(Command::RenameGlobalScript(de(input)?)),
         "get_script_params" => Ok(Command::GetScriptParams(de(input)?)),
         // Settings
         "get_settings" => Ok(Command::GetSettings),

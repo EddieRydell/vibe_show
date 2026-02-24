@@ -25,7 +25,7 @@ export function GradientsTab({ setError }: Props) {
   const [gradients, setGradients] = useState<[string, ColorGradient][]>([]);
 
   const refresh = useCallback(() => {
-    cmd.listProfileGradients()
+    cmd.listGlobalGradients()
       .then(setGradients)
       .catch((e) => setError(String(e)));
   }, [setError]);
@@ -43,14 +43,14 @@ export function GradientsTab({ setError }: Props) {
         { position: 1, color: { r: 0, g: 0, b: 255, a: 255 } },
       ],
     };
-    cmd.setProfileGradient(name, defaultGradient)
+    cmd.setGlobalGradient(name, defaultGradient)
       .then(refresh)
       .catch((e) => setError(String(e)));
   }, [gradients, refresh, setError]);
 
   const handleUpdate = useCallback(
     (name: string, gradient: ColorGradient) => {
-      cmd.setProfileGradient(name, gradient)
+      cmd.setGlobalGradient(name, gradient)
         .then(refresh)
         .catch((e) => setError(String(e)));
     },
@@ -59,7 +59,7 @@ export function GradientsTab({ setError }: Props) {
 
   const handleRename = useCallback(
     (oldName: string, newName: string) => {
-      cmd.renameProfileGradient(oldName, newName)
+      cmd.renameGlobalGradient(oldName, newName)
         .then(refresh)
         .catch((e) => setError(String(e)));
     },
@@ -68,7 +68,7 @@ export function GradientsTab({ setError }: Props) {
 
   const handleDelete = useCallback(
     (name: string) => {
-      cmd.deleteProfileGradient(name)
+      cmd.deleteGlobalGradient(name)
         .then(refresh)
         .catch((e) => setError(String(e)));
     },

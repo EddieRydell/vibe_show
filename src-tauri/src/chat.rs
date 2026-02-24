@@ -109,7 +109,7 @@ pub struct ChatHistoryEntry {
 
 // ── System prompt builder ────────────────────────────────────────
 
-fn build_system_prompt(state: &Arc<AppState>) -> String {
+fn build_system_prompt(state: &Arc<AppState>, context: Option<&str>) -> String {
     let show = state.show.lock();
     let playback = state.playback.lock();
 
@@ -165,21 +165,70 @@ fn build_system_prompt(state: &Arc<AppState>) -> String {
     lines.push("run({command: \"open_sequence\", params: {slug: \"my-sequence\"}}) — commands with parameters".to_string());
     lines.push("batch({description: \"...\", commands: [{command: \"add_effect\", params: {...}}, ...]}) — multiple edits as one undo step".to_string());
 
+    if let Some(ctx) = context {
+        lines.push(String::new());
+        lines.push("## User context".to_string());
+        lines.push(format!("Screen: {ctx}"));
+    }
+
     lines.join("\n")
 }
 
 // ── Tool execution ───────────────────────────────────────────────
 
+/// Result from tool execution, including an optional path to a scratch file
+/// containing the full data for large results.
+pub struct ToolResult {
+    pub message: String,
+    pub data_file: Option<String>,
+}
+
+/// Write a JSON value to a scratch file for agent file-based exploration.
+/// Returns the absolute path to the written file, or `None` on failure.
+fn write_scratch_file(state: &Arc<AppState>, filename: &str, data: &Value) -> Option<String> {
+    let data_dir = crate::state::get_data_dir(state).ok()?;
+    let dir = crate::paths::scratch_dir(&data_dir);
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(filename);
+    let json = serde_json::to_string_pretty(data).ok()?;
+    crate::project::atomic_write(&path, json.as_bytes()).ok()?;
+    Some(path.to_string_lossy().to_string())
+}
+
+/// Threshold in bytes — data larger than this gets written to a scratch file.
+const SCRATCH_THRESHOLD: usize = 500;
+
 /// Execute a registry command by name. Used by REST API and MCP.
 /// Handles the `help` meta-tool directly, then dispatches to the registry.
-pub fn execute_tool_api(state: &Arc<AppState>, name: &str, input: &Value) -> Result<String, String> {
+/// Returns a `ToolResult` with the message and an optional scratch file path.
+pub fn execute_tool_api(state: &Arc<AppState>, name: &str, input: &Value) -> Result<ToolResult, String> {
     if name == "help" {
         let topic = input.get("topic").and_then(Value::as_str);
-        return Ok(registry::catalog::help_text(topic));
+        return Ok(ToolResult {
+            message: registry::catalog::help_text(topic),
+            data_file: None,
+        });
     }
     let cmd = registry::catalog::deserialize_from_tool_call(name, input)?;
     let output = registry::execute::execute(state, cmd).map_err(|e| e.to_string())?;
-    Ok(output.message)
+
+    // If the command produced structured data, write large payloads to a scratch file
+    let data_file = if !output.data.is_null() {
+        let serialized = serde_json::to_string(&output.data).unwrap_or_default();
+        if serialized.len() > SCRATCH_THRESHOLD {
+            let filename = format!("{name}.json");
+            write_scratch_file(state, &filename, &output.data)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(ToolResult {
+        message: output.message,
+        data_file,
+    })
 }
 
 fn execute_tool(state: &Arc<AppState>, name: &str, input: &Value) -> Result<String, String> {
@@ -354,6 +403,7 @@ impl ChatManager {
         state: Arc<AppState>,
         emitter: &dyn ChatEmitter,
         message: String,
+        context: Option<&str>,
     ) -> Result<(), String> {
         // Resolve LLM provider from settings
         let provider = {
@@ -384,7 +434,7 @@ impl ChatManager {
                 return Ok(());
             }
 
-            let system_prompt = build_system_prompt(&state);
+            let system_prompt = build_system_prompt(&state, context);
             let messages: Vec<Value> = {
                 let chat = state.chat.lock();
                 chat.history
@@ -661,8 +711,15 @@ pub fn save_agent_chats(state: &Arc<AppState>) {
         return;
     }
 
-    if let Ok(json) = serde_json::to_string_pretty(&chats) {
-        let _ = crate::project::atomic_write(&path, json.as_bytes());
+    match serde_json::to_string_pretty(&chats) {
+        Ok(json) => {
+            if let Err(e) = crate::project::atomic_write(&path, json.as_bytes()) {
+                eprintln!("[VibeLights] Failed to save agent chats: {e}");
+            }
+        }
+        Err(e) => {
+            eprintln!("[VibeLights] Failed to serialize agent chats: {e}");
+        }
     }
 }
 

@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    BlendMode, ColorGradient, ColorStop, Controller, Curve, CurvePoint, EffectKind, FixtureDef,
+    BlendMode, ColorGradient, Controller, Curve, EffectKind, FixtureDef,
     FixtureGroup, Layout, Patch, ParamKey, ParamValue,
 };
 use crate::settings::{ChatMode, LlmProvider};
@@ -182,35 +182,6 @@ pub struct GetAnalysisDetailParams {
     pub feature: String,
 }
 
-// ── Library params ──────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
-#[cfg_attr(feature = "tauri-app", ts(export))]
-pub struct SetLibraryGradientParams {
-    pub name: String,
-    pub stops: Vec<ColorStop>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
-#[cfg_attr(feature = "tauri-app", ts(export))]
-pub struct SetLibraryCurveParams {
-    pub name: String,
-    pub points: Vec<CurvePoint>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
-#[cfg_attr(feature = "tauri-app", ts(export))]
-pub struct LinkEffectToLibraryParams {
-    pub track_index: usize,
-    pub effect_index: usize,
-    pub key: String,
-    pub ref_type: String,
-    pub library_name: String,
-}
-
 // ── Script params ───────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -353,12 +324,12 @@ pub struct GetEffectDetailParams {
     pub effect_index: usize,
 }
 
-// ── Profile library params ─────────────────────────────────────
+// ── Global library params ──────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
-pub struct SetProfileGradientParams {
+pub struct SetGlobalGradientParams {
     pub name: String,
     pub gradient: ColorGradient,
 }
@@ -366,7 +337,7 @@ pub struct SetProfileGradientParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
-pub struct SetProfileCurveParams {
+pub struct SetGlobalCurveParams {
     pub name: String,
     pub curve: Curve,
 }

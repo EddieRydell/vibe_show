@@ -82,8 +82,8 @@ export function ScriptScreen({
       setParamValues({});
       return;
     }
-    // Load from profile library
-    cmd.listProfileScripts()
+    // Load from global library
+    cmd.listGlobalScripts()
       .then((scripts) => {
         const match = scripts.find(([name]) => name === currentScript);
         if (match) {
@@ -110,7 +110,7 @@ export function ScriptScreen({
       setBrowserRefreshKey((k) => k + 1);
       // Reload current script source in case AI modified it
       if (currentScript) {
-        cmd.listProfileScripts()
+        cmd.listGlobalScripts()
           .then((scripts) => {
             const match = scripts.find(([name]) => name === currentScript);
             if (match) {
@@ -145,7 +145,7 @@ export function ScriptScreen({
       setBrowserRefreshKey((k) => k + 1);
       // If no script is selected, check if one was just created and select it
       if (!currentScript) {
-        cmd.listProfileScripts()
+        cmd.listGlobalScripts()
           .then((scripts) => {
             if (scripts.length > 0) {
               // Select the last script (likely the one just created)
@@ -192,7 +192,7 @@ export function ScriptScreen({
 
   const handleSave = useCallback(async () => {
     if (!currentScript) return;
-    const result = await cmd.compileProfileScript(currentScript, sourceRef.current);
+    const result = await cmd.compileGlobalScript(currentScript, sourceRef.current);
     setCompileResult(result);
     if (result.success) {
       setDirty(false);
@@ -204,7 +204,7 @@ export function ScriptScreen({
   }, [currentScript]);
 
   const handleNewScript = useCallback(async () => {
-    const scripts = await cmd.listProfileScripts();
+    const scripts = await cmd.listGlobalScripts();
     const existingNames = scripts.map(([n]) => n);
     let name = "new_script";
     let counter = 1;
@@ -213,7 +213,7 @@ export function ScriptScreen({
       counter++;
     }
     const defaultSource = `@name "${name}"\n\nlet c = hsv(t * 360.0, 1.0, 1.0)\nc\n`;
-    await cmd.compileProfileScript(name, defaultSource);
+    await cmd.compileGlobalScript(name, defaultSource);
     setBrowserRefreshKey((k) => k + 1);
     setCurrentScript(name);
   }, []);

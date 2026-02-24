@@ -82,11 +82,12 @@ export async function runAgentQuery(
   message: string,
   res: ServerResponse,
   sessionIdOverride?: string,
+  context?: string,
 ): Promise<void> {
   const client = new VibeLightsClient(config.vibelightsPort);
   const mcpServer = createVibeLightsMcpServer(client);
 
-  const systemPrompt = await buildSystemPrompt(client, config.dataDir);
+  const systemPrompt = await buildSystemPrompt(client, config.dataDir, context);
   const overrides = resolveCompileOverrides();
 
   const abort = new AbortController();

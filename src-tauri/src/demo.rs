@@ -57,9 +57,6 @@ pub fn create_demo_show() -> Show {
         duration: 30.0,
         frame_rate: 30.0,
         audio_file: None,
-        scripts: std::collections::HashMap::new(),
-        gradient_library: std::collections::HashMap::new(),
-        curve_library: std::collections::HashMap::new(),
         motion_paths: std::collections::HashMap::new(),
         tracks: vec![
             // Base layer: slow rainbow across all strings.

@@ -4,7 +4,7 @@ use crate::error::AppError;
 use crate::state::AppState;
 
 use super::handlers::{
-    analysis, chat, edit, import, library, media, playback, profile, profile_lib, query, script,
+    analysis, chat, edit, global_lib, import, media, playback, profile, query, script,
     sequence, settings,
 };
 use super::{Command, CommandOutput};
@@ -52,43 +52,28 @@ pub fn execute(state: &Arc<AppState>, cmd: Command) -> Result<CommandOutput, App
         Command::GetAnalysisDetail(p) => analysis::get_analysis_detail(state, p),
         Command::GetAnalysis => analysis::get_analysis(state),
 
-        // ── Library (sequence) ──────────────────────────────
-        Command::ListLibrary => library::list_library(state),
-        Command::SetLibraryGradient(p) => library::set_library_gradient(state, p),
-        Command::SetLibraryCurve(p) => library::set_library_curve(state, p),
-        Command::DeleteLibraryGradient(p) => library::delete_library_gradient(state, p),
-        Command::DeleteLibraryCurve(p) => library::delete_library_curve(state, p),
-        Command::LinkEffectToLibrary(p) => library::link_effect_to_library(state, p),
-        Command::ListLibraryGradients => library::list_library_gradients(state),
-        Command::ListLibraryCurves => library::list_library_curves(state),
-        Command::RenameLibraryGradient(p) => library::rename_library_gradient(state, p),
-        Command::RenameLibraryCurve(p) => library::rename_library_curve(state, p),
+        // ── Library (global) ────────────────────────────────
+        Command::ListGlobalLibrary => global_lib::list_global_library(state),
+        Command::ListGlobalGradients => global_lib::list_global_gradients(state),
+        Command::SetGlobalGradient(p) => global_lib::set_global_gradient(state, p),
+        Command::DeleteGlobalGradient(p) => global_lib::delete_global_gradient(state, p),
+        Command::RenameGlobalGradient(p) => global_lib::rename_global_gradient(state, p),
+        Command::ListGlobalCurves => global_lib::list_global_curves(state),
+        Command::SetGlobalCurve(p) => global_lib::set_global_curve(state, p),
+        Command::DeleteGlobalCurve(p) => global_lib::delete_global_curve(state, p),
+        Command::RenameGlobalCurve(p) => global_lib::rename_global_curve(state, p),
 
-        // ── Library (profile) ───────────────────────────────
-        Command::ListProfileGradients => profile_lib::list_profile_gradients(state),
-        Command::SetProfileGradient(p) => profile_lib::set_profile_gradient(state, p),
-        Command::DeleteProfileGradient(p) => profile_lib::delete_profile_gradient(state, p),
-        Command::RenameProfileGradient(p) => profile_lib::rename_profile_gradient(state, p),
-        Command::ListProfileCurves => profile_lib::list_profile_curves(state),
-        Command::SetProfileCurve(p) => profile_lib::set_profile_curve(state, p),
-        Command::DeleteProfileCurve(p) => profile_lib::delete_profile_curve(state, p),
-        Command::RenameProfileCurve(p) => profile_lib::rename_profile_curve(state, p),
-        Command::SetProfileScript(p) => profile_lib::set_profile_script(state, p),
-        Command::CompileProfileScript(p) => profile_lib::compile_profile_script(state, p),
-
-        // ── Script ──────────────────────────────────────────
+        // ── Script (global) ────────────────────────────────
         Command::GetDslReference => script::get_dsl_reference(),
-        Command::WriteScript(p) => script::write_script(state, p),
-        Command::GetScriptSource(p) => script::get_script_source(state, p),
-        Command::DeleteScript(p) => script::delete_script(state, p),
-        Command::ListScripts => script::list_scripts(state),
-        Command::WriteProfileScript(p) => script::write_profile_script(state, p),
-        Command::ListProfileScripts => script::list_profile_scripts(state),
-        Command::GetProfileScriptSource(p) => script::get_profile_script_source(state, p),
-        Command::DeleteProfileScript(p) => script::delete_profile_script(state, p),
-        Command::CompileScript(p) => script::compile_script(state, p),
+        Command::WriteGlobalScript(p) => script::write_global_script(state, p),
+        Command::SetGlobalScript(p) => global_lib::set_global_script(state, p),
+        Command::CompileGlobalScript(p) => global_lib::compile_global_script(state, p),
+        Command::ListGlobalScripts => script::list_global_scripts(state),
+        Command::GetGlobalScriptSource(p) => script::get_global_script_source(state, p),
+        Command::DeleteGlobalScript(p) => script::delete_global_script(state, p),
+        Command::CompileScript(p) => script::compile_global_script(state, p),
         Command::CompileScriptPreview(p) => script::compile_script_preview(p),
-        Command::RenameScript(p) => script::rename_script(state, p),
+        Command::RenameGlobalScript(p) => script::rename_global_script(state, p),
         Command::GetScriptParams(p) => script::get_script_params(state, p),
 
         // ── Settings ────────────────────────────────────────

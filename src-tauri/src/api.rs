@@ -489,7 +489,8 @@ async fn get_frame(
 ) -> Json<ApiResponse<Frame>> {
     let show = state.show.lock();
     let playback = state.playback.lock();
-    let frame = engine::evaluate(&show, playback.sequence_index, q.time, None, None);
+    let libs = state.global_libraries.lock();
+    let frame = engine::evaluate(&show, playback.sequence_index, q.time, None, None, &libs.gradients, &libs.curves);
     ApiResponse::success(frame)
 }
 
@@ -512,7 +513,8 @@ async fn get_describe(
 
     if let Some(t) = q.frame_time {
         let playback = state.playback.lock();
-        let frame = engine::evaluate(&show, playback.sequence_index, t, None, None);
+        let libs = state.global_libraries.lock();
+        let frame = engine::evaluate(&show, playback.sequence_index, t, None, None, &libs.gradients, &libs.curves);
         text.push_str("\n\n");
         text.push_str(&describe::describe_frame(&show, &frame));
     }
@@ -539,7 +541,7 @@ async fn post_chat(
     Json(body): Json<ChatBody>,
 ) -> ApiResult<ChatResponse> {
     let emitter = NoopChatEmitter;
-    ChatManager::send_message(state.clone(), &emitter, body.message)
+    ChatManager::send_message(state.clone(), &emitter, body.message, None)
         .await
         .map_err(error_response)?;
     let response = state.chat.lock().last_assistant_text();
@@ -840,7 +842,11 @@ async fn post_tool_dispatch(
 ) -> ApiResult<serde_json::Value> {
     let result = crate::chat::execute_tool_api(&state, &tool_name, &params)
         .map_err(error_response)?;
-    Ok(ApiResponse::success(serde_json::Value::String(result)))
+    let mut resp = serde_json::json!({ "message": result.message });
+    if let Some(ref path) = result.data_file {
+        resp["data_file"] = serde_json::json!(path);
+    }
+    Ok(ApiResponse::success(resp))
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -939,10 +945,8 @@ async fn get_analysis_detail_handler(
 // ══════════════════════════════════════════════════════════════════
 
 async fn get_scripts(AxumState(state): AppArc) -> Json<ApiResponse<Vec<String>>> {
-    let show = state.show.lock();
-    let names: Vec<String> = show.sequences.first()
-        .map(|seq| seq.scripts.keys().cloned().collect())
-        .unwrap_or_default();
+    let libs = state.global_libraries.lock();
+    let names: Vec<String> = libs.scripts.keys().cloned().collect();
     ApiResponse::success(names)
 }
 
@@ -950,9 +954,8 @@ async fn get_script_source_handler(
     AxumState(state): AppArc,
     Path(name): Path<String>,
 ) -> ApiResult<String> {
-    let show = state.show.lock();
-    let source = show.sequences.first()
-        .and_then(|seq| seq.scripts.get(&name))
+    let libs = state.global_libraries.lock();
+    let source = libs.scripts.get(&name)
         .cloned()
         .ok_or_else(|| error_response(format!("Script \"{name}\" not found")))?;
     Ok(ApiResponse::success(source))
@@ -971,14 +974,12 @@ async fn post_script(
     match crate::dsl::compile_source(&body.source) {
         Ok(compiled) => {
             state.script_cache.lock().insert(body.name.clone(), std::sync::Arc::new(compiled));
-            let cmd = EditCommand::SetScript {
-                sequence_index: 0,
-                name: body.name.clone(),
-                source: body.source,
-            };
-            let mut dispatcher = state.dispatcher.lock();
-            let mut show = state.show.lock();
-            dispatcher.execute(&mut show, &cmd).map_err(|e| error_response(e.to_string()))?;
+            state.global_libraries.lock().scripts.insert(body.name.clone(), body.source);
+            // Persist to disk
+            if let Ok(data_dir) = crate::state::get_data_dir(&state) {
+                let libs = state.global_libraries.lock();
+                let _ = profile::save_global_libraries(&data_dir, &libs);
+            }
             Ok(ApiResponse::success(format!("Script \"{}\" compiled and saved", body.name)))
         }
         Err(errors) => {
@@ -992,14 +993,13 @@ async fn delete_script_handler(
     AxumState(state): AppArc,
     Path(name): Path<String>,
 ) -> ApiResult<()> {
-    let cmd = EditCommand::DeleteScript {
-        sequence_index: 0,
-        name: name.clone(),
-    };
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
-    dispatcher.execute(&mut show, &cmd).map_err(|e| error_response(e.to_string()))?;
+    state.global_libraries.lock().scripts.remove(&name);
     state.script_cache.lock().remove(&name);
+    // Persist to disk
+    if let Ok(data_dir) = crate::state::get_data_dir(&state) {
+        let libs = state.global_libraries.lock();
+        let _ = profile::save_global_libraries(&data_dir, &libs);
+    }
     Ok(ApiResponse::success(()))
 }
 
@@ -1008,9 +1008,8 @@ async fn delete_script_handler(
 // ══════════════════════════════════════════════════════════════════
 
 async fn get_library_gradients(AxumState(state): AppArc) -> ApiResult<serde_json::Value> {
-    let show = state.show.lock();
-    let seq = show.sequences.first().ok_or_else(|| error_response("No sequence".into()))?;
-    Ok(ApiResponse::success(serde_json::to_value(&seq.gradient_library).unwrap_or_default()))
+    let libs = state.global_libraries.lock();
+    Ok(ApiResponse::success(serde_json::to_value(&libs.gradients).unwrap_or_default()))
 }
 
 #[derive(Deserialize)]
@@ -1027,10 +1026,11 @@ async fn post_library_gradient(
         .map_err(|e| error_response(format!("Invalid stops: {e}")))?;
     let gradient = crate::model::ColorGradient::new(stops)
         .ok_or_else(|| error_response("Gradient needs at least 2 stops".into()))?;
-    let cmd = EditCommand::SetGradient { sequence_index: 0, name: body.name, gradient };
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
-    dispatcher.execute(&mut show, &cmd).map_err(|e| error_response(e.to_string()))?;
+    state.global_libraries.lock().gradients.insert(body.name, gradient);
+    if let Ok(data_dir) = crate::state::get_data_dir(&state) {
+        let libs = state.global_libraries.lock();
+        let _ = profile::save_global_libraries(&data_dir, &libs);
+    }
     Ok(ApiResponse::success(()))
 }
 
@@ -1038,17 +1038,17 @@ async fn delete_library_gradient_handler(
     AxumState(state): AppArc,
     Path(name): Path<String>,
 ) -> ApiResult<()> {
-    let cmd = EditCommand::DeleteGradient { sequence_index: 0, name };
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
-    dispatcher.execute(&mut show, &cmd).map_err(|e| error_response(e.to_string()))?;
+    state.global_libraries.lock().gradients.remove(&name);
+    if let Ok(data_dir) = crate::state::get_data_dir(&state) {
+        let libs = state.global_libraries.lock();
+        let _ = profile::save_global_libraries(&data_dir, &libs);
+    }
     Ok(ApiResponse::success(()))
 }
 
 async fn get_library_curves(AxumState(state): AppArc) -> ApiResult<serde_json::Value> {
-    let show = state.show.lock();
-    let seq = show.sequences.first().ok_or_else(|| error_response("No sequence".into()))?;
-    Ok(ApiResponse::success(serde_json::to_value(&seq.curve_library).unwrap_or_default()))
+    let libs = state.global_libraries.lock();
+    Ok(ApiResponse::success(serde_json::to_value(&libs.curves).unwrap_or_default()))
 }
 
 #[derive(Deserialize)]
@@ -1065,10 +1065,11 @@ async fn post_library_curve(
         .map_err(|e| error_response(format!("Invalid points: {e}")))?;
     let curve = crate::model::Curve::new(points)
         .ok_or_else(|| error_response("Curve needs at least 2 points".into()))?;
-    let cmd = EditCommand::SetCurve { sequence_index: 0, name: body.name, curve };
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
-    dispatcher.execute(&mut show, &cmd).map_err(|e| error_response(e.to_string()))?;
+    state.global_libraries.lock().curves.insert(body.name, curve);
+    if let Ok(data_dir) = crate::state::get_data_dir(&state) {
+        let libs = state.global_libraries.lock();
+        let _ = profile::save_global_libraries(&data_dir, &libs);
+    }
     Ok(ApiResponse::success(()))
 }
 
@@ -1076,10 +1077,11 @@ async fn delete_library_curve_handler(
     AxumState(state): AppArc,
     Path(name): Path<String>,
 ) -> ApiResult<()> {
-    let cmd = EditCommand::DeleteCurve { sequence_index: 0, name };
-    let mut dispatcher = state.dispatcher.lock();
-    let mut show = state.show.lock();
-    dispatcher.execute(&mut show, &cmd).map_err(|e| error_response(e.to_string()))?;
+    state.global_libraries.lock().curves.remove(&name);
+    if let Ok(data_dir) = crate::state::get_data_dir(&state) {
+        let libs = state.global_libraries.lock();
+        let _ = profile::save_global_libraries(&data_dir, &libs);
+    }
     Ok(ApiResponse::success(()))
 }
 
@@ -1094,7 +1096,7 @@ async fn post_batch(
     // Delegate to the chat tool executor for consistent behavior
     let result = crate::chat::execute_tool_api(&state, "batch_edit", &body)
         .map_err(error_response)?;
-    Ok(ApiResponse::success(result))
+    Ok(ApiResponse::success(result.message))
 }
 
 // ══════════════════════════════════════════════════════════════════

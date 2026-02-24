@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::dispatcher::EditCommand;
 use crate::error::AppError;
-use crate::model::{ColorGradient, Curve, EffectTarget, FixtureId};
+use crate::model::{EffectTarget, FixtureId};
 use crate::registry::params::{
     AddEffectParams, AddTrackParams, BatchEditParams, DeleteEffectsParams, DeleteTrackParams,
     MoveEffectToTrackParams, UpdateEffectParamParams, UpdateEffectTimeRangeParams,
@@ -343,7 +343,6 @@ pub fn batch_edit(state: &Arc<AppState>, p: BatchEditParams) -> Result<CommandOu
 }
 
 /// Parse a single command from a batch_edit entry into an EditCommand.
-/// Reuses the same logic as chat.rs::parse_batch_command.
 #[allow(clippy::cast_possible_truncation)]
 fn parse_batch_command(
     action: &str,
@@ -472,81 +471,6 @@ fn parse_batch_command(
                 .get("track_index")
                 .and_then(Value::as_u64)
                 .ok_or("Missing track_index")? as usize,
-        }),
-        "set_library_gradient" => {
-            let name = params
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or("Missing name")?
-                .to_string();
-            let stops: Vec<crate::model::ColorStop> = serde_json::from_value(
-                params.get("stops").cloned().unwrap_or(Value::Null),
-            )
-            .map_err(|e| format!("Invalid stops: {e}"))?;
-            let gradient = ColorGradient::new(stops).ok_or("Gradient needs at least 2 stops")?;
-            Ok(EditCommand::SetGradient {
-                sequence_index,
-                name,
-                gradient,
-            })
-        }
-        "set_library_curve" => {
-            let name = params
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or("Missing name")?
-                .to_string();
-            let points: Vec<crate::model::CurvePoint> = serde_json::from_value(
-                params.get("points").cloned().unwrap_or(Value::Null),
-            )
-            .map_err(|e| format!("Invalid points: {e}"))?;
-            let curve = Curve::new(points).ok_or("Curve needs at least 2 points")?;
-            Ok(EditCommand::SetCurve {
-                sequence_index,
-                name,
-                curve,
-            })
-        }
-        "delete_library_gradient" => Ok(EditCommand::DeleteGradient {
-            sequence_index,
-            name: params
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or("Missing name")?
-                .to_string(),
-        }),
-        "delete_library_curve" => Ok(EditCommand::DeleteCurve {
-            sequence_index,
-            name: params
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or("Missing name")?
-                .to_string(),
-        }),
-        "write_script" => {
-            let name = params
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or("Missing name")?
-                .to_string();
-            let source = params
-                .get("source")
-                .and_then(Value::as_str)
-                .ok_or("Missing source")?
-                .to_string();
-            Ok(EditCommand::SetScript {
-                sequence_index,
-                name,
-                source,
-            })
-        }
-        "delete_script" => Ok(EditCommand::DeleteScript {
-            sequence_index,
-            name: params
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or("Missing name")?
-                .to_string(),
         }),
         _ => Err(format!("Unsupported batch action: {action}")),
     }

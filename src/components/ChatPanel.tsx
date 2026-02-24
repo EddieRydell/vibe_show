@@ -6,6 +6,7 @@ import { MessageSquare, Send, X, Trash2, Loader2, Key, Check, History, Plus } fr
 import { useAppShell } from "./ScreenShell";
 import Markdown from "react-markdown";
 import type { ChatMode } from "../types";
+import type { AppScreen } from "../screens";
 import { parseChatEntries } from "../utils/validators";
 
 interface ChatEntry {
@@ -23,10 +24,30 @@ interface ChatPanelProps {
   open: boolean;
   onClose: () => void;
   onRefresh: () => void;
-  sequenceKey: string;
+  screen: AppScreen;
 }
 
-export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelProps) {
+/** Build a context string describing the user's current screen location. */
+function buildScreenContext(screen: AppScreen): string {
+  switch (screen.kind) {
+    case "editor":
+      return `editor (profile: "${screen.profileSlug}", sequence: "${screen.sequenceSlug}")`;
+    case "script":
+      return `script editor (profile: "${screen.profileSlug}", script: "${screen.scriptName ?? "new"}")`;
+    case "analysis":
+      return `analysis (profile: "${screen.profileSlug}", file: "${screen.filename}")`;
+    case "profile":
+      return `profile browser (profile: "${screen.slug}")`;
+    case "home":
+      return "home screen";
+    case "settings":
+      return "settings";
+    default:
+      return screen.kind;
+  }
+}
+
+export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) {
   const { openSettings } = useAppShell();
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [input, setInput] = useState("");
@@ -51,28 +72,22 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
     }).catch(console.warn);
   }, [open]);
 
-  // Load persisted chat history when the active show changes
+  // Load persisted chat history on mount and when chat mode changes.
+  // Chat is global — not tied to sequences or profiles.
   useEffect(() => {
-    if (!sequenceKey) {
-      setMessages([]);
-      setConversations([]);
-      return;
+    refreshConversations();
+    if (chatMode === "Agent") {
+      cmd.getAgentChatHistory().then((entries) => {
+        setMessages(parseChatEntries(entries));
+      }).catch(console.warn);
+    } else {
+      cmd.getChatHistory().then((entries) => {
+        setMessages(parseChatEntries(entries));
+      }).catch(console.warn);
     }
-    cmd.getLlmConfig().then((config) => {
-      if (config.chat_mode === "Agent") {
-        cmd.getAgentChatHistory().then((entries) => {
-          setMessages(parseChatEntries(entries));
-        }).catch(console.warn);
-        refreshConversations();
-      } else {
-        cmd.getChatHistory().then((entries) => {
-          setMessages(parseChatEntries(entries));
-        }).catch(console.warn);
-      }
-    }).catch(console.warn);
     setStreaming("");
     setSending(false);
-  }, [sequenceKey, refreshConversations]);
+  }, [chatMode, refreshConversations]);
 
   // Listen for chat events (both backends emit the same events).
   // Uses cancelled-flag pattern to avoid stale listener accumulation.
@@ -159,11 +174,13 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
     setSending(true);
     setMessages((prev) => [...prev, { role: "user", text: msg }]);
 
+    const context = buildScreenContext(screen);
+
     try {
       if (chatMode === "Agent") {
-        await invoke("send_agent_message", { message: msg });
+        await invoke("send_agent_message", { message: msg, context });
       } else {
-        await invoke("send_chat_message", { message: msg });
+        await invoke("send_chat_message", { message: msg, context });
       }
     } catch (e: unknown) {
       const text =
@@ -178,7 +195,7 @@ export function ChatPanel({ open, onClose, onRefresh, sequenceKey }: ChatPanelPr
       ]);
       setSending(false);
     }
-  }, [input, sending, chatMode]);
+  }, [input, sending, chatMode, screen]);
 
   const handleClear = useCallback(async () => {
     if (chatMode === "Agent") {

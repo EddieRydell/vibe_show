@@ -22,7 +22,7 @@ pub const PROFILE_FILE: &str = "profile.json";
 pub const FIXTURES_FILE: &str = "fixtures.json";
 pub const SETUP_FILE: &str = "setup.json";
 pub const LAYOUT_FILE: &str = "layout.json";
-pub const LIBRARIES_FILE: &str = "libraries.json";
+pub const GLOBAL_LIBRARIES_FILE: &str = "libraries.json";
 pub const DEPS_INSTALLED_MARKER: &str = ".deps_installed";
 
 // ── Directory names ──────────────────────────────────────────────
@@ -32,6 +32,7 @@ pub const SEQUENCES_DIR: &str = "sequences";
 pub const MEDIA_DIR: &str = "media";
 pub const PYTHON_ENV_DIR: &str = "python_env";
 pub const MODELS_DIR: &str = "models";
+pub const SCRATCH_DIR: &str = ".scratch";
 
 // ── Config-dir functions (take app_config_dir) ───────────────────
 
@@ -76,6 +77,10 @@ pub fn deps_installed_marker(app_config_dir: &Path) -> PathBuf {
     python_env_dir(app_config_dir).join(DEPS_INSTALLED_MARKER)
 }
 
+pub fn scratch_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join(SCRATCH_DIR)
+}
+
 // ── Resource-dir functions (take resource_dir) ───────────────────
 
 pub fn uv_binary_path(resource_dir: &Path) -> PathBuf {
@@ -98,6 +103,12 @@ pub fn requirements_path(resource_dir: &Path) -> PathBuf {
         .join("resources")
         .join("python")
         .join("requirements.txt")
+}
+
+// ── Global data-dir functions ─────────────────────────────────────
+
+pub fn global_libraries_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(GLOBAL_LIBRARIES_FILE)
 }
 
 // ── Data-dir functions (take data_dir + slugs) ───────────────────

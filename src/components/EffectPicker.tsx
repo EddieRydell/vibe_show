@@ -15,7 +15,7 @@ export function EffectPicker({ position, onSelect, onCancel }: EffectPickerProps
 
   useEffect(() => {
     cmd.listEffects().then(setEffects).catch(console.error);
-    cmd.listScripts().then(setScripts).catch(console.warn);
+    cmd.listGlobalScripts().then((pairs) => setScripts(pairs.map(([n]) => n))).catch(console.warn);
   }, []);
 
   useEffect(() => {

@@ -238,61 +238,39 @@ export const cmd = {
   switchAgentConversation: (id: string) => exec("SwitchAgentConversation", { conversation_id: id }),
   deleteAgentConversation: (id: string) => exec("DeleteAgentConversation", { conversation_id: id }),
 
-  // ── Library (sequence) ──────────────────────────────────
-  listLibraryGradients: () =>
-    execData<[string, ColorGradient][]>("ListLibraryGradients"),
-  listLibraryCurves: () =>
-    execData<[string, Curve][]>("ListLibraryCurves"),
-  setLibraryGradient: (name: string, stops: unknown[]) =>
-    exec("SetLibraryGradient", { name, stops }),
-  deleteLibraryGradient: (name: string) =>
-    exec("DeleteLibraryGradient", { name }),
-  renameLibraryGradient: (oldName: string, newName: string) =>
-    exec("RenameLibraryGradient", { old_name: oldName, new_name: newName }),
-  setLibraryCurve: (name: string, points: unknown[]) =>
-    exec("SetLibraryCurve", { name, points }),
-  deleteLibraryCurve: (name: string) =>
-    exec("DeleteLibraryCurve", { name }),
-  renameLibraryCurve: (oldName: string, newName: string) =>
-    exec("RenameLibraryCurve", { old_name: oldName, new_name: newName }),
-  listScripts: () => execData<string[]>("ListScripts"),
-  getScriptSource: (name: string) =>
-    execData<string | null>("GetScriptSource", { name }),
-  deleteScript: (name: string) => exec("DeleteScript", { name }),
-
-  // ── Library (profile) ──────────────────────────────────
-  listProfileGradients: () =>
-    execData<[string, ColorGradient][]>("ListProfileGradients"),
-  setProfileGradient: (name: string, gradient: ColorGradient) =>
-    exec("SetProfileGradient", { name, gradient }),
-  deleteProfileGradient: (name: string) =>
-    exec("DeleteProfileGradient", { name }),
-  renameProfileGradient: (oldName: string, newName: string) =>
-    exec("RenameProfileGradient", { old_name: oldName, new_name: newName }),
-  listProfileCurves: () =>
-    execData<[string, Curve][]>("ListProfileCurves"),
-  setProfileCurve: (name: string, curve: Curve) =>
-    exec("SetProfileCurve", { name, curve }),
-  deleteProfileCurve: (name: string) =>
-    exec("DeleteProfileCurve", { name }),
-  renameProfileCurve: (oldName: string, newName: string) =>
-    exec("RenameProfileCurve", { old_name: oldName, new_name: newName }),
-  listProfileScripts: () =>
-    execData<[string, string][]>("ListProfileScripts"),
-  deleteProfileScript: (name: string) =>
-    exec("DeleteProfileScript", { name }),
-  setProfileScript: (name: string, source: string) =>
-    exec("SetProfileScript", { name, source }),
-  compileProfileScript: (name: string, source: string) =>
-    execData<ScriptCompileResult>("CompileProfileScript", { name, source }),
+  // ── Global Library ──────────────────────────────────────
+  listGlobalGradients: () =>
+    execData<[string, ColorGradient][]>("ListGlobalGradients"),
+  setGlobalGradient: (name: string, gradient: ColorGradient) =>
+    exec("SetGlobalGradient", { name, gradient }),
+  deleteGlobalGradient: (name: string) =>
+    exec("DeleteGlobalGradient", { name }),
+  renameGlobalGradient: (oldName: string, newName: string) =>
+    exec("RenameGlobalGradient", { old_name: oldName, new_name: newName }),
+  listGlobalCurves: () =>
+    execData<[string, Curve][]>("ListGlobalCurves"),
+  setGlobalCurve: (name: string, curve: Curve) =>
+    exec("SetGlobalCurve", { name, curve }),
+  deleteGlobalCurve: (name: string) =>
+    exec("DeleteGlobalCurve", { name }),
+  renameGlobalCurve: (oldName: string, newName: string) =>
+    exec("RenameGlobalCurve", { old_name: oldName, new_name: newName }),
+  listGlobalScripts: () =>
+    execData<[string, string][]>("ListGlobalScripts"),
+  getGlobalScriptSource: (name: string) =>
+    execData<string | null>("GetGlobalScriptSource", { name }),
+  deleteGlobalScript: (name: string) =>
+    exec("DeleteGlobalScript", { name }),
+  writeGlobalScript: (name: string, source: string) =>
+    exec("WriteGlobalScript", { name, source }),
+  compileGlobalScript: (name: string, source: string) =>
+    execData<ScriptCompileResult>("CompileGlobalScript", { name, source }),
+  renameGlobalScript: (oldName: string, newName: string) =>
+    exec("RenameGlobalScript", { old_name: oldName, new_name: newName }),
 
   // ── Script ──────────────────────────────────────────────
-  compileScript: (name: string, source: string) =>
-    execData<ScriptCompileResult>("CompileScript", { name, source }),
   compileScriptPreview: (source: string) =>
     execData<ScriptCompileResult>("CompileScriptPreview", { source }),
-  renameScript: (oldName: string, newName: string) =>
-    exec("RenameScript", { old_name: oldName, new_name: newName }),
   getScriptParams: (name: string) =>
     execData<ScriptParamInfo[]>("GetScriptParams", { name }),
 

@@ -326,6 +326,7 @@ pub async fn send_message(
     app: &AppHandle,
     emitter: &dyn ChatEmitter,
     message: String,
+    context: Option<&str>,
 ) -> Result<(), AppError> {
     let port = ensure_agent_sidecar(state, app).await?;
 
@@ -334,11 +335,13 @@ pub async fn send_message(
 
     let session_id = state.agent_session_id.lock().clone();
 
-    let body = if let Some(sid) = &session_id {
-        serde_json::json!({ "message": message, "sessionId": sid })
-    } else {
-        serde_json::json!({ "message": message })
-    };
+    let mut body = serde_json::json!({ "message": message });
+    if let Some(sid) = &session_id {
+        body["sessionId"] = serde_json::json!(sid);
+    }
+    if let Some(ctx) = context {
+        body["context"] = serde_json::json!(ctx);
+    }
 
     // Ensure there's an active conversation
     {
@@ -374,11 +377,30 @@ pub async fn send_message(
         }
     }
 
+    // From this point on, the user message is in memory — we must save on ALL exit paths
+    // so that errors, cancellations, and crashes don't lose conversation history.
+
     emitter.emit_thinking(true);
 
+    let result = stream_agent_response(state, emitter, &client, &url, &body).await;
+
+    // Always persist, even on error — the user message and any partial response are valuable
+    crate::chat::save_agent_chats(state);
+
+    result
+}
+
+/// Inner streaming logic, separated so the caller can always save chats regardless of outcome.
+async fn stream_agent_response(
+    state: &Arc<AppState>,
+    emitter: &dyn ChatEmitter,
+    client: &reqwest::Client,
+    url: &str,
+    body: &serde_json::Value,
+) -> Result<(), AppError> {
     let response = client
-        .post(&url)
-        .json(&body)
+        .post(url)
+        .json(body)
         .timeout(std::time::Duration::from_secs(300))
         .send()
         .await
@@ -447,14 +469,13 @@ pub async fn send_message(
         process_sse_event(state, emitter, &event_name, &data_buf, &mut assistant_text);
     }
 
-    // Push assistant message to display history and persist
+    // Push assistant message to display history
     if !assistant_text.trim().is_empty() {
         state.agent_display_messages.lock().push(ChatHistoryEntry {
             role: ChatRole::Assistant,
             text: assistant_text,
         });
     }
-    crate::chat::save_agent_chats(state);
 
     Ok(())
 }
@@ -517,8 +538,11 @@ fn process_sse_event(
     }
 }
 
-/// Cancel the in-flight agent query.
+/// Cancel the in-flight agent query. Saves any partial conversation first.
 pub async fn cancel_message(state: &Arc<AppState>) -> Result<(), AppError> {
+    // Save whatever we have so far — partial responses are better than nothing
+    crate::chat::save_agent_chats(state);
+
     let port = state.agent_port.load(Ordering::Relaxed);
     if port > 0 {
         let client = reqwest::Client::new();

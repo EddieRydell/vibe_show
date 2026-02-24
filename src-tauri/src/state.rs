@@ -16,6 +16,7 @@ use crate::error::AppError;
 use crate::model::analysis::AudioAnalysis;
 use crate::model::show::Show;
 use crate::model::{BlendMode, EffectKind, EffectParams, ParamSchema, TimeRange};
+use crate::profile::LibrariesFile;
 use crate::settings::AppSettings;
 
 // ── Cancellation Registry ──────────────────────────────────────────
@@ -122,6 +123,8 @@ pub struct AppState {
     pub agent_display_messages: Mutex<Vec<crate::chat::ChatHistoryEntry>>,
     /// Multi-conversation agent chat data.
     pub agent_chats: Mutex<crate::chat::AgentChatsData>,
+    /// Global libraries (gradients, curves, scripts). Shared across all profiles/sequences.
+    pub global_libraries: Mutex<LibrariesFile>,
     /// Cancellation flags for long-running operations.
     pub cancellation: CancellationRegistry,
 }

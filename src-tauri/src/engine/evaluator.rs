@@ -6,6 +6,8 @@ use crate::dsl::compiler::CompiledScript;
 use crate::effects;
 use crate::model::fixture::EffectTarget;
 use crate::model::show::Position2D;
+use crate::model::color_gradient::ColorGradient;
+use crate::model::curve::Curve;
 use crate::model::{Color, EffectKind, FixtureId, GroupId, Show};
 use crate::util::base64_encode;
 
@@ -82,6 +84,8 @@ pub fn evaluate(
     t: f64,
     effect_filter: Option<&[(usize, usize)]>,
     script_cache: Option<&HashMap<String, Arc<CompiledScript>>>,
+    gradient_lib: &HashMap<String, ColorGradient>,
+    curve_lib: &HashMap<String, Curve>,
 ) -> Frame {
     let Some(sequence) = show.sequences.get(sequence_index) else {
         return Frame {
@@ -100,9 +104,6 @@ pub fn evaluate(
         };
     }
 
-    // Library references for ref resolution
-    let gradient_lib = &sequence.gradient_library;
-    let curve_lib = &sequence.curve_library;
     let motion_path_lib = &sequence.motion_paths;
 
     // Phase 1A: Build fixture pixel count lookup (eliminates O(N) scans).
@@ -380,9 +381,6 @@ mod tests {
                 frame_rate: 30.0,
                 audio_file: None,
                 tracks,
-                scripts: std::collections::HashMap::new(),
-                gradient_library: std::collections::HashMap::new(),
-                curve_library: std::collections::HashMap::new(),
                 motion_paths: std::collections::HashMap::new(),
             }],
             patches: vec![],
@@ -441,7 +439,7 @@ mod tests {
                 effects: vec![solid_effect(0.0, 5.0, red)],
             }],
         );
-        let frame = evaluate(&show, 0, 2.5, None, None);
+        let frame = evaluate(&show, 0, 2.5, None, None, &HashMap::new(), &HashMap::new());
         let colors = decode_fixture_colors(&frame, 1).expect("fixture should be in frame");
         assert_eq!(colors.len(), 5);
         for c in &colors {
@@ -462,15 +460,15 @@ mod tests {
             }],
         );
         // Before range
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         assert!(frame.fixtures.is_empty());
 
         // Inside range
-        let frame = evaluate(&show, 0, 3.0, None, None);
+        let frame = evaluate(&show, 0, 3.0, None, None, &HashMap::new(), &HashMap::new());
         assert!(frame.fixtures.contains_key(&1));
 
         // Well past the end (beyond epsilon tolerance)
-        let frame = evaluate(&show, 0, 4.1, None, None);
+        let frame = evaluate(&show, 0, 4.1, None, None, &HashMap::new(), &HashMap::new());
         assert!(frame.fixtures.is_empty());
     }
 
@@ -491,7 +489,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0], Color::rgb(0, 255, 0));
     }
@@ -513,7 +511,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0].r, 255); // saturated
         assert_eq!(colors[0].g, 255); // 100+200 saturated
@@ -537,7 +535,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         // Multiply with white is identity
         assert_eq!(colors[0].r, 255);
@@ -566,7 +564,7 @@ mod tests {
                 }],
             }],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         let f2 = decode_fixture_colors(&frame, 2).unwrap();
         // Fixture 2 starts at global pixel 5. With 10 total pixels, pixel 5 has pos=5/9≈0.56.
         // Fixture 2 pixel 3 has global pos 8/9≈0.89 → should be bright.
@@ -584,7 +582,7 @@ mod tests {
     #[test]
     fn empty_show_produces_empty_frame() {
         let show = Show::empty();
-        let frame = evaluate(&show, 0, 0.0, None, None);
+        let frame = evaluate(&show, 0, 0.0, None, None, &HashMap::new(), &HashMap::new());
         assert!(frame.fixtures.is_empty());
     }
 
@@ -598,7 +596,7 @@ mod tests {
                 effects: vec![solid_effect(0.0, 5.0, Color::WHITE)],
             }],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         assert!(!frame.fixtures.contains_key(&1));
         assert!(frame.fixtures.contains_key(&2));
     }
@@ -613,7 +611,7 @@ mod tests {
                 effects: vec![solid_effect(0.0, 5.0, Color::BLACK)],
             }],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         assert!(frame.fixtures.is_empty());
     }
 
@@ -635,7 +633,7 @@ mod tests {
                 GroupMember::Fixture(FixtureId(3)),
             ],
         });
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         assert!(frame.fixtures.contains_key(&1));
         assert!(!frame.fixtures.contains_key(&2)); // not in group
         assert!(frame.fixtures.contains_key(&3));
@@ -660,7 +658,7 @@ mod tests {
         );
         // Only evaluate track 0, effect 0
         let filter = [(0usize, 0usize)];
-        let frame = evaluate(&show, 0, 1.0, Some(&filter), None);
+        let frame = evaluate(&show, 0, 1.0, Some(&filter), None, &HashMap::new(), &HashMap::new());
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0], Color::rgb(255, 0, 0)); // track 1 was skipped
     }
@@ -682,7 +680,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0].r, 150); // 200 - 50
         assert_eq!(colors[0].g, 0);   // 150 - 200 saturates to 0
@@ -706,7 +704,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0].r, 100);
         assert_eq!(colors[0].g, 50);
@@ -730,7 +728,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0].r, 150); // (200+100)/2
         assert_eq!(colors[0].g, 75);  // (100+50)/2
@@ -754,7 +752,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         // screen(128,128) = 255 - (127*127)/255 = 255 - 63 = 192
         assert_eq!(colors[0].r, 192);
@@ -782,7 +780,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         // All pixels should be black (masked out), so frame is empty
         assert!(frame.fixtures.is_empty());
     }
@@ -805,7 +803,7 @@ mod tests {
                 },
             ],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0].r, 200);
         assert_eq!(colors[0].g, 100);
@@ -822,7 +820,7 @@ mod tests {
                 effects: vec![solid_effect_blended(0.0, 5.0, Color::rgb(200, 100, 50), BlendMode::Override, 0.5)],
             }],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         let colors = decode_fixture_colors(&frame, 1).unwrap();
         assert_eq!(colors[0].r, 100);
         assert_eq!(colors[0].g, 50);
@@ -839,7 +837,7 @@ mod tests {
                 effects: vec![solid_effect_blended(0.0, 5.0, Color::WHITE, BlendMode::Override, 0.0)],
             }],
         );
-        let frame = evaluate(&show, 0, 1.0, None, None);
+        let frame = evaluate(&show, 0, 1.0, None, None, &HashMap::new(), &HashMap::new());
         // opacity=0 means all black, so frame should be empty
         assert!(frame.fixtures.is_empty());
     }

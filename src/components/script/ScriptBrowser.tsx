@@ -20,7 +20,7 @@ export function ScriptBrowser({
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    cmd.listProfileScripts()
+    cmd.listGlobalScripts()
       .then((pairs) => setScripts(pairs.map(([name]) => name)))
       .catch(console.warn);
   }, []);
@@ -31,7 +31,7 @@ export function ScriptBrowser({
 
   const handleDelete = useCallback(
     async (name: string) => {
-      await cmd.deleteProfileScript(name);
+      await cmd.deleteGlobalScript(name);
       setDeleteTarget(null);
       refresh();
       if (currentScript === name) {
@@ -47,7 +47,7 @@ export function ScriptBrowser({
 
   const handleDuplicate = useCallback(
     async (name: string) => {
-      const allScripts = await cmd.listProfileScripts();
+      const allScripts = await cmd.listGlobalScripts();
       const source = allScripts.find(([n]) => n === name)?.[1];
       if (!source) return;
       const existingNames = allScripts.map(([n]) => n);
@@ -57,7 +57,7 @@ export function ScriptBrowser({
         newName = `${name}_copy${counter}`;
         counter++;
       }
-      await cmd.compileProfileScript(newName, source);
+      await cmd.compileGlobalScript(newName, source);
       refresh();
       onSelectScript(newName);
     },

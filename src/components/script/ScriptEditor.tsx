@@ -33,7 +33,7 @@ export function ScriptEditor({
     debounceRef.current = setTimeout(() => {
       setCompiling(true);
       const compilePromise = scriptName
-        ? cmd.compileProfileScript(scriptName, source)
+        ? cmd.compileGlobalScript(scriptName, source)
         : cmd.compileScriptPreview(source);
 
       compilePromise

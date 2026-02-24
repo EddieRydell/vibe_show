@@ -175,14 +175,14 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const refresh = useCallback(async () => {
     try {
-      const [g, c, s] = await Promise.all([
-        cmd.listLibraryGradients(),
-        cmd.listLibraryCurves(),
-        cmd.listScripts(),
+      const [g, c, sPairs] = await Promise.all([
+        cmd.listGlobalGradients(),
+        cmd.listGlobalCurves(),
+        cmd.listGlobalScripts(),
       ]);
       setGradients(g);
       setCurves(c);
-      setScripts(s);
+      setScripts(sPairs.map(([n]) => n));
     } catch (e) {
       console.error("[VibeLights] Library refresh failed:", e);
     }
@@ -205,7 +205,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
       ],
     };
     try {
-      await cmd.setLibraryGradient(name, gradient.stops);
+      await cmd.setGlobalGradient(name, gradient);
       onLibraryChange();
       refresh();
       setExpandedGradient(name);
@@ -216,7 +216,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const deleteGradient = useCallback(async (name: string) => {
     try {
-      await cmd.deleteLibraryGradient(name);
+      await cmd.deleteGlobalGradient(name);
       onLibraryChange();
       refresh();
       if (expandedGradient === name) setExpandedGradient(null);
@@ -227,7 +227,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const renameGradient = useCallback(async (oldName: string, newName: string) => {
     try {
-      await cmd.renameLibraryGradient(oldName, newName);
+      await cmd.renameGlobalGradient(oldName, newName);
       onLibraryChange();
       refresh();
       if (expandedGradient === oldName) setExpandedGradient(newName);
@@ -238,7 +238,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const updateGradient = useCallback(async (name: string, stops: ColorStop[]) => {
     try {
-      await cmd.setLibraryGradient(name, stops);
+      await cmd.setGlobalGradient(name, { stops });
       onLibraryChange();
       refresh();
     } catch (e) {
@@ -260,7 +260,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
       ],
     };
     try {
-      await cmd.setLibraryCurve(name, curve.points);
+      await cmd.setGlobalCurve(name, curve);
       onLibraryChange();
       refresh();
       setExpandedCurve(name);
@@ -271,7 +271,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const deleteCurve = useCallback(async (name: string) => {
     try {
-      await cmd.deleteLibraryCurve(name);
+      await cmd.deleteGlobalCurve(name);
       onLibraryChange();
       refresh();
       if (expandedCurve === name) setExpandedCurve(null);
@@ -282,7 +282,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const renameCurve = useCallback(async (oldName: string, newName: string) => {
     try {
-      await cmd.renameLibraryCurve(oldName, newName);
+      await cmd.renameGlobalCurve(oldName, newName);
       onLibraryChange();
       refresh();
       if (expandedCurve === oldName) setExpandedCurve(newName);
@@ -293,7 +293,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const updateCurve = useCallback(async (name: string, points: CurvePoint[]) => {
     try {
-      await cmd.setLibraryCurve(name, points);
+      await cmd.setGlobalCurve(name, { points });
       onLibraryChange();
       refresh();
     } catch (e) {
@@ -309,7 +309,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const openScript = useCallback(async (name: string) => {
     try {
-      const source = await cmd.getScriptSource(name);
+      const source = await cmd.getGlobalScriptSource(name);
       setScriptEditor({ name, source: source ?? "" });
     } catch (e) {
       console.error("[VibeLights] Get script source failed:", e);
@@ -318,7 +318,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   const deleteScript = useCallback(async (name: string) => {
     try {
-      await cmd.deleteScript(name);
+      await cmd.deleteGlobalScript(name);
       onLibraryChange();
       refresh();
     } catch (e) {

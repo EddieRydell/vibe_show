@@ -5,7 +5,7 @@ use ts_rs::TS;
 
 use crate::error::AppError;
 use crate::model::{
-    BlendMode, ColorGradient, Curve, EffectInstance, EffectKind, EffectParams, EffectTarget,
+    BlendMode, EffectInstance, EffectKind, EffectParams, EffectTarget,
     ParamKey, ParamValue, Sequence, TimeRange,
 };
 
@@ -65,48 +65,6 @@ pub enum EditCommand {
         description: String,
         commands: Vec<EditCommand>,
     },
-    SetScript {
-        sequence_index: usize,
-        name: String,
-        source: String,
-    },
-    DeleteScript {
-        sequence_index: usize,
-        name: String,
-    },
-    RenameScript {
-        sequence_index: usize,
-        old_name: String,
-        new_name: String,
-    },
-    SetGradient {
-        sequence_index: usize,
-        name: String,
-        gradient: ColorGradient,
-    },
-    DeleteGradient {
-        sequence_index: usize,
-        name: String,
-    },
-    RenameGradient {
-        sequence_index: usize,
-        old_name: String,
-        new_name: String,
-    },
-    SetCurve {
-        sequence_index: usize,
-        name: String,
-        curve: Curve,
-    },
-    DeleteCurve {
-        sequence_index: usize,
-        name: String,
-    },
-    RenameCurve {
-        sequence_index: usize,
-        old_name: String,
-        new_name: String,
-    },
 }
 
 impl EditCommand {
@@ -137,21 +95,6 @@ impl EditCommand {
                 }
             }
             EditCommand::Batch { description, .. } => description.clone(),
-            EditCommand::SetScript { name, .. } => format!("Set script \"{name}\""),
-            EditCommand::DeleteScript { name, .. } => format!("Delete script \"{name}\""),
-            EditCommand::RenameScript { old_name, new_name, .. } => {
-                format!("Rename script \"{old_name}\" → \"{new_name}\"")
-            }
-            EditCommand::SetGradient { name, .. } => format!("Set gradient \"{name}\""),
-            EditCommand::DeleteGradient { name, .. } => format!("Delete gradient \"{name}\""),
-            EditCommand::RenameGradient { old_name, new_name, .. } => {
-                format!("Rename gradient \"{old_name}\" → \"{new_name}\"")
-            }
-            EditCommand::SetCurve { name, .. } => format!("Set curve \"{name}\""),
-            EditCommand::DeleteCurve { name, .. } => format!("Delete curve \"{name}\""),
-            EditCommand::RenameCurve { old_name, new_name, .. } => {
-                format!("Rename curve \"{old_name}\" → \"{new_name}\"")
-            }
         }
     }
 
@@ -187,16 +130,7 @@ impl EditCommand {
             | EditCommand::MoveEffectToTrack { sequence_index, .. }
             | EditCommand::AddTrack { sequence_index, .. }
             | EditCommand::DeleteTrack { sequence_index, .. }
-            | EditCommand::UpdateSequenceSettings { sequence_index, .. }
-            | EditCommand::SetScript { sequence_index, .. }
-            | EditCommand::DeleteScript { sequence_index, .. }
-            | EditCommand::RenameScript { sequence_index, .. }
-            | EditCommand::SetGradient { sequence_index, .. }
-            | EditCommand::DeleteGradient { sequence_index, .. }
-            | EditCommand::RenameGradient { sequence_index, .. }
-            | EditCommand::SetCurve { sequence_index, .. }
-            | EditCommand::DeleteCurve { sequence_index, .. }
-            | EditCommand::RenameCurve { sequence_index, .. } => *sequence_index,
+            | EditCommand::UpdateSequenceSettings { sequence_index, .. } => *sequence_index,
             EditCommand::Batch { commands, .. } => {
                 commands.first().map_or(0, EditCommand::sequence_index)
             }
@@ -638,124 +572,6 @@ impl CommandDispatcher {
                         });
                     }
                     sequence.frame_rate = *fr;
-                }
-                Ok(CommandResult::Unit)
-            }
-
-            EditCommand::SetScript {
-                sequence_index,
-                name,
-                source,
-            } => {
-                let sequence = seq_mut(show, *sequence_index)?;
-                sequence.scripts.insert(name.clone(), source.clone());
-                Ok(CommandResult::Unit)
-            }
-
-            EditCommand::DeleteScript {
-                sequence_index,
-                name,
-            } => {
-                let sequence = seq_mut(show, *sequence_index)?;
-                sequence.scripts.remove(name);
-                Ok(CommandResult::Unit)
-            }
-
-            EditCommand::RenameScript {
-                sequence_index,
-                old_name,
-                new_name,
-            } => {
-                let sequence = seq_mut(show, *sequence_index)?;
-                if let Some(source) = sequence.scripts.remove(old_name) {
-                    sequence.scripts.insert(new_name.clone(), source);
-                    for track in &mut sequence.tracks {
-                        for effect in &mut track.effects {
-                            if effect.kind == EffectKind::Script(old_name.clone()) {
-                                effect.kind = EffectKind::Script(new_name.clone());
-                            }
-                        }
-                    }
-                }
-                Ok(CommandResult::Unit)
-            }
-
-            EditCommand::SetGradient {
-                sequence_index,
-                name,
-                gradient,
-            } => {
-                let sequence = seq_mut(show, *sequence_index)?;
-                sequence.gradient_library.insert(name.clone(), gradient.clone());
-                Ok(CommandResult::Unit)
-            }
-
-            EditCommand::DeleteGradient {
-                sequence_index,
-                name,
-            } => {
-                let sequence = seq_mut(show, *sequence_index)?;
-                sequence.gradient_library.remove(name);
-                Ok(CommandResult::Unit)
-            }
-
-            EditCommand::RenameGradient {
-                sequence_index,
-                old_name,
-                new_name,
-            } => {
-                let sequence = seq_mut(show, *sequence_index)?;
-                if let Some(gradient) = sequence.gradient_library.remove(old_name) {
-                    sequence.gradient_library.insert(new_name.clone(), gradient);
-                    for track in &mut sequence.tracks {
-                        for effect in &mut track.effects {
-                            for val in effect.params.values_mut() {
-                                if matches!(val, ParamValue::GradientRef(n) if n == old_name) {
-                                    *val = ParamValue::GradientRef(new_name.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(CommandResult::Unit)
-            }
-
-            EditCommand::SetCurve {
-                sequence_index,
-                name,
-                curve,
-            } => {
-                let sequence = seq_mut(show, *sequence_index)?;
-                sequence.curve_library.insert(name.clone(), curve.clone());
-                Ok(CommandResult::Unit)
-            }
-
-            EditCommand::DeleteCurve {
-                sequence_index,
-                name,
-            } => {
-                let sequence = seq_mut(show, *sequence_index)?;
-                sequence.curve_library.remove(name);
-                Ok(CommandResult::Unit)
-            }
-
-            EditCommand::RenameCurve {
-                sequence_index,
-                old_name,
-                new_name,
-            } => {
-                let sequence = seq_mut(show, *sequence_index)?;
-                if let Some(curve) = sequence.curve_library.remove(old_name) {
-                    sequence.curve_library.insert(new_name.clone(), curve);
-                    for track in &mut sequence.tracks {
-                        for effect in &mut track.effects {
-                            for val in effect.params.values_mut() {
-                                if matches!(val, ParamValue::CurveRef(n) if n == old_name) {
-                                    *val = ParamValue::CurveRef(new_name.clone());
-                                }
-                            }
-                        }
-                    }
                 }
                 Ok(CommandResult::Unit)
             }

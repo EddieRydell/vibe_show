@@ -26,7 +26,8 @@ export function ScriptEditorDialog({
   // Auto-generate name for new scripts
   useEffect(() => {
     if (scriptName !== null) return;
-    cmd.listScripts().then((names) => {
+    cmd.listGlobalScripts().then((pairs) => {
+      const names = pairs.map(([n]) => n);
       let idx = 1;
       while (names.includes(`script_${idx}`)) idx++;
       setName(`script_${idx}`);
@@ -40,7 +41,7 @@ export function ScriptEditorDialog({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       setCompiling(true);
-      cmd.compileScript(name.trim(), source)
+      cmd.compileGlobalScript(name.trim(), source)
         .then((result) => {
           setCompileResult(result);
           if (result.success) setModified(false);
@@ -56,7 +57,7 @@ export function ScriptEditorDialog({
     setSaving(true);
     try {
       if (modified || !compileResult?.success) {
-        const result = await cmd.compileScript(name.trim(), source);
+        const result = await cmd.compileGlobalScript(name.trim(), source);
         setCompileResult(result);
         if (!result.success) {
           setSaving(false);

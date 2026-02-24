@@ -34,6 +34,14 @@ fn main() {
 
             let loaded_settings = settings::load_settings(&app_config_dir);
 
+            // Load global libraries from disk (if data_dir is configured).
+            let global_libs = loaded_settings
+                .as_ref()
+                .and_then(|s| {
+                    vibe_lights::profile::load_global_libraries(&s.data_dir).ok()
+                })
+                .unwrap_or_default();
+
             let state = Arc::new(AppState {
                 show: Mutex::new(Show::empty()),
                 playback: Mutex::new(PlaybackState {
@@ -60,6 +68,7 @@ fn main() {
                 agent_session_id: Mutex::new(None),
                 agent_display_messages: Mutex::new(Vec::new()),
                 agent_chats: Mutex::new(vibe_lights::chat::AgentChatsData::default()),
+                global_libraries: Mutex::new(global_libs),
                 cancellation: CancellationRegistry::new(),
             });
 
@@ -120,6 +129,10 @@ fn main() {
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 let state = app.state::<Arc<AppState>>();
+
+                // Persist chat history before shutdown
+                vibe_lights::chat::save_agent_chats(&state);
+                vibe_lights::chat::save_chat_history(&state);
 
                 // Stop Python sidecar on app exit
                 let port = state.python_port.load(Ordering::Relaxed);

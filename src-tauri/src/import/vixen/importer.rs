@@ -1316,9 +1316,6 @@ impl VixenImporter {
             frame_rate: 30.0,
             audio_file,
             tracks,
-            scripts: std::collections::HashMap::new(),
-            gradient_library: std::collections::HashMap::new(),
-            curve_library: std::collections::HashMap::new(),
             motion_paths: std::collections::HashMap::new(),
         });
 

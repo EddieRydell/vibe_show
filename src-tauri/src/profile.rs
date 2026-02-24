@@ -100,23 +100,21 @@ pub struct LibrariesFile {
 
 use crate::paths;
 
-/// Load profile-level libraries (gradients, curves, scripts).
-pub fn load_libraries(data_dir: &Path, slug: &str) -> Result<LibrariesFile, ProjectError> {
-    let path = paths::profile_dir(data_dir, slug).join(paths::LIBRARIES_FILE);
+/// Load global libraries (gradients, curves, scripts).
+pub fn load_global_libraries(data_dir: &Path) -> Result<LibrariesFile, ProjectError> {
+    let path = paths::global_libraries_path(data_dir);
     if !path.exists() {
         return Ok(LibrariesFile::default());
     }
     read_json(&path)
 }
 
-/// Save profile-level libraries (gradients, curves, scripts).
-pub fn save_libraries(
+/// Save global libraries (gradients, curves, scripts).
+pub fn save_global_libraries(
     data_dir: &Path,
-    slug: &str,
     libs: &LibrariesFile,
 ) -> Result<(), ProjectError> {
-    let dir = paths::profile_dir(data_dir, slug);
-    write_json(&dir.join(paths::LIBRARIES_FILE), libs)
+    write_json(&paths::global_libraries_path(data_dir), libs)
 }
 
 /// List all profiles in the data directory.
@@ -226,8 +224,6 @@ pub fn create_profile(data_dir: &Path, name: &str) -> Result<ProfileSummary, Pro
             fixtures: Vec::new(),
         },
     )?;
-
-    write_json(&dir.join(paths::LIBRARIES_FILE), &LibrariesFile::default())?;
 
     Ok(ProfileSummary {
         name: name.to_string(),
@@ -365,9 +361,6 @@ pub fn create_sequence(
         frame_rate: 30.0,
         audio_file: None,
         tracks: Vec::new(),
-        scripts: std::collections::HashMap::new(),
-        gradient_library: std::collections::HashMap::new(),
-        curve_library: std::collections::HashMap::new(),
         motion_paths: std::collections::HashMap::new(),
     };
     write_json(&path, &seq)?;
@@ -755,9 +748,6 @@ mod tests {
             frame_rate: 30.0,
             audio_file: None,
             tracks: Vec::new(),
-            scripts: std::collections::HashMap::new(),
-            gradient_library: std::collections::HashMap::new(),
-            curve_library: std::collections::HashMap::new(),
             motion_paths: std::collections::HashMap::new(),
         };
         let show = assemble_show(&profile, &sequence);

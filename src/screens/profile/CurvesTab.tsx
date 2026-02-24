@@ -12,7 +12,7 @@ export function CurvesTab({ setError }: Props) {
   const [curves, setCurves] = useState<[string, Curve][]>([]);
 
   const refresh = useCallback(() => {
-    cmd.listProfileCurves()
+    cmd.listGlobalCurves()
       .then(setCurves)
       .catch((e) => setError(String(e)));
   }, [setError]);
@@ -30,14 +30,14 @@ export function CurvesTab({ setError }: Props) {
         { x: 1, y: 1 },
       ],
     };
-    cmd.setProfileCurve(name, defaultCurve)
+    cmd.setGlobalCurve(name, defaultCurve)
       .then(refresh)
       .catch((e) => setError(String(e)));
   }, [curves, refresh, setError]);
 
   const handleUpdate = useCallback(
     (name: string, curve: Curve) => {
-      cmd.setProfileCurve(name, curve)
+      cmd.setGlobalCurve(name, curve)
         .then(refresh)
         .catch((e) => setError(String(e)));
     },
@@ -46,7 +46,7 @@ export function CurvesTab({ setError }: Props) {
 
   const handleRename = useCallback(
     (oldName: string, newName: string) => {
-      cmd.renameProfileCurve(oldName, newName)
+      cmd.renameGlobalCurve(oldName, newName)
         .then(refresh)
         .catch((e) => setError(String(e)));
     },
@@ -55,7 +55,7 @@ export function CurvesTab({ setError }: Props) {
 
   const handleDelete = useCallback(
     (name: string) => {
-      cmd.deleteProfileCurve(name)
+      cmd.deleteGlobalCurve(name)
         .then(refresh)
         .catch((e) => setError(String(e)));
     },

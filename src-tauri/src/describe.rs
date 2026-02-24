@@ -88,39 +88,6 @@ pub fn describe_sequence(seq: &Sequence) -> String {
         lines.push(format!("Audio: {audio}"));
     }
 
-    // Resource libraries
-    if !seq.scripts.is_empty() {
-        lines.push(format!(
-            "\nScripts ({}): {}",
-            seq.scripts.len(),
-            seq.scripts.keys().cloned().collect::<Vec<_>>().join(", ")
-        ));
-    }
-    if !seq.gradient_library.is_empty() {
-        let items: Vec<String> = seq
-            .gradient_library
-            .iter()
-            .map(|(name, g)| format!("{name} ({} stops)", g.stops().len()))
-            .collect();
-        lines.push(format!(
-            "\nGradient Library ({}): {}",
-            seq.gradient_library.len(),
-            items.join(", ")
-        ));
-    }
-    if !seq.curve_library.is_empty() {
-        let items: Vec<String> = seq
-            .curve_library
-            .iter()
-            .map(|(name, c)| format!("{name} ({} pts)", c.points().len()))
-            .collect();
-        lines.push(format!(
-            "\nCurve Library ({}): {}",
-            seq.curve_library.len(),
-            items.join(", ")
-        ));
-    }
-
     lines.push(format!("\nTracks ({})", seq.tracks.len()));
     for (i, track) in seq.tracks.iter().enumerate() {
         lines.push(format!(
@@ -185,18 +152,6 @@ pub fn summarize_show(show: &Show) -> String {
             sorted.sort_by(|a, b| b.1.cmp(&a.1));
             let parts: Vec<String> = sorted.iter().map(|(k, v)| format!("{k}: {v}")).collect();
             lines.push(format!("  Effect types: {}", parts.join(", ")));
-        }
-
-        // Library summary
-        if !seq.gradient_library.is_empty() {
-            lines.push(format!("  Library gradients: {}", seq.gradient_library.len()));
-        }
-        if !seq.curve_library.is_empty() {
-            lines.push(format!("  Library curves: {}", seq.curve_library.len()));
-        }
-        if !seq.scripts.is_empty() {
-            let names: Vec<&String> = seq.scripts.keys().collect();
-            lines.push(format!("  Scripts: {}", names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
         }
 
         // Sample of first few tracks (so LLM can see structure)
