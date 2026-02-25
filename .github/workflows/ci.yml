@@ -41,17 +41,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
 
-      # Override bundle.resources to empty so tauri_build doesn't fail
-      # validating resource globs (uv, agent-sidecar aren't present in CI)
+      # Create placeholder resources so tauri_build doesn't fail
+      # validating resource globs (uv and agent-sidecar aren't in CI)
+      - name: Create resource stubs
+        run: |
+          mkdir -p src-tauri/resources/agent-sidecar
+          touch src-tauri/resources/uv
+
       - run: cd src-tauri && cargo check
-        env:
-          TAURI_CONFIG: '{"bundle":{"resources":{}}}'
       - run: cd src-tauri && cargo clippy -- -D warnings
-        env:
-          TAURI_CONFIG: '{"bundle":{"resources":{}}}'
       - run: cd src-tauri && cargo test
-        env:
-          TAURI_CONFIG: '{"bundle":{"resources":{}}}'
 
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
