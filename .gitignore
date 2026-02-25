@@ -29,9 +29,6 @@ src-tauri/resources/agent-sidecar/
 *.p12
 *.pfx
 
-# Generated Tauri icons (regenerate with: pnpm tauri icon)
-src-tauri/icons/*.png
-!src-tauri/icons/icon.png
-src-tauri/icons/*.icns
+# Generated Tauri icons — mobile only (regenerate with: pnpm tauri icon)
 src-tauri/icons/android/
 src-tauri/icons/ios/
