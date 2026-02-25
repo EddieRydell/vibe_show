@@ -26,7 +26,10 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             label: linux-x64
-            bundles: deb,appimage
+            # AppImage disabled: linuxdeploy-plugin-gtk crashes on ubuntu-22.04
+            # (std::runtime_error in GTK plugin). Re-enable when Tauri ships
+            # the new appimage bundler (tauri-apps/tauri#12491).
+            bundles: deb
 
     name: Build (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
@@ -79,11 +82,7 @@ jobs:
       #   - compiling + staging the agent sidecar
 
       - name: Build Tauri app
-        run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --verbose
-        env:
-          # Needed for linuxdeploy AppImage bundling on CI runners
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          NO_STRIP: "true"
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       # ── Upload artifacts ────────────────────────────────────────────
 
@@ -110,7 +109,6 @@ jobs:
         with:
           name: vibelights-${{ matrix.label }}
           path: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
             src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
 
   # ── Release (tag pushes only) ─────────────────────────────────────────
