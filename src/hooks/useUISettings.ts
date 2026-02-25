@@ -21,7 +21,7 @@ function load(): UISettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULTS;
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as Partial<UISettings>;
     return {
       theme: parsed.theme ?? DEFAULTS.theme,
       accentColor: parsed.accentColor ?? DEFAULTS.accentColor,

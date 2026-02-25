@@ -96,7 +96,7 @@ export function HouseTree({
       <span className="text-text flex-1 truncate text-sm">{fixture.name}</span>
       <span className="text-text-2 text-[10px]">
         {fixture.color_model} {fixture.pixel_count}px
-        {fixture.bulb_shape && fixture.bulb_shape !== "LED" ? ` ${fixture.bulb_shape}` : ""}
+        {fixture.bulb_shape !== "LED" ? ` ${fixture.bulb_shape}` : ""}
       </span>
       <button
         onClick={() => onEditFixture(fixture)}

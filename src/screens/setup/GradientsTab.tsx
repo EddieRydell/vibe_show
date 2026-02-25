@@ -27,7 +27,7 @@ export function GradientsTab({ setError }: Props) {
   const refresh = useCallback(() => {
     cmd.listGlobalGradients()
       .then(setGradients)
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
   }, [setError]);
 
   useEffect(refresh, [refresh]);
@@ -45,14 +45,14 @@ export function GradientsTab({ setError }: Props) {
     };
     cmd.setGlobalGradient(name, defaultGradient)
       .then(refresh)
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
   }, [gradients, refresh, setError]);
 
   const handleUpdate = useCallback(
     (name: string, gradient: ColorGradient) => {
       cmd.setGlobalGradient(name, gradient)
         .then(refresh)
-        .catch((e) => setError(String(e)));
+        .catch((e: unknown) => setError(String(e)));
     },
     [refresh, setError],
   );
@@ -61,7 +61,7 @@ export function GradientsTab({ setError }: Props) {
     (oldName: string, newName: string) => {
       cmd.renameGlobalGradient(oldName, newName)
         .then(refresh)
-        .catch((e) => setError(String(e)));
+        .catch((e: unknown) => setError(String(e)));
     },
     [refresh, setError],
   );
@@ -70,7 +70,7 @@ export function GradientsTab({ setError }: Props) {
     (name: string) => {
       cmd.deleteGlobalGradient(name)
         .then(refresh)
-        .catch((e) => setError(String(e)));
+        .catch((e: unknown) => setError(String(e)));
     },
     [refresh, setError],
   );

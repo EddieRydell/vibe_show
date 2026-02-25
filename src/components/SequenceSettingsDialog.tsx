@@ -64,7 +64,7 @@ export function SequenceSettingsDialog({ sequence, sequenceIndex, onSaved, onCan
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Escape") onCancel();
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) handleSave();
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void handleSave();
     },
     [onCancel, handleSave],
   );
@@ -171,7 +171,7 @@ export function SequenceSettingsDialog({ sequence, sequenceIndex, onSaved, onCan
             Cancel
           </button>
           <button
-            onClick={handleSave}
+            onClick={() => { void handleSave(); }}
             disabled={saving}
             className="bg-primary hover:bg-primary/90 rounded px-4 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-50"
           >

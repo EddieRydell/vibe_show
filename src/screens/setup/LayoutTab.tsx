@@ -50,7 +50,7 @@ export function LayoutTab({ setup, onSetupUpdate, setError }: Props) {
         <div className="bg-primary/10 border-primary/20 flex items-center justify-between border-b px-4 py-2">
           <span className="text-primary text-xs font-medium">Unsaved layout changes</span>
           <button
-            onClick={handleSave}
+            onClick={() => { void handleSave(); }}
             className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white"
           >
             Save

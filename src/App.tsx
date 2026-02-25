@@ -10,6 +10,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AppShellContext } from "./components/ScreenShell";
 import { AppBar } from "./components/AppBar";
 import { ChatPanel } from "./components/ChatPanel";
+import { ToastProvider } from "./hooks/useToast";
 
 const EditorScreen = lazy(() => import("./screens/EditorScreen").then(m => ({ default: m.EditorScreen })));
 const ScriptScreen = lazy(() => import("./screens/ScriptScreen").then(m => ({ default: m.ScriptScreen })));
@@ -27,7 +28,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>("setups");
 
   useEffect(() => {
-    cmd.getSettings().then((settings) => {
+    void cmd.getSettings().then((settings) => {
       if (settings) {
         setScreen({ kind: "home" });
       } else {
@@ -197,21 +198,23 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <AppShellContext.Provider value={shellContext}>
-        <div className="bg-bg text-text flex h-full flex-col">
-          <AppBar />
-          <div className="flex min-h-0 flex-1">
-            <main className="min-w-0 flex-1">{content}</main>
-            <ChatPanel
-              open={chatOpen}
-              onClose={toggleChat}
-              onRefresh={() => refreshRef.current?.()}
-              screen={screen}
-            />
+      <ToastProvider>
+        <AppShellContext.Provider value={shellContext}>
+          <div className="bg-bg text-text flex h-full flex-col">
+            <AppBar />
+            <div className="flex min-h-0 flex-1">
+              <main className="min-w-0 flex-1">{content}</main>
+              <ChatPanel
+                open={chatOpen}
+                onClose={toggleChat}
+                onRefresh={() => refreshRef.current?.()}
+                screen={screen}
+              />
+            </div>
           </div>
-        </div>
-        <ProgressOverlay operations={progressOps} />
-      </AppShellContext.Provider>
+          <ProgressOverlay operations={progressOps} />
+        </AppShellContext.Provider>
+      </ToastProvider>
     </ErrorBoundary>
   );
 }

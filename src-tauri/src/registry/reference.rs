@@ -325,66 +325,62 @@ color1.scale(wave * falloff)
 
 /// Light show design best practices.
 pub fn design_guide() -> String {
-    r"# Light Show Design Guide
+    use crate::model::BlendMode;
 
-## Layering Strategy
-- **Base layer**: Ambient fills (Solid, Gradient, or slow Rainbow) on the bottom track with low opacity
-- **Accent layers**: Movement effects (Chase, Wipe, Fade) on higher tracks
-- **Top layer**: Highlights (Strobe, Twinkle) with short durations or low opacity
-- Use blend modes to combine: Add for glow effects, Multiply for darkening, Screen for brightening, Alpha for overlays
-
-## Blend Mode Guide
-| Mode | Use Case |
-|------|----------|
-| Override | Solo effect, replaces everything below |
-| Add | Glow, energy buildup — adds light (never darkens) |
-| Multiply | Shadow, dimming — darkens (never brightens) |
-| Max | Peak detection — takes brightest channel |
-| Alpha | Standard overlay — uses opacity for transparency |
-| Screen | Soft brightening — lighter than Add |
-| Subtract | Mask out colors from below |
-| Min | Minimum of both — creates dark intersections |
-| Average | Blend of both — good for smooth transitions |
-| Mask | Uses top layer as brightness mask on bottom |
-| IntensityOverlay | Uses top layer's brightness to modulate bottom |
-
-## Beat Sync Techniques
-- Use `get_beats_in_range` to get exact beat timestamps
-- Place Strobe effects on beats for impact
-- Use Fade effects spanning 2-4 beats for rhythmic breathing
-- Chase effects with speed matching BPM: `speed = tempo / 60`
-- For half-time feel, use `speed = tempo / 120`
-
-## Section-Based Design
-1. Call `get_sections` to understand the song structure
-2. Design each section with a distinct visual identity:
-   - **Intro**: Slow builds, dark-to-bright, single colors
-   - **Verse**: Moderate movement, muted palette
-   - **Chorus**: Full brightness, fast movement, rich gradients
-   - **Bridge**: Contrasting colors/patterns from chorus
-   - **Outro**: Mirror intro, bright-to-dark fade
-
-## Color Theory for Lights
-- **Complementary**: High contrast (red+cyan, blue+orange) — great for chorus
-- **Analogous**: Harmonious (blue+purple+pink) — great for verse
-- **Monochromatic**: Single hue, varied brightness — great for builds
-- **Warm vs Cool**: Warm (red/orange/yellow) feels energetic; cool (blue/purple/cyan) feels calm
-- Use the gradient library to define color palettes per section
-
-## Common Patterns
-- **Energy Build**: Increase brightness, speed, and color saturation from verse to chorus
-- **Drop Impact**: Strobe + full-white flash at drop, then immediate Chase or Wipe
-- **Breathing**: Fade effect with sine wave curve, 2-4 beat period
-- **Sparkle Layer**: Twinkle on top track with Add blend at 30-50% opacity
-- **Color Wash**: Gradient effect spanning all fixtures, slow offset animation
-- **Beat Pulse**: Strobe at tempo BPM, 20-30% duty cycle, on top of ambient layer
-
-## DSL Script Tips
-- Start simple, test, then add complexity
-- Use `hash(pixel, floor(t * speed))` for per-pixel randomness that changes with time
-- Use `fract()` for repeating patterns
-- Use `smoothstep(e0, e1, x)` for smooth transitions (e0 must be < e1)
-- Combine `pos` with `t` for traveling patterns: `sin((pos - t) * TAU * 3.0)`
-"
-    .to_string()
+    let mut out = String::from(
+        "# Light Show Design Guide\n\
+         \n\
+         ## Layering Strategy\n\
+         - **Base layer**: Ambient fills (Solid, Gradient, or slow Rainbow) on the bottom track with low opacity\n\
+         - **Accent layers**: Movement effects (Chase, Wipe, Fade) on higher tracks\n\
+         - **Top layer**: Highlights (Strobe, Twinkle) with short durations or low opacity\n\
+         - Use blend modes to combine: Add for glow effects, Multiply for darkening, Screen for brightening, Alpha for overlays\n\
+         \n\
+         ## Blend Mode Guide\n\
+         | Mode | Use Case |\n\
+         |------|----------|\n",
+    );
+    for mode in BlendMode::all() {
+        let _ = writeln!(out, "| {mode:?} | {} |", mode.description());
+    }
+    out.push_str(
+        "\n## Beat Sync Techniques\n\
+         - Use `get_beats_in_range` to get exact beat timestamps\n\
+         - Place Strobe effects on beats for impact\n\
+         - Use Fade effects spanning 2-4 beats for rhythmic breathing\n\
+         - Chase effects with speed matching BPM: `speed = tempo / 60`\n\
+         - For half-time feel, use `speed = tempo / 120`\n\
+         \n\
+         ## Section-Based Design\n\
+         1. Call `get_sections` to understand the song structure\n\
+         2. Design each section with a distinct visual identity:\n\
+            - **Intro**: Slow builds, dark-to-bright, single colors\n\
+            - **Verse**: Moderate movement, muted palette\n\
+            - **Chorus**: Full brightness, fast movement, rich gradients\n\
+            - **Bridge**: Contrasting colors/patterns from chorus\n\
+            - **Outro**: Mirror intro, bright-to-dark fade\n\
+         \n\
+         ## Color Theory for Lights\n\
+         - **Complementary**: High contrast (red+cyan, blue+orange) — great for chorus\n\
+         - **Analogous**: Harmonious (blue+purple+pink) — great for verse\n\
+         - **Monochromatic**: Single hue, varied brightness — great for builds\n\
+         - **Warm vs Cool**: Warm (red/orange/yellow) feels energetic; cool (blue/purple/cyan) feels calm\n\
+         - Use the gradient library to define color palettes per section\n\
+         \n\
+         ## Common Patterns\n\
+         - **Energy Build**: Increase brightness, speed, and color saturation from verse to chorus\n\
+         - **Drop Impact**: Strobe + full-white flash at drop, then immediate Chase or Wipe\n\
+         - **Breathing**: Fade effect with sine wave curve, 2-4 beat period\n\
+         - **Sparkle Layer**: Twinkle on top track with Add blend at 30-50% opacity\n\
+         - **Color Wash**: Gradient effect spanning all fixtures, slow offset animation\n\
+         - **Beat Pulse**: Strobe at tempo BPM, 20-30% duty cycle, on top of ambient layer\n\
+         \n\
+         ## DSL Script Tips\n\
+         - Start simple, test, then add complexity\n\
+         - Use `hash(pixel, floor(t * speed))` for per-pixel randomness that changes with time\n\
+         - Use `fract()` for repeating patterns\n\
+         - Use `smoothstep(e0, e1, x)` for smooth transitions (e0 must be < e1)\n\
+         - Combine `pos` with `t` for traveling patterns: `sin((pos - t) * TAU * 3.0)`\n",
+    );
+    out
 }

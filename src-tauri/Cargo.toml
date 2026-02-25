@@ -6,7 +6,7 @@ default-run = "vibe_lights"
 
 [features]
 default = ["tauri-app"]
-tauri-app = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-build"]
+tauri-app = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-build", "dep:axum", "dep:tower-http"]
 devtools = ["tauri/devtools"]
 
 [dependencies]
@@ -20,8 +20,11 @@ tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["rustls-tls", "json", "blocking", "stream"], default-features = false }
 clap = { version = "4", features = ["derive"] }
 parking_lot = "0.12"
+indexmap = "2"
 schemars = "0.8"
 futures-util = "0.3"
+axum = { version = "0.8", optional = true }
+tower-http = { version = "0.6", features = ["cors"], optional = true }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
@@ -44,6 +47,9 @@ todo = "deny"
 unimplemented = "deny"
 unreachable = "warn"  # warn-only: Tauri's #[tauri::command] macro generates unreachable!()
 indexing_slicing = "deny"
+implicit_clone = "deny"              # catches .clone()/.to_string() on types that impl Deref
+lossy_float_literal = "warn"        # flags float literals that lose precision
+large_stack_frames = "warn"         # catches accidentally huge stack allocations
 # Additional strictness
 missing_safety_doc = "deny"
 undocumented_unsafe_blocks = "deny"

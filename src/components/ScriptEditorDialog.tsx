@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ScriptCompileResult } from "../types";
 import { cmd } from "../commands";
+import { useDebouncedEffect } from "../hooks/useDebounce";
 
 interface Props {
   scriptName: string | null; // null = new script
@@ -21,7 +22,6 @@ export function ScriptEditorDialog({
   const [compiling, setCompiling] = useState(false);
   const [modified, setModified] = useState(false);
   const [saving, setSaving] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Auto-generate name for new scripts
   useEffect(() => {
@@ -35,11 +35,10 @@ export function ScriptEditorDialog({
   }, [scriptName]);
 
   // Auto-compile on change (debounced)
-  useEffect(() => {
-    if (!name.trim() || !source.trim()) return;
-    setModified(true);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
+  useDebouncedEffect(
+    () => {
+      if (!name.trim() || !source.trim()) return;
+      setModified(true);
       setCompiling(true);
       cmd.compileGlobalScript(name.trim(), source)
         .then((result) => {
@@ -48,9 +47,10 @@ export function ScriptEditorDialog({
         })
         .catch(console.error)
         .finally(() => setCompiling(false));
-    }, 500);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [source, name]);
+    },
+    500,
+    [source, name],
+  );
 
   const handleSave = useCallback(async () => {
     if (!name.trim()) return;
@@ -77,7 +77,7 @@ export function ScriptEditorDialog({
       if (e.key === "Escape") onCancel();
       if (e.key === "s" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        handleSave();
+        void handleSave();
       }
     },
     [onCancel, handleSave],
@@ -168,7 +168,7 @@ export function ScriptEditorDialog({
             Cancel
           </button>
           <button
-            onClick={handleSave}
+            onClick={() => { void handleSave(); }}
             disabled={saving || !name.trim()}
             className="bg-primary hover:bg-primary/90 rounded px-4 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-50"
           >

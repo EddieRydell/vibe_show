@@ -7,26 +7,26 @@ export function AppBar({ onClose }: { onClose?: () => void } = {}) {
 
   useEffect(() => {
     const appWindow = getCurrentWindow();
-    appWindow.isMaximized().then(setMaximized);
+    void appWindow.isMaximized().then(setMaximized);
     const unlisten = appWindow.onResized(() => {
-      appWindow.isMaximized().then(setMaximized);
+      void appWindow.isMaximized().then(setMaximized);
     });
     return () => {
-      unlisten.then((fn) => fn());
+      void unlisten.then((fn) => fn());
     };
   }, []);
 
   const handleMinimize = useCallback(() => {
-    getCurrentWindow().minimize();
+    void getCurrentWindow().minimize();
   }, []);
 
   const handleToggleMaximize = useCallback(() => {
-    getCurrentWindow().toggleMaximize();
+    void getCurrentWindow().toggleMaximize();
   }, []);
 
   const handleClose = useCallback(() => {
     if (onClose) onClose();
-    else getCurrentWindow().close();
+    else void getCurrentWindow().close();
   }, [onClose]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -34,12 +34,12 @@ export function AppBar({ onClose }: { onClose?: () => void } = {}) {
     if ((e.target as HTMLElement).closest("button, input, a, select, textarea")) return;
     if (e.button !== 0) return;
     e.preventDefault();
-    getCurrentWindow().startDragging();
+    void getCurrentWindow().startDragging();
   }, []);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest("button, input, a, select, textarea")) return;
-    getCurrentWindow().toggleMaximize();
+    void getCurrentWindow().toggleMaximize();
   }, []);
 
   return (

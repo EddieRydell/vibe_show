@@ -99,9 +99,9 @@ export function LayoutCanvas({
 
     // Draw fixtures
     for (let fi = 0; fi < layouts.length; fi++) {
-      const layout = layouts[fi];
+      const layout = layouts[fi]!;
       const isSelected = layout.fixture_id === selectedFixtureId;
-      const color = FIXTURE_COLORS[fi % FIXTURE_COLORS.length];
+      const color = FIXTURE_COLORS[fi % FIXTURE_COLORS.length]!;
 
       for (const pos of layout.pixel_positions) {
         const { x, y } = toCanvas(pos);
@@ -130,7 +130,7 @@ export function LayoutCanvas({
 
       // Label for selected fixture
       if (isSelected && layout.pixel_positions.length > 0) {
-        const firstPos = toCanvas(layout.pixel_positions[0]);
+        const firstPos = toCanvas(layout.pixel_positions[0]!);
         const fixture = fixtures.find((f) => f.id === layout.fixture_id);
         if (fixture) {
           ctx.font = "11px sans-serif";
@@ -146,7 +146,7 @@ export function LayoutCanvas({
     (cx: number, cy: number): number | null => {
       // Check in reverse order (top-most first)
       for (let fi = layouts.length - 1; fi >= 0; fi--) {
-        const layout = layouts[fi];
+        const layout = layouts[fi]!;
         for (const pos of layout.pixel_positions) {
           const { x, y } = toCanvas(pos);
           const dx = cx - x;

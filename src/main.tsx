@@ -2,13 +2,13 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { DetachedPreview } from "./screens/DetachedPreview";
-import { applyUISettings } from "./hooks/useUISettings";
+import { applyUISettings, type UISettings } from "./hooks/useUISettings";
 import "./index.css";
 
 // Apply saved UI settings before first render to prevent flash
 try {
   const raw = localStorage.getItem("ui-settings");
-  if (raw) applyUISettings(JSON.parse(raw));
+  if (raw) applyUISettings(JSON.parse(raw) as UISettings);
 } catch {
   // Falls back to CSS defaults
 }

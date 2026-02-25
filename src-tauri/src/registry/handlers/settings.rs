@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::error::AppError;
 use crate::registry::params::{InitializeDataDirParams, SetLlmConfigParams};
 use crate::registry::{CommandOutput, CommandResult};
-use crate::settings::{self, AppSettings, LlmConfigInfo, LlmProvider, LlmProviderConfig};
+use crate::settings::{self, AppSettings, LlmConfigInfo, LlmProviderConfig};
 use crate::state::AppState;
 
 pub fn get_settings(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
@@ -38,13 +38,11 @@ pub fn set_llm_config(
     let mut settings_guard = state.settings.lock();
     if let Some(ref mut s) = *settings_guard {
         s.llm = LlmProviderConfig {
-            provider: p.provider,
             api_key: if p.api_key.is_empty() {
                 None
             } else {
                 Some(p.api_key.clone())
             },
-            base_url: p.base_url,
             model: p.model,
         };
         settings::save_settings(&state.app_config_dir, s)
@@ -66,9 +64,7 @@ pub fn set_llm_config(
 pub fn get_llm_config(state: &Arc<AppState>) -> Result<CommandOutput, AppError> {
     let info = state.settings.lock().as_ref().map_or(
         LlmConfigInfo {
-            provider: LlmProvider::Anthropic,
             has_api_key: false,
-            base_url: None,
             model: None,
         },
         |s| LlmConfigInfo::from_config(&s.llm),

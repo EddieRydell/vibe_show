@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { cmd } from "../commands";
+import { PROGRESS } from "../events";
 import type { PythonEnvStatus, ProgressEvent } from "../types";
+import { useTauriListener } from "../hooks/useTauriListener";
 
 interface PythonSetupWizardProps {
   pythonStatus: PythonEnvStatus | null;
@@ -24,20 +25,15 @@ export function PythonSetupWizard({
   const [error, setError] = useState("");
 
   useEffect(() => {
-    onCheckStatus();
+    void onCheckStatus();
   }, [onCheckStatus]);
 
-  useEffect(() => {
-    const unlisten = listen<ProgressEvent>("progress", (event) => {
-      if (event.payload.operation === "python_setup") {
-        setProgress(event.payload.progress);
-        setProgressMessage(event.payload.phase);
-      }
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, []);
+  useTauriListener<ProgressEvent>(PROGRESS, (p) => {
+    if (p.operation === "python_setup") {
+      setProgress(p.progress);
+      setProgressMessage(p.phase);
+    }
+  });
 
   // Check if already ready
   useEffect(() => {
@@ -66,7 +62,7 @@ export function PythonSetupWizard({
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (phase === "install") handleCancelSetup();
+        if (phase === "install") void handleCancelSetup();
         else onClose();
       }
     },
@@ -79,7 +75,7 @@ export function PythonSetupWizard({
       onKeyDown={handleKeyDown}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
-          if (phase === "install") handleCancelSetup();
+          if (phase === "install") void handleCancelSetup();
           else onClose();
         }
       }}
@@ -166,7 +162,7 @@ export function PythonSetupWizard({
                 Cancel
               </button>
               <button
-                onClick={handleInstall}
+                onClick={() => { void handleInstall(); }}
                 className="border-primary bg-primary hover:bg-primary-hover rounded border px-3 py-1.5 text-xs font-medium text-white transition-colors"
               >
                 Install
@@ -175,7 +171,7 @@ export function PythonSetupWizard({
           )}
           {phase === "install" && (
             <button
-              onClick={handleCancelSetup}
+              onClick={() => { void handleCancelSetup(); }}
               className="border-border bg-surface-2 text-text-2 hover:bg-bg rounded border px-3 py-1.5 text-xs transition-colors"
             >
               Cancel

@@ -3,6 +3,7 @@ import { EffectBlock } from "./EffectBlock";
 import type { AudioAnalysis, InteractionMode, PlaybackInfo, Show } from "../types";
 import type { WaveformData } from "../hooks/useAudio";
 import { getEffectiveZoom } from "../utils/cssZoom";
+import { formatRulerTime } from "../utils/formatTime";
 import { sectionColor } from "../utils/sectionColor";
 import {
   LABEL_WIDTH,
@@ -20,7 +21,6 @@ import {
 import { buildFixtureTrackMap, computeStackedLayoutFast } from "../utils/timelineLayout";
 import { drawWaveform } from "../utils/drawWaveform";
 import { useTimelineDrag } from "../hooks/useTimelineDrag";
-import type { DragState } from "../hooks/useTimelineDrag";
 
 interface TimelineProps {
   show: Show | null;
@@ -50,12 +50,6 @@ interface TimelineProps {
   region?: [number, number] | null;
   onRegionChange?: (region: [number, number] | null) => void;
   analysis?: AudioAnalysis | null;
-}
-
-function formatRulerTime(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return m > 0 ? `${m}:${s.toString().padStart(2, "0")}` : `${s}s`;
 }
 
 export function Timeline({
@@ -121,7 +115,7 @@ export function Timeline({
   }, [stackedRows]);
 
   const totalTrackHeight = useMemo(() => {
-    return rowOffsets.length > 0 ? rowOffsets[rowOffsets.length - 1].bottom : 0;
+    return rowOffsets.length > 0 ? rowOffsets[rowOffsets.length - 1]!.bottom : 0;
   }, [rowOffsets]);
 
   // Compute visible row indices for virtualization (with overscan)
@@ -132,14 +126,14 @@ export function Timeline({
     }
     let start = 0;
     for (let i = 0; i < rowOffsets.length; i++) {
-      if (rowOffsets[i].bottom > scrollTop) {
+      if (rowOffsets[i]!.bottom > scrollTop) {
         start = i;
         break;
       }
     }
     let end = rowOffsets.length;
     for (let i = start; i < rowOffsets.length; i++) {
-      if (rowOffsets[i].top >= scrollTop + viewportHeight) {
+      if (rowOffsets[i]!.top >= scrollTop + viewportHeight) {
         end = i;
         break;
       }
@@ -666,10 +660,10 @@ export function Timeline({
                 const moveGhost =
                   dragPreview &&
                   dragState?.type === "move" &&
-                  (dragState as Extract<DragState, { type: "move" }>).didDrag &&
+                  (dragState).didDrag &&
                   dragPreview.targetFixtureId === row.fixtureId &&
                   dragPreview.targetFixtureId !==
-                    (dragState as Extract<DragState, { type: "move" }>).originalFixtureId
+                    (dragState).originalFixtureId
                     ? dragPreview
                     : null;
 
@@ -695,11 +689,11 @@ export function Timeline({
                         dragState.key === placed.key;
                       const isMoveDragToOtherRow =
                         isDragging &&
-                        dragState?.type === "move" &&
-                        (dragState as Extract<DragState, { type: "move" }>).didDrag &&
+                        dragState.type === "move" &&
+                        (dragState).didDrag &&
                         preview?.targetFixtureId != null &&
                         preview.targetFixtureId !==
-                          (dragState as Extract<DragState, { type: "move" }>).originalFixtureId;
+                          (dragState).originalFixtureId;
 
                       const displayStart = preview ? preview.start : placed.startSec;
                       const displayDuration = preview
@@ -709,7 +703,7 @@ export function Timeline({
                       // Swipe drag: highlight effects being swiped
                       const isBeingSwiped =
                         dragState?.type === "swipe" &&
-                        (dragState as Extract<DragState, { type: "swipe" }>).swipedKeys.has(
+                        (dragState).swipedKeys.has(
                           placed.key,
                         );
 

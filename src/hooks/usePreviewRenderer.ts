@@ -39,7 +39,7 @@ function computeGeometry(
   for (const fl of show.layout.fixtures) {
     const def = show.fixtures.find((f) => f.id === fl.fixture_id);
     const bulbShape = def?.bulb_shape ?? "LED";
-    const radiusMul = def?.display_radius_override ?? BULB_SHAPE_RADIUS[bulbShape] ?? 1.0;
+    const radiusMul = def?.display_radius_override ?? BULB_SHAPE_RADIUS[bulbShape] ?? 1.0; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- bulbShape may not be in map
     fixtureOrder.push({
       fixtureId: fl.fixture_id,
       positions: fl.pixel_positions,
@@ -157,7 +157,7 @@ function renderFrame(
   const colorGroups = new Map<number, number[]>();
   for (let i = 0; i < geo.totalPixels; i++) {
     const off = i * 4;
-    const r = colorBuf[off], g = colorBuf[off + 1], b = colorBuf[off + 2];
+    const r = colorBuf[off]!, g = colorBuf[off + 1]!, b = colorBuf[off + 2]!;
     if (r === 0 && g === 0 && b === 0) continue;
     const key = (r << 16) | (g << 8) | b;
     let group = colorGroups.get(key);
@@ -189,8 +189,8 @@ function renderFrame(
         const cb = colorKey & 0xFF;
 
         for (const i of indices) {
-          const cx = Math.round(geo.xs[i] / GLOW_SCALE);
-          const cy = Math.round(geo.ys[i] / GLOW_SCALE);
+          const cx = Math.round(geo.xs[i]! / GLOW_SCALE);
+          const cy = Math.round(geo.ys[i]! / GLOW_SCALE);
 
           // Stamp radial falloff
           for (let dy = -glowRadius; dy < glowRadius; dy++) {
@@ -204,10 +204,10 @@ function renderFrame(
               const alpha = (1 - dist * dist) * glowAlpha;
               const off = (py * glowW + px) * 4;
               // Additive blend (clamped to 255)
-              gd[off] = Math.min(255, gd[off] + cr * alpha);
-              gd[off + 1] = Math.min(255, gd[off + 1] + cg * alpha);
-              gd[off + 2] = Math.min(255, gd[off + 2] + cb * alpha);
-              gd[off + 3] = Math.min(255, gd[off + 3] + 255 * alpha);
+              gd[off] = Math.min(255, gd[off]! + cr * alpha);
+              gd[off + 1] = Math.min(255, gd[off + 1]! + cg * alpha);
+              gd[off + 2] = Math.min(255, gd[off + 2]! + cb * alpha);
+              gd[off + 3] = Math.min(255, gd[off + 3]! + 255 * alpha);
             }
           }
         }
@@ -242,9 +242,9 @@ function renderFrame(
 
     ctx.beginPath();
     for (const i of indices) {
-      const r = geo.radii[i] * bulbSize;
-      ctx.moveTo(geo.xs[i] + r, geo.ys[i]);
-      ctx.arc(geo.xs[i], geo.ys[i], r, 0, Math.PI * 2);
+      const r = geo.radii[i]! * bulbSize;
+      ctx.moveTo(geo.xs[i]! + r, geo.ys[i]!);
+      ctx.arc(geo.xs[i]!, geo.ys[i]!, r, 0, Math.PI * 2);
     }
     ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
     ctx.fill();

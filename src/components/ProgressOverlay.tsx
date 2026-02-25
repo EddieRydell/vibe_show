@@ -23,7 +23,7 @@ function ProgressItem({ opName, tracked }: { opName: string; tracked: TrackedOpe
   const pct = indeterminate ? 0 : Math.round(event.progress * 100);
 
   const handleCancel = () => {
-    cmd.cancelOperation(opName);
+    void cmd.cancelOperation(opName);
   };
 
   return (

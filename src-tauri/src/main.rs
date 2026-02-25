@@ -58,7 +58,7 @@ fn main() {
                 script_cache: Mutex::new(std::collections::HashMap::new()),
                 python_sidecar: Mutex::new(None),
                 python_port: AtomicU16::new(0),
-                analysis_cache: Mutex::new(std::collections::HashMap::new()),
+                analysis_cache: Mutex::new(indexmap::IndexMap::new()),
                 agent_sidecar: Mutex::new(None),
                 agent_port: AtomicU16::new(0),
                 agent_session_id: Mutex::new(None),
@@ -66,6 +66,7 @@ fn main() {
                 agent_chats: Mutex::new(vibe_lights::chat::AgentChatsData::default()),
                 global_libraries: Mutex::new(global_libs),
                 cancellation: CancellationRegistry::new(),
+                api_port: AtomicU16::new(0),
             });
 
             // Load agent chat history

@@ -37,9 +37,9 @@ impl TryFrom<TimeRangeRaw> for TimeRange {
 const TIME_EPSILON: f64 = 1e-9;
 
 impl TimeRange {
-    /// Create a time range. Returns None if start >= end or either is negative.
+    /// Create a time range. Returns None if start >= end, either is negative, or either is non-finite.
     pub fn new(start: f64, end: f64) -> Option<Self> {
-        if start >= 0.0 && end > start {
+        if start.is_finite() && end.is_finite() && start >= 0.0 && end > start {
             Some(Self { start, end })
         } else {
             None
@@ -119,6 +119,22 @@ impl BlendMode {
             BlendMode::Mask,
             BlendMode::IntensityOverlay,
         ]
+    }
+
+    pub const fn description(&self) -> &'static str {
+        match self {
+            BlendMode::Override => "Solo effect, replaces everything below",
+            BlendMode::Add => "Glow, energy buildup — adds light (never darkens)",
+            BlendMode::Multiply => "Shadow, dimming — darkens (never brightens)",
+            BlendMode::Max => "Peak detection — takes brightest channel",
+            BlendMode::Alpha => "Standard overlay — uses opacity for transparency",
+            BlendMode::Subtract => "Mask out colors from below",
+            BlendMode::Min => "Minimum of both — creates dark intersections",
+            BlendMode::Average => "Blend of both — good for smooth transitions",
+            BlendMode::Screen => "Soft brightening — lighter than Add",
+            BlendMode::Mask => "Uses top layer as brightness mask on bottom",
+            BlendMode::IntensityOverlay => "Uses top layer's brightness to modulate bottom",
+        }
     }
 }
 
@@ -410,7 +426,7 @@ pub struct EffectParams(
 macro_rules! owned_or {
     ($method:ident, $accessor:ident, $ty:ty) => {
         pub fn $method(&self, key: ParamKey, default: $ty) -> $ty {
-            self.get(key).and_then(ParamValue::$accessor).unwrap_or(default)
+            self.get(&key).and_then(ParamValue::$accessor).unwrap_or(default)
         }
     };
 }
@@ -419,7 +435,7 @@ macro_rules! owned_or {
 macro_rules! ref_or {
     ($method:ident, $accessor:ident, $ty:ty) => {
         pub fn $method<'a>(&'a self, key: ParamKey, default: &'a $ty) -> &'a $ty {
-            self.get(key).and_then(ParamValue::$accessor).unwrap_or(default)
+            self.get(&key).and_then(ParamValue::$accessor).unwrap_or(default)
         }
     };
 }
@@ -438,9 +454,8 @@ impl EffectParams {
         self.0.insert(key, value);
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn get(&self, key: ParamKey) -> Option<&ParamValue> {
-        self.0.get(&key)
+    pub fn get(&self, key: &ParamKey) -> Option<&ParamValue> {
+        self.0.get(key)
     }
 
     pub fn inner(&self) -> &HashMap<ParamKey, ParamValue> {
@@ -458,12 +473,14 @@ impl EffectParams {
     ref_or!(gradient_or, as_color_gradient, ColorGradient);
     ref_or!(flag_set_or, as_flag_set, [String]);
 
+    #[allow(clippy::needless_pass_by_value)]
     pub fn text_or<'a>(&'a self, key: ParamKey, default: &'a str) -> &'a str {
-        self.get(key).and_then(|v| v.as_text()).unwrap_or(default)
+        self.get(&key).and_then(|v| v.as_text()).unwrap_or(default)
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     pub fn enum_or<'a>(&'a self, key: ParamKey, default: &'a str) -> &'a str {
-        self.get(key).and_then(ParamValue::as_enum_variant).unwrap_or(default)
+        self.get(&key).and_then(ParamValue::as_enum_variant).unwrap_or(default)
     }
 
     /// Returns true if any parameter value is a library reference.
@@ -557,7 +574,8 @@ pub struct Track {
 }
 
 /// A sequence is the top-level timeline container. One sequence per song/show.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+/// Deserialization runs `validated()` automatically via `#[serde(from = "SequenceRaw")]`.
+#[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 pub struct Sequence {
     pub name: String,
@@ -570,8 +588,33 @@ pub struct Sequence {
     /// Tracks layered bottom (index 0) to top.
     pub tracks: Vec<Track>,
     /// Named motion paths. Key = path name.
-    #[serde(default)]
     pub motion_paths: HashMap<String, MotionPath>,
+}
+
+#[derive(Deserialize)]
+struct SequenceRaw {
+    name: String,
+    duration: f64,
+    frame_rate: f64,
+    audio_file: Option<String>,
+    tracks: Vec<Track>,
+    #[serde(default)]
+    motion_paths: HashMap<String, MotionPath>,
+}
+
+impl<'de> Deserialize<'de> for Sequence {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = SequenceRaw::deserialize(deserializer)?;
+        Ok(Sequence {
+            name: raw.name,
+            duration: raw.duration,
+            frame_rate: raw.frame_rate,
+            audio_file: raw.audio_file,
+            tracks: raw.tracks,
+            motion_paths: raw.motion_paths,
+        }
+        .validated())
+    }
 }
 
 impl Sequence {
@@ -583,10 +626,10 @@ impl Sequence {
     /// guarantee the invariants the evaluator depends on.
     #[must_use]
     pub fn validated(mut self) -> Self {
-        if self.duration <= 0.0 || self.duration.is_nan() {
+        if !self.duration.is_finite() || self.duration <= 0.0 {
             self.duration = 30.0;
         }
-        if self.frame_rate <= 0.0 || self.frame_rate.is_nan() {
+        if !self.frame_rate.is_finite() || self.frame_rate <= 0.0 {
             self.frame_rate = 30.0;
         }
         self
@@ -707,6 +750,13 @@ mod tests {
     }
 
     #[test]
+    fn time_range_infinity_is_none() {
+        assert!(TimeRange::new(0.0, f64::INFINITY).is_none());
+        assert!(TimeRange::new(f64::NEG_INFINITY, 5.0).is_none());
+        assert!(TimeRange::new(f64::NEG_INFINITY, f64::INFINITY).is_none());
+    }
+
+    #[test]
     fn time_range_contains_boundaries() {
         let tr = TimeRange::new(1.0, 3.0).expect("valid range");
         assert!(tr.contains(1.0));
@@ -798,7 +848,7 @@ mod tests {
             .set(ParamKey::Gradient, ParamValue::GradientRef("my_grad".to_string()));
 
         let resolved = params.resolve_refs(&gradient_lib, &curve_lib);
-        assert!(resolved.get(ParamKey::Gradient).expect("should exist").as_color_gradient().is_some());
+        assert!(resolved.get(&ParamKey::Gradient).expect("should exist").as_color_gradient().is_some());
     }
 
     #[test]
@@ -810,7 +860,7 @@ mod tests {
             .set(ParamKey::Gradient, ParamValue::GradientRef("missing".to_string()));
 
         let resolved = params.resolve_refs(&gradient_lib, &curve_lib);
-        assert!(resolved.get(ParamKey::Gradient).expect("should exist").as_gradient_ref().is_some());
+        assert!(resolved.get(&ParamKey::Gradient).expect("should exist").as_gradient_ref().is_some());
     }
 
     // ── ParamValue accessor boundary tests ───────────────────────
@@ -855,5 +905,38 @@ mod tests {
     fn param_key_unknown_deserializes_as_custom() {
         let back: ParamKey = serde_json::from_str("\"UnknownKey\"").expect("deserialize");
         assert_eq!(back, ParamKey::Custom("UnknownKey".to_string()));
+    }
+
+    // ── Sequence deserialization validation ──────────────────────
+
+    #[test]
+    fn sequence_deser_nan_duration_clamps_to_default() {
+        // NaN can't be represented in JSON; use a negative value to test the clamp.
+        let json = r#"{"name":"test","duration":-5.0,"frame_rate":60.0,"audio_file":null,"tracks":[]}"#;
+        let seq: Sequence = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(seq.duration, 30.0);
+        assert_eq!(seq.frame_rate, 60.0);
+    }
+
+    #[test]
+    fn sequence_deser_negative_frame_rate_clamps_to_default() {
+        let json = r#"{"name":"test","duration":10.0,"frame_rate":-1.0,"audio_file":null,"tracks":[]}"#;
+        let seq: Sequence = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(seq.duration, 10.0);
+        assert_eq!(seq.frame_rate, 30.0);
+    }
+
+    #[test]
+    fn sequence_validated_handles_infinity() {
+        let seq = Sequence {
+            name: "test".to_string(),
+            duration: f64::INFINITY,
+            frame_rate: f64::NEG_INFINITY,
+            audio_file: None,
+            tracks: vec![],
+            motion_paths: HashMap::new(),
+        }.validated();
+        assert_eq!(seq.duration, 30.0);
+        assert_eq!(seq.frame_rate, 30.0);
     }
 }

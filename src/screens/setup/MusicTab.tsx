@@ -15,7 +15,7 @@ export function MusicTab({ setError, onOpenAnalysis }: Props) {
   const refresh = useCallback(() => {
     cmd.listMedia()
       .then(setFiles)
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
   }, [setError]);
 
   useEffect(refresh, [refresh]);
@@ -30,7 +30,7 @@ export function MusicTab({ setError, onOpenAnalysis }: Props) {
     if (!selected) return;
     cmd.importMedia(selected)
       .then(() => refresh())
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
   }, [refresh, setError]);
 
   const [deleteFilename, setDeleteFilename] = useState<string | null>(null);
@@ -46,7 +46,7 @@ export function MusicTab({ setError, onOpenAnalysis }: Props) {
     if (!deleteFilename) return;
     cmd.deleteMedia(deleteFilename)
       .then(refresh)
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
     setDeleteFilename(null);
   }, [deleteFilename, refresh, setError]);
 
@@ -61,7 +61,7 @@ export function MusicTab({ setError, onOpenAnalysis }: Props) {
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-text text-sm font-medium">Music / Audio</h3>
         <button
-          onClick={handleImport}
+          onClick={() => { void handleImport(); }}
           className="bg-primary hover:bg-primary-hover rounded px-3 py-1 text-xs font-medium text-white transition-colors"
         >
           Import Audio

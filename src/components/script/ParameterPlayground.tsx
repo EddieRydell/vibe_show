@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { ParamValue, ScriptParamInfo } from "../../types";
+import type { ParamValue, ScriptParams, ScriptParamInfo } from "../../types";
 import {
   FloatSlider,
   IntSlider,
@@ -9,9 +9,6 @@ import {
   CurveEditor,
   SelectInput,
 } from "../controls";
-
-/** Simple string-keyed param map for script params (all Custom keys). */
-type ScriptParams = Record<string, ParamValue>;
 
 interface Props {
   params: ScriptParamInfo[];

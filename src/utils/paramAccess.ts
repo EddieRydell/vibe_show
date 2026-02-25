@@ -20,6 +20,6 @@ export function getParam(params: Record<string, ParamValue>, key: string, varian
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getDefault(schema: ParamSchema, variant: string, fallback: any): any {
   const d = schema.default;
-  if (d && variant in d) return (d as Record<string, unknown>)[variant];
+  if (variant in d) return (d as Record<string, unknown>)[variant];
   return fallback;
 }

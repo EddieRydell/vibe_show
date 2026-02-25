@@ -2,34 +2,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Maximize2, Plus, Trash2 } from "lucide-react";
 import { cmd } from "../commands";
 import type { Color, ColorGradient, ColorStop, Curve, CurvePoint } from "../types";
+import { colorToCSS, lerpColor } from "../utils/colorUtils";
+import { PANEL_WIDTH } from "../utils/layoutConstants";
 import { GradientEditor } from "./controls/GradientEditor";
 import { CurveEditor } from "./controls/CurveEditor";
 import { ScriptEditorDialog } from "./ScriptEditorDialog";
 import { CurveEditorDialog } from "./CurveEditorDialog";
 import { GradientEditorDialog } from "./GradientEditorDialog";
 import { useShowVersion } from "../hooks/useShowVersion";
+import { useToast } from "../hooks/useToast";
 
 interface Props {
   onClose: () => void;
   onLibraryChange: () => void;
 }
 
-const PANEL_WIDTH = 260;
-
 // ── Gradient preview canvas ──────────────────────────────────────
-
-function colorToCSS(c: Color): string {
-  return `rgb(${c.r},${c.g},${c.b})`;
-}
-
-function lerpColor(a: Color, b: Color, t: number): Color {
-  return {
-    r: Math.round(a.r + (b.r - a.r) * t),
-    g: Math.round(a.g + (b.g - a.g) * t),
-    b: Math.round(a.b + (b.b - a.b) * t),
-    a: 255,
-  };
-}
 
 function GradientPreview({ stops }: { stops: ColorStop[] }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -44,18 +32,18 @@ function GradientPreview({ stops }: { stops: ColorStop[] }) {
       const pos = px / (w - 1);
       let color: Color;
       if (sorted.length === 1) {
-        color = sorted[0].color;
-      } else if (pos <= sorted[0].position) {
-        color = sorted[0].color;
-      } else if (pos >= sorted[sorted.length - 1].position) {
-        color = sorted[sorted.length - 1].color;
+        color = sorted[0]!.color;
+      } else if (pos <= sorted[0]!.position) {
+        color = sorted[0]!.color;
+      } else if (pos >= sorted[sorted.length - 1]!.position) {
+        color = sorted[sorted.length - 1]!.color;
       } else {
         let idx = 0;
         for (let i = 1; i < sorted.length; i++) {
-          if (sorted[i].position >= pos) { idx = i; break; }
+          if (sorted[i]!.position >= pos) { idx = i; break; }
         }
-        const a = sorted[idx - 1];
-        const b = sorted[idx];
+        const a = sorted[idx - 1]!;
+        const b = sorted[idx]!;
         const dp = b.position - a.position;
         const t = dp > 0 ? (pos - a.position) / dp : 0;
         color = lerpColor(a.color, b.color, t);
@@ -164,6 +152,7 @@ function EditableName({
 
 export function LibraryPanel({ onClose, onLibraryChange }: Props) {
   const showVersion = useShowVersion();
+  const { showError } = useToast();
   const [gradients, setGradients] = useState<[string, ColorGradient][]>([]);
   const [curves, setCurves] = useState<[string, Curve][]>([]);
   const [scripts, setScripts] = useState<string[]>([]);
@@ -189,7 +178,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
   }, []);
 
   // Re-fetch when the panel mounts or after any show mutation (including undo/redo)
-  useEffect(() => { refresh(); }, [refresh, showVersion]);
+  useEffect(() => { void refresh(); }, [refresh, showVersion]);
 
   // ── Gradient actions ─────────────────────────────────────────
 
@@ -207,10 +196,10 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
     try {
       await cmd.setGlobalGradient(name, gradient);
       onLibraryChange();
-      refresh();
+      await refresh();
       setExpandedGradient(name);
     } catch (e) {
-      console.error("[VibeLights] Add gradient failed:", e);
+      showError(e);
     }
   }, [gradients, onLibraryChange, refresh]);
 
@@ -218,10 +207,10 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
     try {
       await cmd.deleteGlobalGradient(name);
       onLibraryChange();
-      refresh();
+      await refresh();
       if (expandedGradient === name) setExpandedGradient(null);
     } catch (e) {
-      console.error("[VibeLights] Delete gradient failed:", e);
+      showError(e);
     }
   }, [onLibraryChange, refresh, expandedGradient]);
 
@@ -229,10 +218,10 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
     try {
       await cmd.renameGlobalGradient(oldName, newName);
       onLibraryChange();
-      refresh();
+      await refresh();
       if (expandedGradient === oldName) setExpandedGradient(newName);
     } catch (e) {
-      console.error("[VibeLights] Rename gradient failed:", e);
+      showError(e);
     }
   }, [onLibraryChange, refresh, expandedGradient]);
 
@@ -240,9 +229,9 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
     try {
       await cmd.setGlobalGradient(name, { stops });
       onLibraryChange();
-      refresh();
+      await refresh();
     } catch (e) {
-      console.error("[VibeLights] Update gradient failed:", e);
+      showError(e);
     }
   }, [onLibraryChange, refresh]);
 
@@ -262,10 +251,10 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
     try {
       await cmd.setGlobalCurve(name, curve);
       onLibraryChange();
-      refresh();
+      await refresh();
       setExpandedCurve(name);
     } catch (e) {
-      console.error("[VibeLights] Add curve failed:", e);
+      showError(e);
     }
   }, [curves, onLibraryChange, refresh]);
 
@@ -273,10 +262,10 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
     try {
       await cmd.deleteGlobalCurve(name);
       onLibraryChange();
-      refresh();
+      await refresh();
       if (expandedCurve === name) setExpandedCurve(null);
     } catch (e) {
-      console.error("[VibeLights] Delete curve failed:", e);
+      showError(e);
     }
   }, [onLibraryChange, refresh, expandedCurve]);
 
@@ -284,10 +273,10 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
     try {
       await cmd.renameGlobalCurve(oldName, newName);
       onLibraryChange();
-      refresh();
+      await refresh();
       if (expandedCurve === oldName) setExpandedCurve(newName);
     } catch (e) {
-      console.error("[VibeLights] Rename curve failed:", e);
+      showError(e);
     }
   }, [onLibraryChange, refresh, expandedCurve]);
 
@@ -295,9 +284,9 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
     try {
       await cmd.setGlobalCurve(name, { points });
       onLibraryChange();
-      refresh();
+      await refresh();
     } catch (e) {
-      console.error("[VibeLights] Update curve failed:", e);
+      showError(e);
     }
   }, [onLibraryChange, refresh]);
 
@@ -310,9 +299,9 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
   const openScript = useCallback(async (name: string) => {
     try {
       const source = await cmd.getGlobalScriptSource(name);
-      setScriptEditor({ name, source: source ?? "" });
+      setScriptEditor({ name, source });
     } catch (e) {
-      console.error("[VibeLights] Get script source failed:", e);
+      showError(e);
     }
   }, []);
 
@@ -320,9 +309,9 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
     try {
       await cmd.deleteGlobalScript(name);
       onLibraryChange();
-      refresh();
+      await refresh();
     } catch (e) {
-      console.error("[VibeLights] Delete script failed:", e);
+      showError(e);
     }
   }, [onLibraryChange, refresh]);
 
@@ -342,7 +331,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
         <div className="flex-1 overflow-y-auto">
           {/* Gradients */}
-          <Section title="Gradients" count={gradients.length} onAdd={addGradient}>
+          <Section title="Gradients" count={gradients.length} onAdd={() => { void addGradient(); }}>
             {gradients.length === 0 && (
               <div className="text-text-2 py-2 text-center text-[10px]">No gradients yet</div>
             )}
@@ -354,7 +343,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
                     onClick={() => setExpandedGradient(expandedGradient === name ? null : name)}
                   >
                     {expandedGradient === name ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                    <EditableName value={name} onRename={(n) => renameGradient(name, n)} />
+                    <EditableName value={name} onRename={(n) => { void renameGradient(name, n); }} />
                   </button>
                   <button
                     className="text-text-2 hover:text-primary shrink-0 p-0.5"
@@ -365,7 +354,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
                   </button>
                   <button
                     className="text-text-2 hover:text-error shrink-0 p-0.5"
-                    onClick={() => deleteGradient(name)}
+                    onClick={() => { void deleteGradient(name); }}
                     title="Delete"
                   >
                     <Trash2 size={10} />
@@ -381,7 +370,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
                       value={gradient.stops}
                       minStops={2}
                       maxStops={16}
-                      onChange={(stops) => updateGradient(name, stops)}
+                      onChange={(stops) => { void updateGradient(name, stops); }}
                     />
                   </div>
                 )}
@@ -390,7 +379,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
           </Section>
 
           {/* Curves */}
-          <Section title="Curves" count={curves.length} onAdd={addCurve}>
+          <Section title="Curves" count={curves.length} onAdd={() => { void addCurve(); }}>
             {curves.length === 0 && (
               <div className="text-text-2 py-2 text-center text-[10px]">No curves yet</div>
             )}
@@ -402,7 +391,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
                     onClick={() => setExpandedCurve(expandedCurve === name ? null : name)}
                   >
                     {expandedCurve === name ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                    <EditableName value={name} onRename={(n) => renameCurve(name, n)} />
+                    <EditableName value={name} onRename={(n) => { void renameCurve(name, n); }} />
                   </button>
                   <span className="text-text-2 text-[9px]">{curve.points.length} pts</span>
                   <button
@@ -414,7 +403,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
                   </button>
                   <button
                     className="text-text-2 hover:text-error shrink-0 p-0.5"
-                    onClick={() => deleteCurve(name)}
+                    onClick={() => { void deleteCurve(name); }}
                     title="Delete"
                   >
                     <Trash2 size={10} />
@@ -425,7 +414,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
                     <CurveEditor
                       label=""
                       value={curve.points}
-                      onChange={(pts) => updateCurve(name, pts)}
+                      onChange={(pts) => { void updateCurve(name, pts); }}
                     />
                   </div>
                 )}
@@ -442,13 +431,13 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
               <div key={name} className="mt-1 flex items-center gap-1">
                 <button
                   className="text-text min-w-0 flex-1 truncate text-left text-[11px] hover:underline"
-                  onClick={() => openScript(name)}
+                  onClick={() => { void openScript(name); }}
                 >
                   {name}
                 </button>
                 <button
                   className="text-text-2 hover:text-error shrink-0 p-0.5"
-                  onClick={() => deleteScript(name)}
+                  onClick={() => { void deleteScript(name); }}
                   title="Delete"
                 >
                   <Trash2 size={10} />
@@ -467,7 +456,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
           onSaved={() => {
             setScriptEditor(null);
             onLibraryChange();
-            refresh();
+            void refresh();
           }}
           onCancel={() => setScriptEditor(null)}
         />
@@ -478,7 +467,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
         <CurveEditorDialog
           initialValue={curveDialog.points}
           onApply={(pts) => {
-            updateCurve(curveDialog.name, pts);
+            void updateCurve(curveDialog.name, pts);
             setCurveDialog(null);
           }}
           onCancel={() => setCurveDialog(null)}
@@ -492,7 +481,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
           minStops={2}
           maxStops={16}
           onApply={(stops) => {
-            updateGradient(gradientDialog.name, stops);
+            void updateGradient(gradientDialog.name, stops);
             setGradientDialog(null);
           }}
           onCancel={() => setGradientDialog(null)}

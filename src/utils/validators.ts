@@ -1,20 +1,13 @@
-interface ChatEntry {
-  role: string;
-  text: string;
+import type { ChatHistoryEntry } from "../types";
+
+function isChatHistoryEntry(x: unknown): x is ChatHistoryEntry {
+  if (typeof x !== "object" || x === null) return false;
+  const obj = x as Record<string, unknown>;
+  if (typeof obj["role"] !== "string" || typeof obj["text"] !== "string") return false;
+  return obj["role"] === "user" || obj["role"] === "assistant" || obj["role"] === "tool";
 }
 
-function isChatEntry(x: unknown): x is ChatEntry {
-  return (
-    typeof x === "object" &&
-    x !== null &&
-    "role" in x &&
-    typeof (x as ChatEntry).role === "string" &&
-    "text" in x &&
-    typeof (x as ChatEntry).text === "string"
-  );
-}
-
-export function parseChatEntries(raw: unknown): ChatEntry[] {
+export function parseChatEntries(raw: unknown): ChatHistoryEntry[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter(isChatEntry);
+  return raw.filter(isChatHistoryEntry);
 }

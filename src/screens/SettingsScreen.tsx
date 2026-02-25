@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { cmd } from "../commands";
-import { Sun, Moon, Monitor, RotateCcw, Key, Eye, EyeOff, Globe } from "lucide-react";
+import { Sun, Moon, Monitor, RotateCcw, Key, Eye, EyeOff } from "lucide-react";
 import { useUISettings, type ThemeMode } from "../hooks/useUISettings";
 import { ScreenShell } from "../components/ScreenShell";
-import type { LlmProvider } from "../types";
 
 interface Props {
   onBack: () => void;
@@ -24,16 +23,9 @@ const ACCENT_PRESETS = [
   { label: "Rose", value: "#F43F5E" },
 ];
 
-const PROVIDER_OPTIONS: { value: LlmProvider; label: string }[] = [
-  { value: "Anthropic", label: "Anthropic (Claude)" },
-  { value: "OpenAiCompatible", label: "OpenAI Compatible" },
-];
-
 export function SettingsScreen({ onBack }: Props) {
   const { settings, update, reset, defaults } = useUISettings();
-  const [provider, setProvider] = useState<LlmProvider>("Anthropic");
   const [apiKey, setApiKey] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [keySaved, setKeySaved] = useState(false);
@@ -41,9 +33,7 @@ export function SettingsScreen({ onBack }: Props) {
   // Load existing LLM config on mount
   useEffect(() => {
     cmd.getLlmConfig().then((config) => {
-      setProvider(config.provider);
       if (config.has_api_key) setApiKey("********");
-      setBaseUrl(config.base_url ?? "");
       setModel(config.model ?? "");
     }).catch(console.warn);
   }, []);
@@ -52,9 +42,7 @@ export function SettingsScreen({ onBack }: Props) {
     const keyToSave = apiKey === "********" ? "" : apiKey;
     try {
       await cmd.setLlmConfig({
-        provider,
         apiKey: keyToSave,
-        baseUrl: baseUrl || null,
         model: model || null,
       });
       setKeySaved(true);
@@ -63,14 +51,12 @@ export function SettingsScreen({ onBack }: Props) {
     } catch (e) {
       console.error("[VibeLights] Failed to save LLM config:", e);
     }
-  }, [provider, apiKey, baseUrl, model]);
+  }, [apiKey, model]);
 
   const handleClearApiKey = useCallback(async () => {
     try {
       await cmd.setLlmConfig({
-        provider,
         apiKey: "",
-        baseUrl: baseUrl || null,
         model: model || null,
       });
       setApiKey("");
@@ -78,7 +64,7 @@ export function SettingsScreen({ onBack }: Props) {
     } catch (e) {
       console.error("[VibeLights] Failed to clear API key:", e);
     }
-  }, [provider, baseUrl, model]);
+  }, [model]);
 
   return (
     <ScreenShell title="Settings" onBack={onBack} hideSettings>
@@ -181,36 +167,15 @@ export function SettingsScreen({ onBack }: Props) {
           </Section>
 
           {/* ── AI Provider ── */}
-          <Section title="AI Provider">
-            {/* Provider selector */}
-            <div className="flex gap-2">
-              {PROVIDER_OPTIONS.map(({ value, label }) => (
-                <button
-                  key={value}
-                  onClick={() => {
-                    setProvider(value);
-                    setKeySaved(false);
-                  }}
-                  className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
-                    provider === value
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text"
-                  }`}
-                >
-                  {value === "Anthropic" ? <Key size={14} /> : <Globe size={14} />}
-                  {label}
-                </button>
-              ))}
-            </div>
-
+          <Section title="Anthropic API Key">
             {/* API Key */}
-            <div className="mt-3 flex items-center gap-2">
+            <div className="flex items-center gap-2">
               <Key size={14} className="text-text-2 shrink-0" />
               <div className="relative flex-1">
                 <input
                   type={showKey ? "text" : "password"}
                   className="border-border bg-surface text-text w-full rounded border px-2 py-1.5 pr-8 font-mono text-xs outline-none focus:border-primary"
-                  placeholder={provider === "Anthropic" ? "sk-ant-..." : "sk-..."}
+                  placeholder="sk-ant-... (optional — uses Claude Code OAuth if empty)"
                   value={apiKey === "********" ? "********" : apiKey}
                   onChange={(e) => {
                     setApiKey(e.target.value);
@@ -230,7 +195,7 @@ export function SettingsScreen({ onBack }: Props) {
               </div>
               {apiKey && (
                 <button
-                  onClick={handleClearApiKey}
+                  onClick={() => { void handleClearApiKey(); }}
                   className="text-text-2 hover:text-error text-xs transition-colors"
                 >
                   Clear
@@ -238,30 +203,13 @@ export function SettingsScreen({ onBack }: Props) {
               )}
             </div>
 
-            {/* Base URL (only for OpenAI Compatible) */}
-            {provider === "OpenAiCompatible" && (
-              <div className="mt-3">
-                <label className="text-text-2 mb-1 block text-xs">Base URL</label>
-                <input
-                  type="text"
-                  className="border-border bg-surface text-text w-full rounded border px-2 py-1.5 font-mono text-xs outline-none focus:border-primary"
-                  placeholder="https://api.openai.com/v1"
-                  value={baseUrl}
-                  onChange={(e) => {
-                    setBaseUrl(e.target.value);
-                    setKeySaved(false);
-                  }}
-                />
-              </div>
-            )}
-
             {/* Model override */}
             <div className="mt-3">
               <label className="text-text-2 mb-1 block text-xs">Model (optional override)</label>
               <input
                 type="text"
                 className="border-border bg-surface text-text w-full rounded border px-2 py-1.5 font-mono text-xs outline-none focus:border-primary"
-                placeholder={provider === "Anthropic" ? "claude-sonnet-4-20250514" : "gpt-4o"}
+                placeholder="claude-sonnet-4-20250514"
                 value={model}
                 onChange={(e) => {
                   setModel(e.target.value);
@@ -273,7 +221,7 @@ export function SettingsScreen({ onBack }: Props) {
             {/* Save button */}
             <div className="mt-3 flex items-center gap-2">
               <button
-                onClick={handleSaveLlmConfig}
+                onClick={() => { void handleSaveLlmConfig(); }}
                 disabled={!apiKey || apiKey === "********"}
                 className={`rounded border px-3 py-1.5 text-xs transition-colors ${
                   keySaved
@@ -287,9 +235,8 @@ export function SettingsScreen({ onBack }: Props) {
 
             <p className="text-text-2 mt-2 text-xs">
               Your API key is stored locally and used for the AI chat agent.
-              {provider === "Anthropic"
-                ? " Get one at console.anthropic.com"
-                : " Enter the base URL and key for your OpenAI-compatible provider."}
+              Get one at console.anthropic.com. If left empty, Claude Code OAuth
+              credentials will be used instead.
             </p>
           </Section>
 

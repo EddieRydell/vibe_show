@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { cmd } from "../commands";
+import { CHAT_TOOL_RESULT, CHAT_COMPLETE } from "../events";
 import { Save, Sparkles, MessageSquare } from "lucide-react";
 import { ScreenShell, useAppShell } from "../components/ScreenShell";
 import { ScriptBrowser } from "../components/script/ScriptBrowser";
@@ -9,13 +10,10 @@ import { ScriptPreview } from "../components/script/ScriptPreview";
 import { ParameterPlayground } from "../components/script/ParameterPlayground";
 import { useScriptPreview } from "../hooks/useScriptPreview";
 import type {
-  ParamValue,
   ScriptCompileResult,
+  ScriptParams,
   ScriptParamInfo,
 } from "../types";
-
-/** Simple string-keyed param map for script params (all Custom keys). */
-type ScriptParams = Record<string, ParamValue>;
 
 interface Props {
   initialScriptName: string | null;
@@ -94,7 +92,7 @@ export function ScriptScreen({
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    listen<{ tool: string; result: string }>("chat:tool_result", () => {
+    void listen<{ tool: string; result: string }>(CHAT_TOOL_RESULT, () => {
       // Refresh browser whenever the AI modifies scripts
       setBrowserRefreshKey((k) => k + 1);
       // Reload current script source in case AI modified it
@@ -129,7 +127,7 @@ export function ScriptScreen({
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    listen("chat:complete", () => {
+    void listen(CHAT_COMPLETE, () => {
       // Refresh browser to pick up any newly created scripts
       setBrowserRefreshKey((k) => k + 1);
       // If no script is selected, check if one was just created and select it
@@ -138,7 +136,7 @@ export function ScriptScreen({
           .then((scripts) => {
             if (scripts.length > 0) {
               // Select the last script (likely the one just created)
-              const lastScript = scripts[scripts.length - 1];
+              const lastScript = scripts[scripts.length - 1]!;
               setCurrentScript(lastScript[0]);
             }
           })
@@ -215,7 +213,7 @@ export function ScriptScreen({
     <div className="border-border bg-surface flex select-none items-center gap-2 border-b px-4 py-1.5">
       <div className="flex-1" />
       <button
-        onClick={handleSave}
+        onClick={() => { void handleSave(); }}
         disabled={!currentScript || !dirty}
         className="bg-primary hover:bg-primary/90 flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-white disabled:opacity-40"
       >
@@ -233,7 +231,7 @@ export function ScriptScreen({
         <ScriptBrowser
           currentScript={currentScript}
           onSelectScript={handleSelectScript}
-          onNewScript={handleNewScript}
+          onNewScript={(name) => { void handleNewScript(name); }}
           refreshKey={browserRefreshKey}
         />
 
@@ -245,11 +243,11 @@ export function ScriptScreen({
               scriptName={currentScript}
               onSourceChange={handleSourceChange}
               onCompileResult={handleCompile}
-              onSave={handleSave}
+              onSave={() => { void handleSave(); }}
             />
           ) : (
             <WelcomePanel
-              onNewScript={handleNewScript}
+              onNewScript={(name) => { void handleNewScript(name); }}
               chatOpen={chatOpen}
               onOpenChat={toggleChat}
             />

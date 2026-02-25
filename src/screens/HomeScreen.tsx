@@ -43,7 +43,7 @@ export function HomeScreen({
   const refresh = useCallback(() => {
     cmd.listSetups()
       .then(setSetups)
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
   }, []);
 
   useEffect(refresh, [refresh]);
@@ -56,7 +56,7 @@ export function HomeScreen({
     }
     cmd.openSetup(activeSetupSlug)
       .then(setSetup)
-      .catch((e) => {
+      .catch((e: unknown) => {
         setError(String(e));
         setSetup(null);
       });
@@ -70,7 +70,7 @@ export function HomeScreen({
         setShowCreate(false);
         refresh();
       })
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
   }, [newName, refresh]);
 
   const [deleteTarget, setDeleteTarget] = useState<{ slug: string; name: string } | null>(null);
@@ -89,7 +89,7 @@ export function HomeScreen({
         refresh();
         if (activeSetupSlug === deleteTarget.slug) onCloseSetup();
       })
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
     setDeleteTarget(null);
   }, [deleteTarget, refresh, activeSetupSlug, onCloseSetup]);
 

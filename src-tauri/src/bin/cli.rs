@@ -259,7 +259,7 @@ fn initialize_state(
         script_cache: Mutex::new(HashMap::new()),
         python_sidecar: Mutex::new(None),
         python_port: AtomicU16::new(0),
-        analysis_cache: Mutex::new(HashMap::new()),
+        analysis_cache: Mutex::new(indexmap::IndexMap::new()),
         agent_sidecar: Mutex::new(None),
         agent_port: AtomicU16::new(0),
         agent_session_id: Mutex::new(None),
@@ -267,6 +267,7 @@ fn initialize_state(
         agent_chats: Mutex::new(vibe_lights::chat::AgentChatsData::default()),
         cancellation: CancellationRegistry::new(),
         global_libraries: Mutex::new(global_libs),
+        api_port: AtomicU16::new(0),
     });
 
     // Load agent chat history

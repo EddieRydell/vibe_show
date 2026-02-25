@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
 import { cmd } from "../../commands";
 import { vibelightsLanguage } from "../../editor/vibelights-lang";
 import type { ScriptCompileResult } from "../../types";
+import { useDebouncedEffect } from "../../hooks/useDebounce";
 
 interface Props {
   scriptName: string | null;
@@ -23,14 +24,11 @@ export function ScriptEditor({
   onSave,
 }: Props) {
   const [compiling, setCompiling] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Auto-compile on source change (debounced)
-  useEffect(() => {
-    if (!source.trim()) return;
-
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
+  useDebouncedEffect(
+    () => {
+      if (!source.trim()) return;
       setCompiling(true);
       const compilePromise = scriptName
         ? cmd.compileGlobalScript(scriptName, source)
@@ -40,12 +38,10 @@ export function ScriptEditor({
         .then(onCompileResult)
         .catch(console.error)
         .finally(() => setCompiling(false));
-    }, 400);
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [source, scriptName, onCompileResult]);
+    },
+    400,
+    [source, scriptName, onCompileResult],
+  );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

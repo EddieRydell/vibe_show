@@ -3,13 +3,14 @@ pub mod execute;
 pub mod handlers;
 pub mod params;
 pub mod reference;
+pub mod validation;
 
 use serde::{Deserialize, Serialize};
 
 // ── Param types (used in Command enum) ──────────────────────────
 use params::{
     AddEffectParams, AddTrackParams, AnalyzeAudioParams, BatchEditParams,
-    CancelOperationParams, CheckVixenPreviewFileParams, CompileScriptParams,
+    CancelOperationParams, CheckVixenPreviewFileParams,
     CompileScriptPreviewParams, ConversationIdParams, CreateSequenceParams, CreateSetupParams,
     DeleteEffectsParams, DeleteTrackParams, GetAnalysisDetailParams, GetBeatsInRangeParams,
     GetEffectDetailParams, GetFrameFilteredParams, GetFrameParams, ImportMediaParams,
@@ -35,8 +36,6 @@ use crate::state::{EffectDetail, EffectInfo, PlaybackInfo};
 
 use handlers::analysis::{AnalysisSummary, BeatsInRange};
 use handlers::chat::NewConversationResult;
-use handlers::global_lib::GlobalLibrarySummary;
-use handlers::query::EffectCatalogEntry;
 
 // ── Handler modules (dispatch targets) ──────────────────────────
 use handlers::{
@@ -78,18 +77,71 @@ pub enum CommandCategory {
     Agent,
 }
 
+impl CommandCategory {
+    pub fn slug(&self) -> &'static str {
+        match self {
+            Self::Edit => "edit",
+            Self::Playback => "playback",
+            Self::Query => "query",
+            Self::Analysis => "analysis",
+            Self::Library => "library",
+            Self::Script => "script",
+            Self::Settings => "settings",
+            Self::Setup => "setup",
+            Self::Sequence => "sequence",
+            Self::Media => "media",
+            Self::Chat => "chat",
+            Self::Import => "import",
+            Self::Python => "python",
+            Self::Agent => "agent",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Edit => "Add, delete, move effects and tracks, update params",
+            Self::Playback => "Play, pause, seek, undo, redo",
+            Self::Query => "Inspect show state and effect types",
+            Self::Analysis => "Audio analysis: beats, sections, mood",
+            Self::Library => "Manage gradients, curves, scripts",
+            Self::Script => "Write and compile DSL scripts",
+            Self::Settings => "App settings and data directory",
+            Self::Setup => "Setup CRUD: list, create, open, delete",
+            Self::Sequence => "Sequence CRUD: list, create, open, delete",
+            Self::Media => "Audio file management",
+            Self::Chat => "Chat history management",
+            Self::Import => "Vixen 3 project import",
+            Self::Python => "Python environment management",
+            Self::Agent => "Agent sidecar communication",
+        }
+    }
+
+    pub fn all() -> &'static [CommandCategory] {
+        &[
+            Self::Edit,
+            Self::Playback,
+            Self::Query,
+            Self::Analysis,
+            Self::Library,
+            Self::Script,
+            Self::Settings,
+            Self::Setup,
+            Self::Sequence,
+            Self::Media,
+            Self::Chat,
+            Self::Import,
+            Self::Python,
+            Self::Agent,
+        ]
+    }
+}
+
 pub struct CommandInfo {
     pub name: &'static str,
     pub description: &'static str,
     pub category: CommandCategory,
     pub undoable: bool,
-}
-
-impl CommandInfo {
-    /// Whether this command should be hidden from the LLM help system.
-    pub fn is_llm_hidden(&self) -> bool {
-        matches!(self.name, "set_llm_config" | "get_llm_config")
-    }
+    pub llm_hidden: bool,
 }
 
 // ── Command output ──────────────────────────────────────────────
@@ -126,28 +178,28 @@ macro_rules! define_commands {
     (
         params {
             $(
-                [ $pc:expr $(, $pf:ident)? ]
+                [ $pc:expr $(, $pf:ident)* ]
                 $pv:ident ( $pp:ty ) $( -> $pr:ty )?
                 => $ph:path, $pn:literal : $pd:literal ;
             )*
         }
         no_params {
             $(
-                [ $nc:expr $(, $nf:ident)? ]
+                [ $nc:expr $(, $nf:ident)* ]
                 $nv:ident $( -> $nr:ty )?
                 => $nh:path, $nn:literal : $nd:literal ;
             )*
         }
         async_params {
             $(
-                [ $apc:expr $(, $apf:ident)? ]
+                [ $apc:expr $(, $apf:ident)* ]
                 $apv:ident ( $app:ty ) $( -> $apr:ty )?
                 => $aph:path, $apn:literal : $apd:literal ;
             )*
         }
         async_no_params {
             $(
-                [ $anc:expr $(, $anf:ident)? ]
+                [ $anc:expr $(, $anf:ident)* ]
                 $anv:ident $( -> $anr:ty )?
                 => $anh:path, $ann:literal : $and:literal ;
             )*
@@ -190,25 +242,29 @@ macro_rules! define_commands {
                         name: $pn,
                         description: $pd,
                         category: $pc,
-                        undoable: define_commands!(@flag $($pf)?),
+                        undoable: define_commands!(@has_flag undoable; $($pf)*),
+                        llm_hidden: define_commands!(@has_flag llm_hidden; $($pf)*),
                     }, )*
                     $( Command::$nv => CommandInfo {
                         name: $nn,
                         description: $nd,
                         category: $nc,
-                        undoable: define_commands!(@flag $($nf)?),
+                        undoable: define_commands!(@has_flag undoable; $($nf)*),
+                        llm_hidden: define_commands!(@has_flag llm_hidden; $($nf)*),
                     }, )*
                     $( Command::$apv(_) => CommandInfo {
                         name: $apn,
                         description: $apd,
                         category: $apc,
-                        undoable: define_commands!(@flag $($apf)?),
+                        undoable: define_commands!(@has_flag undoable; $($apf)*),
+                        llm_hidden: define_commands!(@has_flag llm_hidden; $($apf)*),
                     }, )*
                     $( Command::$anv => CommandInfo {
                         name: $ann,
                         description: $and,
                         category: $anc,
-                        undoable: define_commands!(@flag $($anf)?),
+                        undoable: define_commands!(@has_flag undoable; $($anf)*),
+                        llm_hidden: define_commands!(@has_flag llm_hidden; $($anf)*),
                     }, )*
                 }
             }
@@ -248,7 +304,8 @@ macro_rules! define_commands {
                             name: $pn,
                             description: $pd,
                             category: $pc,
-                            undoable: define_commands!(@flag $($pf)?),
+                            undoable: define_commands!(@has_flag undoable; $($pf)*),
+                            llm_hidden: define_commands!(@has_flag llm_hidden; $($pf)*),
                         },
                         catalog::schema_value::<$pp>(),
                     ), )*
@@ -257,7 +314,8 @@ macro_rules! define_commands {
                             name: $nn,
                             description: $nd,
                             category: $nc,
-                            undoable: define_commands!(@flag $($nf)?),
+                            undoable: define_commands!(@has_flag undoable; $($nf)*),
+                            llm_hidden: define_commands!(@has_flag llm_hidden; $($nf)*),
                         },
                         catalog::empty_object_schema(),
                     ), )*
@@ -266,7 +324,8 @@ macro_rules! define_commands {
                             name: $apn,
                             description: $apd,
                             category: $apc,
-                            undoable: define_commands!(@flag $($apf)?),
+                            undoable: define_commands!(@has_flag undoable; $($apf)*),
+                            llm_hidden: define_commands!(@has_flag llm_hidden; $($apf)*),
                         },
                         catalog::schema_value::<$app>(),
                     ), )*
@@ -275,7 +334,8 @@ macro_rules! define_commands {
                             name: $ann,
                             description: $and,
                             category: $anc,
-                            undoable: define_commands!(@flag $($anf)?),
+                            undoable: define_commands!(@has_flag undoable; $($anf)*),
+                            llm_hidden: define_commands!(@has_flag llm_hidden; $($anf)*),
                         },
                         catalog::empty_object_schema(),
                     ), )*
@@ -333,9 +393,16 @@ macro_rules! define_commands {
         }
     };
 
-    // Flag helpers
-    (@flag undoable) => { true };
-    (@flag) => { false };
+    // Flag helpers — check whether a specific flag appears in a list of flags.
+    // Literal tokens match before metavariables, so e.g. `undoable` matches the
+    // first arm and any other ident falls through to the recursive second arm.
+    (@has_flag undoable; undoable $($rest:ident)*) => { true };
+    (@has_flag undoable; $_other:ident $($rest:ident)*) => { define_commands!(@has_flag undoable; $($rest)*) };
+    (@has_flag undoable;) => { false };
+
+    (@has_flag llm_hidden; llm_hidden $($rest:ident)*) => { true };
+    (@has_flag llm_hidden; $_other:ident $($rest:ident)*) => { define_commands!(@has_flag llm_hidden; $($rest)*) };
+    (@has_flag llm_hidden;) => { false };
 }
 
 // ── Command definitions ─────────────────────────────────────────
@@ -437,10 +504,6 @@ define_commands! {
         => script::write_global_script, "write_global_script": "Compile and save a DSL script to the global library.";
 
         [CommandCategory::Script]
-        SetGlobalScript(WriteScriptParams)
-        => global_lib::set_global_script, "set_global_script": "Save a script to the global library without compiling.";
-
-        [CommandCategory::Script]
         CompileGlobalScript(WriteScriptParams) -> ScriptCompileResult
         => global_lib::compile_global_script, "compile_global_script": "Compile and save a script to the global library.";
 
@@ -451,10 +514,6 @@ define_commands! {
         [CommandCategory::Script]
         DeleteGlobalScript(NameParams)
         => script::delete_global_script, "delete_global_script": "Delete a script from the global library.";
-
-        [CommandCategory::Script]
-        CompileScript(CompileScriptParams) -> ScriptCompileResult
-        => script::compile_global_script, "compile_script": "Compile and save a DSL script to the global library.";
 
         [CommandCategory::Script]
         CompileScriptPreview(CompileScriptPreviewParams) -> ScriptCompileResult
@@ -473,7 +532,7 @@ define_commands! {
         InitializeDataDir(InitializeDataDirParams) -> AppSettings
         => settings::initialize_data_dir, "initialize_data_dir": "Initialize the data directory on first launch.";
 
-        [CommandCategory::Settings]
+        [CommandCategory::Settings, llm_hidden]
         SetLlmConfig(SetLlmConfigParams)
         => settings::set_llm_config, "set_llm_config": "Configure the LLM provider, API key, and model.";
 
@@ -616,10 +675,6 @@ define_commands! {
         => query::get_show, "get_show": "Get the full show model including fixtures, tracks, and effects.";
 
         [CommandCategory::Query]
-        GetEffectCatalog -> Vec<EffectCatalogEntry>
-        => query::get_effect_catalog, "get_effect_catalog": "Get all available effect types with their parameter schemas.";
-
-        [CommandCategory::Query]
         GetDesignGuide -> String
         => query::get_design_guide, "get_design_guide": "Get best practices for light show design.";
 
@@ -644,11 +699,7 @@ define_commands! {
         GetAnalysis -> Option<Box<AudioAnalysis>>
         => analysis::get_analysis, "get_analysis": "Get the cached audio analysis for the current sequence.";
 
-        // ── Library (3) ─────────────────────────────────────────
-        [CommandCategory::Library]
-        ListGlobalLibrary -> GlobalLibrarySummary
-        => global_lib::list_global_library, "list_global_library": "List all gradients, curves, and scripts in the global library.";
-
+        // ── Library (2) ─────────────────────────────────────────
         [CommandCategory::Library]
         ListGlobalGradients -> Vec<(String, ColorGradient)>
         => global_lib::list_global_gradients, "list_global_gradients": "List all gradients in the global library with their data.";
@@ -671,7 +722,7 @@ define_commands! {
         GetSettings -> Option<AppSettings>
         => settings::get_settings, "get_settings": "Get the application settings.";
 
-        [CommandCategory::Settings]
+        [CommandCategory::Settings, llm_hidden]
         GetLlmConfig -> LlmConfigInfo
         => settings::get_llm_config, "get_llm_config": "Get the current LLM configuration (key is masked).";
 

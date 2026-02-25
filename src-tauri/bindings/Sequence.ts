@@ -4,6 +4,7 @@ import type { Track } from "./Track";
 
 /**
  * A sequence is the top-level timeline container. One sequence per song/show.
+ * Deserialization runs `validated()` automatically via `#[serde(from = "SequenceRaw")]`.
  */
 export type Sequence = { name: string, 
 /**

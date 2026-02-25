@@ -4,7 +4,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   eslint.configs.recommended,
-  ...tseslint.configs.strict,
+  ...tseslint.configs.strictTypeChecked,
   {
     languageOptions: {
       parserOptions: {
@@ -25,6 +25,18 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": [
         "error",
         { argsIgnorePattern: "^_" },
+      ],
+      // Allow non-null assertions — needed as escape hatch for noUncheckedIndexedAccess
+      "@typescript-eslint/no-non-null-assertion": "off",
+      // Allow arrow shorthand for void returns (onClick={() => fn()) is idiomatic React)
+      "@typescript-eslint/no-confusing-void-expression": [
+        "error",
+        { ignoreArrowShorthand: true },
+      ],
+      // Allow numbers and booleans in template literals (they're always safe)
+      "@typescript-eslint/restrict-template-expressions": [
+        "error",
+        { allowNumber: true, allowBoolean: true },
       ],
       // Prettier handles class ordering via prettier-plugin-tailwindcss
       "better-tailwindcss/enforce-consistent-class-order": "off",

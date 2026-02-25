@@ -1,6 +1,7 @@
 import { useRef, useCallback, useEffect, useState } from "react";
 import { cssMouseOffset, getEffectiveZoom } from "../../utils/cssZoom";
 import type { Color, ColorStop } from "../../types";
+import { colorToCSS, colorToHex, hexToColor, lerpColor } from "../../utils/colorUtils";
 import { GRADIENT_PRESETS } from "../../constants";
 import { ColorPicker } from "./ColorPicker";
 
@@ -18,49 +19,22 @@ function sortByPosition(stops: ColorStop[]): ColorStop[] {
   return [...stops].sort((a, b) => a.position - b.position);
 }
 
-function colorToCSS(c: Color): string {
-  return `rgb(${c.r},${c.g},${c.b})`;
-}
-
-function colorToHex(c: Color): string {
-  const r = c.r.toString(16).padStart(2, "0");
-  const g = c.g.toString(16).padStart(2, "0");
-  const b = c.b.toString(16).padStart(2, "0");
-  return `#${r}${g}${b}`;
-}
-
-function hexToColor(hex: string): Color {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return { r, g, b, a: 255 };
-}
-
-function lerpColor(a: Color, b: Color, t: number): Color {
-  return {
-    r: Math.round(a.r + (b.r - a.r) * t),
-    g: Math.round(a.g + (b.g - a.g) * t),
-    b: Math.round(a.b + (b.b - a.b) * t),
-    a: 255,
-  };
-}
-
 function sampleGradientAt(stops: ColorStop[], pos: number): Color {
   const sorted = sortByPosition(stops);
   if (sorted.length === 0) return { r: 255, g: 255, b: 255, a: 255 };
-  if (sorted.length === 1) return sorted[0].color;
-  if (pos <= sorted[0].position) return sorted[0].color;
-  if (pos >= sorted[sorted.length - 1].position)
-    return sorted[sorted.length - 1].color;
+  if (sorted.length === 1) return sorted[0]!.color;
+  if (pos <= sorted[0]!.position) return sorted[0]!.color;
+  if (pos >= sorted[sorted.length - 1]!.position)
+    return sorted[sorted.length - 1]!.color;
   let idx = 0;
   for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].position >= pos) {
+    if (sorted[i]!.position >= pos) {
       idx = i;
       break;
     }
   }
-  const a = sorted[idx - 1];
-  const b = sorted[idx];
+  const a = sorted[idx - 1]!;
+  const b = sorted[idx]!;
   const dp = b.position - a.position;
   const t = dp > 0 ? (pos - a.position) / dp : 0;
   return lerpColor(a.color, b.color, t);
@@ -141,7 +115,7 @@ export function GradientEditor({
 
     // Draw stop markers (triangles below bar)
     for (let i = 0; i < sorted.length; i++) {
-      const x = sorted[i].position * (barW - 1);
+      const x = sorted[i]!.position * (barW - 1);
 
       ctx.beginPath();
       ctx.moveTo(x, barH);
@@ -149,7 +123,7 @@ export function GradientEditor({
       ctx.lineTo(x + 5, barH + MARKER_H);
       ctx.closePath();
 
-      ctx.fillStyle = colorToCSS(sorted[i].color);
+      ctx.fillStyle = colorToCSS(sorted[i]!.color);
       ctx.fill();
     }
 
@@ -191,7 +165,7 @@ export function GradientEditor({
       if (cy < 0 || cy > totalH) return null;
       const sorted = sortByPosition(value);
       for (let i = 0; i < sorted.length; i++) {
-        const mx = sorted[i].position * (barW - 1);
+        const mx = sorted[i]!.position * (barW - 1);
         if (Math.abs(cx - mx) < 8) return i;
       }
       return null;
@@ -264,7 +238,7 @@ export function GradientEditor({
       const rect = canvas?.getBoundingClientRect();
       if (canvas && rect) {
         const zoom = getEffectiveZoom(canvas);
-        const mx = sortByPosition(value)[hit].position * (barW - 1);
+        const mx = sortByPosition(value)[hit]!.position * (barW - 1);
         setColorPickerPos({
           x: rect.left + mx * zoom - 90,
           y: rect.bottom + 8,

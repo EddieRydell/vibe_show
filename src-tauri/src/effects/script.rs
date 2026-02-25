@@ -38,7 +38,7 @@ pub fn evaluate_pixels_batch(
 
     for (i, cp) in script.params.iter().enumerate() {
         let key = ParamKey::Custom(cp.name.clone());
-        if let Some(val) = params.get(key) {
+        if let Some(val) = params.get(&key) {
             match val {
                 ParamValue::Float(f) => param_values[i] = *f,
                 ParamValue::Int(n) => param_values[i] = f64::from(*n),

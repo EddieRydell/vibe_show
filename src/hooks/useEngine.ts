@@ -87,7 +87,7 @@ export function useEngine(
             } else {
               audioPauseRef.current?.();
               audioSeekRef.current?.(regionEnd);
-              cmd.pause().catch((e) => console.warn("[VibeLights] Pause at region end failed:", e));
+              cmd.pause().catch((e: unknown) => console.warn("[VibeLights] Pause at region end failed:", e));
               setPlayback((prev) => {
                 const updated = prev ? { ...prev, current_time: regionEnd, playing: false } : prev;
                 playbackRef.current = updated;
@@ -111,7 +111,7 @@ export function useEngine(
               return updated;
             });
           })
-          .catch((e) => console.warn("[VibeLights] Frame fetch failed:", e))
+          .catch((e: unknown) => console.warn("[VibeLights] Frame fetch failed:", e))
           .finally(scheduleNext);
       } else if (!playingRef.current) {
         // Not playing and no audio — skip tick, just schedule next
@@ -136,7 +136,7 @@ export function useEngine(
               });
             }
           })
-          .catch((e) => console.warn("[VibeLights] Tick failed:", e))
+          .catch((e: unknown) => console.warn("[VibeLights] Tick failed:", e))
           .finally(scheduleNext);
       }
     };
@@ -159,7 +159,7 @@ export function useEngine(
           playingRef.current = pb.playing;
         }),
       )
-      .catch((e) => {
+      .catch((e: unknown) => {
         const msg = String(e);
         setError(msg);
         console.error("[VibeLights] Play failed:", e);
@@ -177,7 +177,7 @@ export function useEngine(
           playingRef.current = pb.playing;
         }),
       )
-      .catch((e) => {
+      .catch((e: unknown) => {
         const msg = String(e);
         setError(msg);
         console.error("[VibeLights] Pause failed:", e);
@@ -189,14 +189,14 @@ export function useEngine(
     cmd
       .seek(time)
       .then(() => {
-        cmd.getFrame(time).then(setFrame);
-        cmd.getPlayback().then((pb) => {
+        void cmd.getFrame(time).then(setFrame);
+        void cmd.getPlayback().then((pb) => {
           setPlayback(pb);
           playbackRef.current = pb;
           playingRef.current = pb.playing;
         });
       })
-      .catch((e) => {
+      .catch((e: unknown) => {
         const msg = String(e);
         setError(msg);
         console.error("[VibeLights] Seek failed:", e);

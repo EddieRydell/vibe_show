@@ -28,23 +28,23 @@ pub struct TauriChatEmitter {
 #[cfg(feature = "tauri-app")]
 impl ChatEmitter for TauriChatEmitter {
     fn emit_token(&self, text: &str) {
-        let _ = tauri::Emitter::emit(&self.app_handle, "chat:token", text);
+        let _ = tauri::Emitter::emit(&self.app_handle, crate::events::CHAT_TOKEN, text);
     }
     fn emit_tool_call(&self, tool: &str) {
-        let _ = tauri::Emitter::emit(&self.app_handle, "chat:tool_call", tool);
+        let _ = tauri::Emitter::emit(&self.app_handle, crate::events::CHAT_TOOL_CALL, tool);
     }
     fn emit_tool_result(&self, tool: &str, result: &str) {
         let _ = tauri::Emitter::emit(
             &self.app_handle,
-            "chat:tool_result",
+            crate::events::CHAT_TOOL_RESULT,
             serde_json::json!({ "tool": tool, "result": result }),
         );
     }
     fn emit_complete(&self) {
-        let _ = tauri::Emitter::emit(&self.app_handle, "chat:complete", true);
+        let _ = tauri::Emitter::emit(&self.app_handle, crate::events::CHAT_COMPLETE, true);
     }
     fn emit_thinking(&self, thinking: bool) {
-        let _ = tauri::Emitter::emit(&self.app_handle, "chat:thinking", thinking);
+        let _ = tauri::Emitter::emit(&self.app_handle, crate::events::CHAT_THINKING, thinking);
     }
 }
 

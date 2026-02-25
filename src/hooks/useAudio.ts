@@ -15,7 +15,7 @@ export interface AudioState {
   pause: () => void;
   seek: (time: number) => void;
   getCurrentTime: () => number | null;
-  onEnded: React.MutableRefObject<(() => void) | null>;
+  onEnded: React.RefObject<(() => void) | null>;
 }
 
 const WAVEFORM_PEAKS = 2000;
@@ -25,7 +25,7 @@ function downsampleToPeaks(channelData: Float32Array, targetPeaks: number): Floa
   const samplesPerPeak = Math.floor(channelData.length / targetPeaks);
   if (samplesPerPeak === 0) {
     for (let i = 0; i < Math.min(channelData.length, targetPeaks); i++) {
-      peaks[i] = Math.abs(channelData[i]);
+      peaks[i] = Math.abs(channelData[i]!);
     }
     return peaks;
   }
@@ -34,7 +34,7 @@ function downsampleToPeaks(channelData: Float32Array, targetPeaks: number): Floa
     const start = i * samplesPerPeak;
     const end = Math.min(start + samplesPerPeak, channelData.length);
     for (let j = start; j < end; j++) {
-      const abs = Math.abs(channelData[j]);
+      const abs = Math.abs(channelData[j]!);
       if (abs > max) max = abs;
     }
     peaks[i] = max;
@@ -89,12 +89,12 @@ export function useAudio(): AudioState {
           audio.load();
 
           // Decode audio for waveform in parallel
-          fetch(url)
+          void fetch(url)
             .then((res) => res.arrayBuffer())
             .then((buffer) => {
               const ctx = new AudioContext();
               return ctx.decodeAudioData(buffer).then((decoded) => {
-                ctx.close();
+                void ctx.close();
                 return decoded;
               });
             })
@@ -103,11 +103,11 @@ export function useAudio(): AudioState {
               const peaks = downsampleToPeaks(channel, WAVEFORM_PEAKS);
               setWaveform({ peaks, duration: decoded.duration });
             })
-            .catch((err) => {
+            .catch((err: unknown) => {
               console.warn("[VibeLights] Waveform extraction failed:", err);
             });
         })
-        .catch((err) => {
+        .catch((err: unknown) => {
           console.error("[VibeLights] Failed to resolve media path:", err);
         });
     },

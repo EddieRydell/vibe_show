@@ -161,7 +161,7 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
     (e: React.KeyboardEvent) => {
       if (e.key === "Escape") {
         if (step === "importing") {
-          handleCancelImport();
+          void handleCancelImport();
         } else if (step !== "done") {
           onCancel();
         }
@@ -176,7 +176,7 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
       onKeyDown={handleKeyDown}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
-          if (step === "importing") handleCancelImport();
+          if (step === "importing") void handleCancelImport();
           else if (step !== "done") onCancel();
         }
       }}
@@ -206,8 +206,8 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
             <StepSelect
               vixenDir={vixenDir}
               onDirChange={setVixenDir}
-              onBrowse={handleBrowse}
-              onScan={handleScan}
+              onBrowse={() => { void handleBrowse(); }}
+              onScan={() => { void handleScan(); }}
               scanning={scanning}
               scanProgress={scanning ? progressOps.get("scan")?.event : undefined}
             />
@@ -222,7 +222,7 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
               onImportControllersChange={setImportControllers}
               importLayout={importLayout}
               onImportLayoutChange={setImportLayout}
-              onBrowsePreview={handleBrowsePreview}
+              onBrowsePreview={() => { void handleBrowsePreview(); }}
               selectedSequences={selectedSequences}
               onToggleSequence={(path) => {
                 setSelectedSequences((prev) => {
@@ -270,7 +270,7 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
                 Back
               </button>
               <button
-                onClick={handleImport}
+                onClick={() => { void handleImport(); }}
                 className="bg-primary hover:bg-primary/90 rounded px-4 py-1.5 text-xs font-medium text-white transition-colors"
               >
                 Import
@@ -279,7 +279,7 @@ export function ImportWizard({ onComplete, onCancel }: Props) {
           )}
           {step === "importing" && (
             <button
-              onClick={handleCancelImport}
+              onClick={() => { void handleCancelImport(); }}
               className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-4 py-1.5 text-xs transition-colors"
             >
               Cancel Import

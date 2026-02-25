@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { cmd } from "../commands";
-import type { ConversationSummary } from "../types";
+import { CHAT_TOKEN, CHAT_TOOL_CALL, CHAT_TOOL_RESULT, CHAT_COMPLETE, CHAT_THINKING } from "../events";
+import { useTauriListener } from "../hooks/useTauriListener";
+import type { ChatHistoryEntry, ConversationSummary } from "../types";
 import { MessageSquare, Send, X, Trash2, Loader2, Check, History, Plus } from "lucide-react";
 import Markdown from "react-markdown";
 import type { AppScreen } from "../screens";
 import { parseChatEntries } from "../utils/validators";
+import { useToast } from "../hooks/useToast";
 
-interface ChatEntry {
-  role: string;
-  text: string;
-}
+/** Display message: backend chat entries plus frontend-only "error" role. */
+type DisplayMessage = ChatHistoryEntry | { role: "error"; text: string };
 
 interface ToolActivity {
   tool: string;
@@ -44,7 +44,7 @@ function buildScreenContext(screen: AppScreen): string {
 }
 
 export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) {
-  const [messages, setMessages] = useState<ChatEntry[]>([]);
+  const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [streaming, setStreaming] = useState("");
@@ -52,6 +52,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { showError } = useToast();
 
   const refreshConversations = useCallback(() => {
     cmd.listAgentConversations().then(setConversations).catch(console.warn);
@@ -67,68 +68,48 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
     setSending(false);
   }, [refreshConversations]);
 
-  // Listen for chat events.
-  // Uses cancelled-flag pattern to avoid stale listener accumulation.
-  useEffect(() => {
-    let cancelled = false;
-    const unlisteners: Array<() => void> = [];
+  // Listen for chat events
+  useTauriListener<string>(CHAT_TOKEN, (text) => {
+    setStreaming((prev) => prev + text);
+  });
 
-    const reg = <T,>(event: string, handler: (payload: T) => void) => {
-      listen<T>(event, (e) => handler(e.payload)).then((fn) => {
-        if (cancelled) fn();
-        else unlisteners.push(fn);
-      });
-    };
+  useTauriListener<string>(CHAT_TOOL_CALL, (tool) => {
+    setToolActivity((prev) => [...prev, { tool, status: "running" }]);
+  });
 
-    reg<string>("chat:token", (text) => {
-      setStreaming((prev) => prev + text);
+  useTauriListener<{ tool: string; result: string }>(CHAT_TOOL_RESULT, (payload) => {
+    setToolActivity((prev) => {
+      let idx = -1;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i]!.status === "running") { idx = i; break; }
+      }
+      if (idx === -1) return prev;
+      const updated = [...prev];
+      updated[idx] = { tool: updated[idx]!.tool, status: "done", result: payload.result };
+      return updated;
     });
-
-    reg<string>("chat:tool_call", (tool) => {
-      setToolActivity((prev) => [...prev, { tool, status: "running" }]);
-    });
-
-    reg<{ tool: string; result: string }>("chat:tool_result", (payload) => {
-      setToolActivity((prev) => {
-        let idx = -1;
-        for (let i = prev.length - 1; i >= 0; i--) {
-          if (prev[i].status === "running") { idx = i; break; }
-        }
-        if (idx === -1) return prev;
-        const updated = [...prev];
-        updated[idx] = { ...updated[idx], status: "done", result: payload.result };
-        return updated;
-      });
-      onRefresh();
-    });
-
-    reg<boolean>("chat:complete", () => {
-      setSending(false);
-      setToolActivity([]);
-      // Capture streamed text as a message before clearing
-      setStreaming((prev) => {
-        if (prev.trim()) {
-          setMessages((msgs) => [...msgs, { role: "assistant", text: prev }]);
-        }
-        return "";
-      });
-      // Refresh messages from agent backend
-      cmd.getAgentChatHistory().then((entries) => {
-        const parsed = parseChatEntries(entries);
-        if (parsed.length > 0) setMessages(parsed);
-      }).catch(console.warn);
-      onRefresh();
-    });
-
-    reg<boolean>("chat:thinking", () => {
-      // Don't clear streaming — let text accumulate
-    });
-
-    return () => {
-      cancelled = true;
-      unlisteners.forEach((fn) => fn());
-    };
+    onRefresh();
   }, [onRefresh]);
+
+  useTauriListener<boolean>(CHAT_COMPLETE, () => {
+    setSending(false);
+    setToolActivity([]);
+    setStreaming((prev) => {
+      if (prev.trim()) {
+        setMessages((msgs) => [...msgs, { role: "assistant", text: prev }]);
+      }
+      return "";
+    });
+    cmd.getAgentChatHistory().then((entries) => {
+      const parsed = parseChatEntries(entries);
+      if (parsed.length > 0) setMessages(parsed);
+    }).catch(console.warn);
+    onRefresh();
+  }, [onRefresh]);
+
+  useTauriListener<boolean>(CHAT_THINKING, () => {
+    // Don't clear streaming — let text accumulate
+  });
 
   // Auto-scroll
   useEffect(() => {
@@ -151,7 +132,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
         typeof e === "string"
           ? e
           : e && typeof e === "object" && "detail" in e
-            ? String((e as { detail?: { message?: string } }).detail?.message ?? e)
+            ? ((e as { detail?: { message?: string } }).detail?.message ?? JSON.stringify(e))
             : JSON.stringify(e);
       setMessages((prev) => [
         ...prev,
@@ -162,8 +143,8 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
   }, [input, sending, screen]);
 
   const handleClear = useCallback(async () => {
-    await cmd.newAgentConversation().catch(console.warn);
-    await cmd.clearAgentSession().catch(console.warn);
+    await cmd.newAgentConversation().catch(showError);
+    await cmd.clearAgentSession().catch(showError);
     refreshConversations();
     setMessages([]);
     setStreaming("");
@@ -176,7 +157,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
   }, []);
 
   const handleSwitchConversation = useCallback(async (id: string) => {
-    await cmd.switchAgentConversation(id).catch(console.warn);
+    await cmd.switchAgentConversation(id).catch(showError);
     const entries = await cmd.getAgentChatHistory().catch(() => []);
     setMessages(parseChatEntries(entries));
     setStreaming("");
@@ -186,7 +167,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
   }, [refreshConversations]);
 
   const handleDeleteConversation = useCallback(async (id: string) => {
-    await cmd.deleteAgentConversation(id).catch(console.warn);
+    await cmd.deleteAgentConversation(id).catch(showError);
     refreshConversations();
     // If we deleted the active one, reload messages
     const active = conversations.find((c) => c.is_active);
@@ -217,7 +198,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
             <History size={14} />
           </button>
           <button
-            onClick={handleClear}
+            onClick={() => { void handleClear(); }}
             className="text-text-2 hover:text-text rounded p-1 transition-colors"
             aria-label="New conversation"
             title="New conversation"
@@ -246,7 +227,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
                 className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer text-xs transition-colors ${
                   conv.is_active ? "bg-primary/10 text-primary" : "text-text hover:bg-surface-2"
                 }`}
-                onClick={() => handleSwitchConversation(conv.id)}
+                onClick={() => { void handleSwitchConversation(conv.id); }}
               >
                 <div className="flex-1 min-w-0">
                   <div className="truncate font-medium">{conv.title}</div>
@@ -255,7 +236,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleDeleteConversation(conv.id);
+                    void handleDeleteConversation(conv.id);
                   }}
                   className="text-text-2 hover:text-error shrink-0 rounded p-0.5 transition-colors"
                   aria-label="Delete conversation"
@@ -334,7 +315,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                handleSend();
+                void handleSend();
               }
             }}
             placeholder="Ask AI to edit your show..."
@@ -343,7 +324,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
           />
           {sending ? (
             <button
-              onClick={handleStop}
+              onClick={() => { void handleStop(); }}
               aria-label="Stop generating"
               className="border-border bg-surface text-text-2 hover:text-text rounded border px-2 py-1.5 text-xs transition-colors"
             >
@@ -351,7 +332,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
             </button>
           ) : (
             <button
-              onClick={handleSend}
+              onClick={() => { void handleSend(); }}
               disabled={!input.trim()}
               aria-label="Send message"
               className="bg-primary text-white rounded px-2 py-1.5 transition-colors hover:opacity-90 disabled:opacity-50"

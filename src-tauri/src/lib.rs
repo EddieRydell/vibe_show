@@ -1,6 +1,8 @@
 pub mod analysis;
 #[cfg(feature = "tauri-app")]
 pub mod agent;
+#[cfg(feature = "tauri-app")]
+pub mod api;
 pub mod audit;
 pub mod chat;
 #[cfg(feature = "tauri-app")]
@@ -10,6 +12,7 @@ pub mod describe;
 pub mod dispatcher;
 pub mod dsl;
 pub mod effects;
+pub mod events;
 pub mod engine;
 pub mod error;
 pub mod import;

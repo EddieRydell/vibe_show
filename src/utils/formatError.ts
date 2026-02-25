@@ -17,21 +17,21 @@ export function formatTauriError(e: unknown): string {
     const obj = e as Record<string, unknown>;
 
     // Direct message field (some error shapes)
-    if (typeof obj.message === "string") return obj.message;
+    if (typeof obj["message"] === "string") return obj["message"];
 
     // AppError tagged enum: { code: "...", detail: { message: "..." } }
-    if (obj.detail && typeof obj.detail === "object") {
-      const detail = obj.detail as Record<string, unknown>;
-      if (typeof detail.message === "string") return detail.message;
-      if (typeof detail.model === "string")
-        return `Required model not installed: ${detail.model}`;
-      if (typeof detail.what === "string") return `${detail.what} not found`;
+    if (obj["detail"] && typeof obj["detail"] === "object") {
+      const detail = obj["detail"] as Record<string, unknown>;
+      if (typeof detail["message"] === "string") return detail["message"];
+      if (typeof detail["model"] === "string")
+        return `Required model not installed: ${detail["model"]}`;
+      if (typeof detail["what"] === "string") return `${detail["what"]} not found`;
     }
 
     // Bare code with no detail (e.g., "PythonNotReady", "NoSetup")
-    if (typeof obj.code === "string") {
+    if (typeof obj["code"] === "string") {
       // Convert PascalCase to readable: "PythonNotReady" -> "Python not ready"
-      return obj.code.replace(/([A-Z])/g, " $1").trim();
+      return obj["code"].replace(/([A-Z])/g, " $1").trim();
     }
 
     // Last resort: JSON

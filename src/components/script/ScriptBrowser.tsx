@@ -52,7 +52,7 @@ export function ScriptBrowser({
       if (currentScript === name) {
         const remaining = scripts.filter((s) => s !== name);
         if (remaining.length > 0) {
-          onSelectScript(remaining[0]);
+          onSelectScript(remaining[0]!);
         }
       }
     },
@@ -173,10 +173,10 @@ export function ScriptBrowser({
                 value={renameValue}
                 onChange={(e) => setRenameValue(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") commitRename();
+                  if (e.key === "Enter") void commitRename();
                   if (e.key === "Escape") setRenamingScript(null);
                 }}
-                onBlur={commitRename}
+                onBlur={() => { void commitRename(); }}
                 onClick={(e) => e.stopPropagation()}
                 className="border-border bg-surface-2 text-text min-w-0 flex-1 rounded border px-1.5 py-0.5 text-[11px] outline-none focus:border-primary"
               />
@@ -197,7 +197,7 @@ export function ScriptBrowser({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleDuplicate(name);
+                      void handleDuplicate(name);
                     }}
                     className="text-text-2 hover:text-text p-0.5"
                     title="Duplicate"
@@ -227,7 +227,7 @@ export function ScriptBrowser({
           message={`Delete "${deleteTarget}"? This cannot be undone.`}
           confirmLabel="Delete"
           destructive
-          onConfirm={() => handleDelete(deleteTarget)}
+          onConfirm={() => { void handleDelete(deleteTarget); }}
           onCancel={() => setDeleteTarget(null)}
         />
       )}

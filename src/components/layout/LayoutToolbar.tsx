@@ -60,7 +60,7 @@ export function LayoutToolbar({ selectedFixtureId, fixtures, layouts, onLayoutCh
 
   const handleAutoDistribute = () => {
     if (!selectedLayout || !selectedFixture) return;
-    const shape = selectedLayout.shape ?? "Custom";
+    const shape = selectedLayout.shape;
     if (shape === "Custom") return;
     const positions = generatePositions(shape, selectedFixture.pixel_count);
     if (!positions) return;

@@ -54,32 +54,34 @@ Never use accent color for:
 
 ### 4.1 Neutral grayscale (R = G = B)
 
+> **SSOT**: All hex values are defined in `src/index.css`. Tables below show token names and their CSS/Tailwind mappings. Edit `src/index.css` to change colors.
+
 #### Light Mode
-| Token       | Value     | CSS Variable   | Tailwind Class        |
-|-------------|-----------|----------------|-----------------------|
-| Background  | `#FFFFFF` | `--bg`         | `bg-bg`               |
-| Surface     | `#F7F7F7` | `--surface`    | `bg-surface`          |
-| Surface-2   | `#FAFAFA` | `--surface-2`  | `bg-surface-2`        |
-| Border      | `#E5E5E5` | `--border`     | `border-border`       |
-| Text        | `#111111` | `--text`       | `text-text`           |
-| Text-2      | `#555555` | `--text-2`     | `text-text-2`         |
+| Token       | CSS Variable   | Tailwind Class        |
+|-------------|----------------|-----------------------|
+| Background  | `--bg`         | `bg-bg`               |
+| Surface     | `--surface`    | `bg-surface`          |
+| Surface-2   | `--surface-2`  | `bg-surface-2`        |
+| Border      | `--border`     | `border-border`       |
+| Text        | `--text`       | `text-text`           |
+| Text-2      | `--text-2`     | `text-text-2`         |
 
 #### Dark Mode
-| Token       | Value     | CSS Variable   | Tailwind Class        |
-|-------------|-----------|----------------|-----------------------|
-| Background  | `#0E0E0E` | `--bg`         | `bg-bg`               |
-| Surface     | `#161616` | `--surface`    | `bg-surface`          |
-| Surface-2   | `#1D1D1D` | `--surface-2`  | `bg-surface-2`        |
-| Border      | `#2A2A2A` | `--border`     | `border-border`       |
-| Text        | `#F5F5F5` | `--text`       | `text-text`           |
-| Text-2      | `#AAAAAA` | `--text-2`     | `text-text-2`         |
+| Token       | CSS Variable   | Tailwind Class        |
+|-------------|----------------|-----------------------|
+| Background  | `--bg`         | `bg-bg`               |
+| Surface     | `--surface`    | `bg-surface`          |
+| Surface-2   | `--surface-2`  | `bg-surface-2`        |
+| Border      | `--border`     | `border-border`       |
+| Text        | `--text`       | `text-text`           |
+| Text-2      | `--text-2`     | `text-text-2`         |
 
 ### 4.2 Accent color (single source of identity)
 
-| Token         | Value     | CSS Variable      | Tailwind Class         |
-|---------------|-----------|--------------------|------------------------|
-| Primary       | `#3B82F6` | `--primary`        | `bg-primary`, `text-primary`, `border-primary`, `ring-primary` |
-| Primary Hover | `#6A4DE0` (light) / `#9178FF` (dark) | `--primary-hover` | `bg-primary-hover` |
+| Token         | CSS Variable      | Tailwind Class         |
+|---------------|--------------------|------------------------|
+| Primary       | `--primary`        | `bg-primary`, `text-primary`, `border-primary`, `ring-primary` |
+| Primary Hover | `--primary-hover`  | `bg-primary-hover` |
 
 Rules:
 - Do not introduce additional primary colors
@@ -87,11 +89,11 @@ Rules:
 
 ### 4.3 Semantic colors
 
-| Token   | Value     | CSS Variable | Tailwind Class |
-|---------|-----------|--------------|----------------|
-| Success | `#22C55E` | `--success`  | `text-success`, `bg-success` |
-| Warning | `#F59E0B` | `--warning`  | `text-warning`, `bg-warning` |
-| Error   | `#EF4444` | `--error`    | `text-error`, `bg-error`     |
+| Token   | CSS Variable | Tailwind Class |
+|---------|--------------|----------------|
+| Success | `--success`  | `text-success`, `bg-success` |
+| Warning | `--warning`  | `text-warning`, `bg-warning` |
+| Error   | `--error`    | `text-error`, `bg-error`     |
 
 ### 4.4 Implementation (SSOT)
 

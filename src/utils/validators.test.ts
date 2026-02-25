@@ -22,6 +22,20 @@ describe("parseChatEntries", () => {
     expect(parseChatEntries(input)).toEqual(input);
   });
 
+  it("accepts tool role", () => {
+    const input = [{ role: "tool", text: "result" }];
+    expect(parseChatEntries(input)).toEqual(input);
+  });
+
+  it("filters out entries with invalid role", () => {
+    const input = [
+      { role: "user", text: "hello" },
+      { role: "error", text: "not a valid ChatRole" },
+      { role: "unknown", text: "bad role" },
+    ];
+    expect(parseChatEntries(input)).toEqual([{ role: "user", text: "hello" }]);
+  });
+
   it("filters out entries missing role", () => {
     const input = [
       { role: "user", text: "hello" },
@@ -52,7 +66,7 @@ describe("parseChatEntries", () => {
     const input = [{ role: "user", text: "hello", extra: "data" }];
     const result = parseChatEntries(input);
     expect(result).toHaveLength(1);
-    expect(result[0].role).toBe("user");
-    expect(result[0].text).toBe("hello");
+    expect(result[0]!.role).toBe("user");
+    expect(result[0]!.text).toBe("hello");
   });
 });

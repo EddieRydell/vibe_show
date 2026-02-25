@@ -12,3 +12,10 @@ export function formatTimeDuration(seconds: number): string {
   const s = (seconds % 60).toFixed(1);
   return m > 0 ? `${m}:${s.padStart(4, "0")}` : `${s}s`;
 }
+
+/** Ruler tick label: "M:SS" when >= 60s, otherwise "Ns" */
+export function formatRulerTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return m > 0 ? `${m}:${s.toString().padStart(2, "0")}` : `${s}s`;
+}

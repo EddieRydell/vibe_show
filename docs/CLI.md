@@ -24,9 +24,9 @@ vibelights-cli serve --data-dir ~/vibelights-data
 ### 2. In another terminal, use subcommands
 
 ```bash
-# Create and open a profile
-vibelights-cli profiles create "My House"
-vibelights-cli profiles open my-house
+# Create and open a setup
+vibelights-cli setups create "My House"
+vibelights-cli setups open my-house
 
 # Create and open a sequence
 vibelights-cli sequences create "Christmas Show"
@@ -49,8 +49,8 @@ Starts a long-running HTTP API server. All other commands connect to this.
 ```
 vibelights-cli serve [OPTIONS]
   --data-dir <PATH>     Data directory (overrides settings.json)
-  --profile <SLUG>      Open this profile on startup
-  --sequence <SLUG>     Open this sequence on startup (requires --profile)
+  --setup <SLUG>        Open this setup on startup
+  --sequence <SLUG>     Open this sequence on startup (requires --setup)
   --port <PORT>         Bind to specific port (default: OS-assigned)
   --api-key <KEY>       Set Claude API key
 ```
@@ -61,14 +61,14 @@ Connects to a running server (discovers port from `.vibelights-port` file or `--
 
 ## Command Reference
 
-### Profile Commands
+### Setup Commands
 
 ```bash
-vibelights-cli profiles list                  # List all profiles
-vibelights-cli profiles create "My House"     # Create a new profile
-vibelights-cli profiles open my-house         # Open/load a profile
-vibelights-cli profiles delete my-house       # Delete a profile
-vibelights-cli profiles save                  # Save current profile
+vibelights-cli setups list                  # List all setups
+vibelights-cli setups create "My House"     # Create a new setup
+vibelights-cli setups open my-house         # Open/load a setup
+vibelights-cli setups delete my-house       # Delete a setup
+vibelights-cli setups save                  # Save current setup
 ```
 
 ### Sequence Commands
@@ -143,6 +143,8 @@ vibelights-cli vixen-import '<config-json>'
 --json           Output raw JSON instead of formatted text
 ```
 
+<!-- SSOT: endpoint tables must match command registry (src-tauri/src/registry/mod.rs) and HTTP routes (src-tauri/src/bin/cli.rs) -->
+
 ## HTTP API Reference
 
 The CLI wraps the HTTP API. You can also call endpoints directly.
@@ -170,20 +172,20 @@ The CLI wraps the HTTP API. You can also call endpoints directly.
 |--------|------|-------------|
 | GET | `/api/settings` | App settings |
 | POST | `/api/settings/initialize` | Initialize data directory |
-| GET | `/api/profiles` | List profiles |
-| POST | `/api/profiles` | Create profile |
-| GET | `/api/profiles/{slug}` | Open/load profile |
-| DELETE | `/api/profiles/{slug}` | Delete profile |
-| POST | `/api/profiles/{slug}/save` | Save profile |
-| PUT | `/api/profiles/{slug}/fixtures` | Update fixtures/groups |
-| PUT | `/api/profiles/{slug}/setup` | Update controllers/patches |
-| GET | `/api/profiles/{slug}/sequences` | List sequences |
-| POST | `/api/profiles/{slug}/sequences` | Create sequence |
-| GET | `/api/profiles/{slug}/sequences/{seq}` | Open sequence |
-| DELETE | `/api/profiles/{slug}/sequences/{seq}` | Delete sequence |
-| GET | `/api/profiles/{slug}/media` | List media files |
-| POST | `/api/profiles/{slug}/media` | Import media |
-| DELETE | `/api/profiles/{slug}/media/{filename}` | Delete media |
+| GET | `/api/setups` | List setups |
+| POST | `/api/setups` | Create setup |
+| GET | `/api/setups/{slug}` | Open/load setup |
+| DELETE | `/api/setups/{slug}` | Delete setup |
+| POST | `/api/setups/{slug}/save` | Save setup |
+| PUT | `/api/setups/{slug}/fixtures` | Update fixtures/groups |
+| PUT | `/api/setups/{slug}/outputs` | Update controllers/patches |
+| GET | `/api/setups/{slug}/sequences` | List sequences |
+| POST | `/api/setups/{slug}/sequences` | Create sequence |
+| GET | `/api/setups/{slug}/sequences/{seq}` | Open sequence |
+| DELETE | `/api/setups/{slug}/sequences/{seq}` | Delete sequence |
+| GET | `/api/setups/{slug}/media` | List media files |
+| POST | `/api/setups/{slug}/media` | Import media |
+| DELETE | `/api/setups/{slug}/media/{filename}` | Delete media |
 | GET | `/api/frame?time=5.0` | Render frame at time |
 | GET | `/api/describe` | Human-readable description |
 | POST | `/api/chat` | Send chat message |
@@ -199,7 +201,7 @@ The CLI wraps the HTTP API. You can also call endpoints directly.
 
 1. Start the CLI server:
    ```bash
-   vibelights-cli serve --data-dir ~/vibelights-data --profile my-house --sequence christmas
+   vibelights-cli serve --data-dir ~/vibelights-data --setup my-house --sequence christmas
    ```
 
 2. Claude Code can then use the HTTP API directly, or the MCP server auto-discovers the running instance via the `.vibelights-port` file.

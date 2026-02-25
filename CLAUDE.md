@@ -66,12 +66,12 @@ pub trait Effect: Send + Sync {
     fn name(&self) -> &'static str;
 }
 ```
-Effects are pure functions of (normalized time, pixel position, params) → Color. Built-in: Solid, Chase, Rainbow, Strobe, Gradient, Twinkle. Resolved from `EffectKind` enum via `resolve_effect()`. This trait is the extension point for future user-defined effects (DSL, WASM, LLM-generated).
+Effects are pure functions of (normalized time, pixel position, params) → Color. Built-in effects defined by `EffectKind` enum in `model/timeline.rs` (Solid, Chase, Rainbow, Strobe, Gradient, Twinkle, Fade, Wipe at time of writing). Resolved via `resolve_effect()`. This trait is the extension point for user-defined effects via the DSL `Script` variant.
 
 **Engine (`engine/`)** — Frame evaluation pipeline:
 1. For each track (bottom to top), find active effects at time `t`
 2. Effects span across all targeted fixtures seamlessly (global pixel indexing)
-3. Blend track outputs using `BlendMode` (Override, Add, Multiply, Max, Alpha)
+3. Blend track outputs using `BlendMode` enum (see `model/timeline.rs` for full list)
 4. Output: `Frame` = `HashMap<fixture_id, Vec<[r,g,b,a]>>`
 
 **Command Registry (`registry/`)** — Unified IPC layer. A single `define_commands!` macro in `mod.rs` defines every operation as a variant of the `Command` enum (`#[serde(tag="command", content="params")]`). The macro auto-generates: the `Command` and `CommandResult` enums (both ts-rs exported), dispatch functions (sync + async), JSON schemas (via schemars), help text, and deserialization from tool calls. Adding a new command = add a param struct in `params.rs`, add a variant to the macro, implement a handler — the compiler enforces the rest.
@@ -92,11 +92,21 @@ Effects are pure functions of (normalized time, pixel position, params) → Colo
 **Styling**: Tailwind CSS v4 with design tokens defined in `src/index.css`. Light/dark mode via CSS variables under `:root` / `.dark`, mapped to Tailwind via `@theme inline`. Semantic classes: `bg-bg`, `bg-surface`, `bg-surface-2`, `border-border`, `text-text`, `text-text-2`, `bg-primary`, `text-primary`. Effect type colors use `fx-*` prefix. See `BRAND_GUIDE.md` for full token table and usage rules. Never use inline styles for colors — use the theme tokens.
 
 **Components**:
-- `App.tsx` — Layout: header → toolbar → main (sidebar + timeline) → collapsible preview
+- `App.tsx` — Layout: nav bar + screen router
 - `Toolbar.tsx` — Transport controls (play/pause/stop/skip) with SVG icons + time display
 - `Timeline.tsx` — Main view: time ruler + track lanes with colored effect blocks + playhead
-- `Preview.tsx` — Collapsible PixiJS 2D renderer for light preview
-- `FixtureList.tsx` — Left sidebar showing fixtures and groups
+- `PropertyPanel.tsx` — Effect parameter editor sidebar
+- `LibraryPanel.tsx` — Global gradients, curves, scripts sidebar
+- `ChatPanel.tsx` — AI agent chat panel
+- `TabBar.tsx` — Tab navigation with setup indicator
+
+**Screens** (`screens/`):
+- `HomeScreen.tsx` — Tabbed hub (Effects, Gradients, Curves, Sequences, Music, House Setup, Layout)
+- `EditorScreen.tsx` — Timeline editor with toolbar + preview
+- `ScriptScreen.tsx` — DSL script editor with live preview
+- `AnalysisScreen.tsx` — Audio analysis workspace
+- `SettingsScreen.tsx` — App settings
+- `DetachedPreview.tsx` — Standalone preview window
 
 **Hooks**:
 - `useEngine.ts` — Wraps all Tauri IPC (show loading, playback control, frame updates via requestAnimationFrame tick loop)

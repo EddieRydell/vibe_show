@@ -14,7 +14,7 @@ export function CurvesTab({ setError }: Props) {
   const refresh = useCallback(() => {
     cmd.listGlobalCurves()
       .then(setCurves)
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
   }, [setError]);
 
   useEffect(refresh, [refresh]);
@@ -32,14 +32,14 @@ export function CurvesTab({ setError }: Props) {
     };
     cmd.setGlobalCurve(name, defaultCurve)
       .then(refresh)
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
   }, [curves, refresh, setError]);
 
   const handleUpdate = useCallback(
     (name: string, curve: Curve) => {
       cmd.setGlobalCurve(name, curve)
         .then(refresh)
-        .catch((e) => setError(String(e)));
+        .catch((e: unknown) => setError(String(e)));
     },
     [refresh, setError],
   );
@@ -48,7 +48,7 @@ export function CurvesTab({ setError }: Props) {
     (oldName: string, newName: string) => {
       cmd.renameGlobalCurve(oldName, newName)
         .then(refresh)
-        .catch((e) => setError(String(e)));
+        .catch((e: unknown) => setError(String(e)));
     },
     [refresh, setError],
   );
@@ -57,7 +57,7 @@ export function CurvesTab({ setError }: Props) {
     (name: string) => {
       cmd.deleteGlobalCurve(name)
         .then(refresh)
-        .catch((e) => setError(String(e)));
+        .catch((e: unknown) => setError(String(e)));
     },
     [refresh, setError],
   );

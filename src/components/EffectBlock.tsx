@@ -29,7 +29,7 @@ export function EffectBlock({
 
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
+        if (entry!.isIntersecting) {
           setIsVisible(true);
           observer.disconnect();
         }
@@ -63,12 +63,12 @@ export function EffectBlock({
 
         const imageData = ctx.createImageData(thumb.width, thumb.height);
         for (let i = 0; i < thumb.pixels.length; i++) {
-          imageData.data[i] = thumb.pixels[i];
+          imageData.data[i] = thumb.pixels[i]!;
         }
         ctx.putImageData(imageData, 0, 0);
         setLoaded(true);
       })
-      .catch((e) => console.error("[VibeLights] Thumbnail render failed:", e));
+      .catch((e: unknown) => console.error("[VibeLights] Thumbnail render failed:", e));
   }, [isVisible, sequenceIndex, trackIndex, effectIndex, refreshKey]);
 
   return (

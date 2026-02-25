@@ -18,8 +18,8 @@ export function parseEffectKey(
 ): { trackIndex: number; effectIndex: number } | null {
   if (!/^\d+-\d+$/.test(key)) return null;
   const parts = key.split("-");
-  const trackIndex = parseInt(parts[0], 10);
-  const effectIndex = parseInt(parts[1], 10);
+  const trackIndex = parseInt(parts[0]!, 10);
+  const effectIndex = parseInt(parts[1]!, 10);
   return { trackIndex, effectIndex };
 }
 

@@ -131,8 +131,8 @@ export function useTimelineDrag({
         if (y >= row.top && y < row.bottom) return row.fixtureId;
       }
       // Clamp: return first or last row
-      if (y < 0) return rowOffsets[0].fixtureId;
-      return rowOffsets[rowOffsets.length - 1].fixtureId;
+      if (y < 0) return rowOffsets[0]!.fixtureId;
+      return rowOffsets[rowOffsets.length - 1]!.fixtureId;
     },
     [scrollContainerRef, rowOffsets, waveform],
   );
@@ -197,7 +197,7 @@ export function useTimelineDrag({
 
   const handleMoveMouseDown = useCallback(
     (e: React.MouseEvent, placed: PlacedEffect, fixtureId: number) => {
-      if ((e.target as HTMLElement).dataset.resizeHandle) return;
+      if ((e.target as HTMLElement).dataset["resizeHandle"]) return;
       e.stopPropagation();
       e.preventDefault();
       const state: DragState = {
@@ -336,12 +336,13 @@ export function useTimelineDrag({
         } else {
           onSelectionChangeRef.current(inside);
         }
-      } else if (ds.type === "swipe") {
+      } else {
+        // ds.type === "swipe"
         const el = document.elementFromPoint(e.clientX, e.clientY);
         if (el instanceof HTMLElement) {
           const effectEl = el.closest("[data-effect-key]");
           if (effectEl instanceof HTMLElement) {
-            const key = effectEl.dataset.effectKey;
+            const key = effectEl.dataset["effectKey"];
             if (key && !ds.swipedKeys.has(key)) {
               ds.swipedKeys.add(key);
               const next = new Set(ds.baseSelection);
@@ -423,7 +424,8 @@ export function useTimelineDrag({
         if (dist >= DRAG_THRESHOLD) {
           justFinishedDragRef.current = true;
         }
-      } else if (ds.type === "swipe") {
+      } else {
+        // ds.type === "swipe"
         if (ds.swipedKeys.size > 0) {
           justFinishedDragRef.current = true;
         }
@@ -432,11 +434,15 @@ export function useTimelineDrag({
       setDragPreview(null);
     }
 
+    function handleMouseUpSync(e: MouseEvent) {
+      void handleMouseUp(e);
+    }
+
     document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
+    document.addEventListener("mouseup", handleMouseUpSync);
     return () => {
       document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("mouseup", handleMouseUpSync);
     };
   }, [
     duration,

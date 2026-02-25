@@ -38,7 +38,6 @@ export type { GroupMember } from "../src-tauri/bindings/GroupMember";
 export type { Layout } from "../src-tauri/bindings/Layout";
 export type { LayoutShape } from "../src-tauri/bindings/LayoutShape";
 export type { LlmConfigInfo } from "../src-tauri/bindings/LlmConfigInfo";
-export type { LlmProvider } from "../src-tauri/bindings/LlmProvider";
 export type { LlmProviderConfig } from "../src-tauri/bindings/LlmProviderConfig";
 export type { MediaFile } from "../src-tauri/bindings/MediaFile";
 export type { OutputMapping } from "../src-tauri/bindings/OutputMapping";
@@ -70,7 +69,21 @@ export type { VixenImportConfig } from "../src-tauri/bindings/VixenImportConfig"
 export type { VixenImportResult } from "../src-tauri/bindings/VixenImportResult";
 export type { VixenMediaInfo } from "../src-tauri/bindings/VixenMediaInfo";
 export type { VixenSequenceInfo } from "../src-tauri/bindings/VixenSequenceInfo";
+export type { EasingFunction } from "../src-tauri/bindings/EasingFunction";
+export type { EffectLocation } from "../src-tauri/bindings/EffectLocation";
+export type { JsonValue } from "../src-tauri/bindings/JsonValue";
+export type { LoopMode } from "../src-tauri/bindings/LoopMode";
+export type { MotionPath } from "../src-tauri/bindings/MotionPath";
+export type { Region } from "../src-tauri/bindings/Region";
+export type { Waypoint } from "../src-tauri/bindings/Waypoint";
 export type { WipeDirection } from "../src-tauri/bindings/WipeDirection";
+
+// ── Command / registry types ────────────────────────────────────────
+
+export type { BatchAction } from "../src-tauri/bindings/BatchAction";
+export type { Command } from "../src-tauri/bindings/Command";
+export type { CommandCategory } from "../src-tauri/bindings/CommandCategory";
+export type { CommandResult } from "../src-tauri/bindings/CommandResult";
 
 // ── Command return types ─────────────────────────────────────────────
 
@@ -79,11 +92,56 @@ export type { BeatsInRange } from "../src-tauri/bindings/BeatsInRange";
 export type { ChatHistoryEntry } from "../src-tauri/bindings/ChatHistoryEntry";
 export type { ChatRole } from "../src-tauri/bindings/ChatRole";
 export type { ConversationSummary } from "../src-tauri/bindings/ConversationSummary";
-export type { EffectCatalogEntry } from "../src-tauri/bindings/EffectCatalogEntry";
-export type { EffectCatalogParam } from "../src-tauri/bindings/EffectCatalogParam";
-export type { GlobalLibrarySummary } from "../src-tauri/bindings/GlobalLibrarySummary";
 export type { NewConversationResult } from "../src-tauri/bindings/NewConversationResult";
 export type { SectionSummary } from "../src-tauri/bindings/SectionSummary";
+
+// ── Command param types ─────────────────────────────────────────────
+
+export type { AddEffectParams } from "../src-tauri/bindings/AddEffectParams";
+export type { AddTrackParams } from "../src-tauri/bindings/AddTrackParams";
+export type { AnalyzeAudioParams } from "../src-tauri/bindings/AnalyzeAudioParams";
+export type { BatchEditParams } from "../src-tauri/bindings/BatchEditParams";
+export type { CancelOperationParams } from "../src-tauri/bindings/CancelOperationParams";
+export type { CheckVixenPreviewFileParams } from "../src-tauri/bindings/CheckVixenPreviewFileParams";
+export type { CompileScriptPreviewParams } from "../src-tauri/bindings/CompileScriptPreviewParams";
+export type { ConversationIdParams } from "../src-tauri/bindings/ConversationIdParams";
+export type { CreateSequenceParams } from "../src-tauri/bindings/CreateSequenceParams";
+export type { CreateSetupParams } from "../src-tauri/bindings/CreateSetupParams";
+export type { DeleteEffectsParams } from "../src-tauri/bindings/DeleteEffectsParams";
+export type { DeleteTrackParams } from "../src-tauri/bindings/DeleteTrackParams";
+export type { GetAnalysisDetailParams } from "../src-tauri/bindings/GetAnalysisDetailParams";
+export type { GetBeatsInRangeParams } from "../src-tauri/bindings/GetBeatsInRangeParams";
+export type { GetEffectDetailParams } from "../src-tauri/bindings/GetEffectDetailParams";
+export type { GetFrameFilteredParams } from "../src-tauri/bindings/GetFrameFilteredParams";
+export type { GetFrameParams } from "../src-tauri/bindings/GetFrameParams";
+export type { ImportMediaParams } from "../src-tauri/bindings/ImportMediaParams";
+export type { ImportVixenParams } from "../src-tauri/bindings/ImportVixenParams";
+export type { ImportVixenSequenceParams } from "../src-tauri/bindings/ImportVixenSequenceParams";
+export type { ImportVixenSetupParams } from "../src-tauri/bindings/ImportVixenSetupParams";
+export type { InitializeDataDirParams } from "../src-tauri/bindings/InitializeDataDirParams";
+export type { MoveEffectToTrackParams } from "../src-tauri/bindings/MoveEffectToTrackParams";
+export type { NameParams } from "../src-tauri/bindings/NameParams";
+export type { PreviewScriptFrameParams } from "../src-tauri/bindings/PreviewScriptFrameParams";
+export type { PreviewScriptParams } from "../src-tauri/bindings/PreviewScriptParams";
+export type { RenameParams } from "../src-tauri/bindings/RenameParams";
+export type { RenderEffectThumbnailParams } from "../src-tauri/bindings/RenderEffectThumbnailParams";
+export type { ScanVixenDirectoryParams } from "../src-tauri/bindings/ScanVixenDirectoryParams";
+export type { SeekParams } from "../src-tauri/bindings/SeekParams";
+export type { SendAgentMessageParams } from "../src-tauri/bindings/SendAgentMessageParams";
+export type { SetGlobalCurveParams } from "../src-tauri/bindings/SetGlobalCurveParams";
+export type { SetGlobalGradientParams } from "../src-tauri/bindings/SetGlobalGradientParams";
+export type { SetLlmConfigParams } from "../src-tauri/bindings/SetLlmConfigParams";
+export type { SetLoopingParams } from "../src-tauri/bindings/SetLoopingParams";
+export type { SetRegionParams } from "../src-tauri/bindings/SetRegionParams";
+export type { SlugParams } from "../src-tauri/bindings/SlugParams";
+export type { TickParams } from "../src-tauri/bindings/TickParams";
+export type { UpdateEffectParamParams } from "../src-tauri/bindings/UpdateEffectParamParams";
+export type { UpdateEffectTimeRangeParams } from "../src-tauri/bindings/UpdateEffectTimeRangeParams";
+export type { UpdateSequenceSettingsParams } from "../src-tauri/bindings/UpdateSequenceSettingsParams";
+export type { UpdateSetupFixturesParams } from "../src-tauri/bindings/UpdateSetupFixturesParams";
+export type { UpdateSetupLayoutParams } from "../src-tauri/bindings/UpdateSetupLayoutParams";
+export type { UpdateSetupOutputsParams } from "../src-tauri/bindings/UpdateSetupOutputsParams";
+export type { WriteScriptParams } from "../src-tauri/bindings/WriteScriptParams";
 
 // ── Audio analysis types ────────────────────────────────────────────
 
@@ -109,6 +167,7 @@ export type { VocalSegment } from "../src-tauri/bindings/VocalSegment";
 // ── Frontend-only types ─────────────────────────────────────────────
 
 import type { BulbShape } from "../src-tauri/bindings/BulbShape";
+import type { ParamValue } from "../src-tauri/bindings/ParamValue";
 
 export const BULB_SHAPE_RADIUS: Record<BulbShape, number> = {
   Mini: 0.8,
@@ -122,6 +181,9 @@ export const BULB_SHAPE_RADIUS: Record<BulbShape, number> = {
 };
 
 export type InteractionMode = "select" | "edit" | "swipe";
+
+/** Simple string-keyed param map for script params (all Custom keys). */
+export type ScriptParams = Record<string, ParamValue>;
 
 // ── Type helpers for serde enum unions ────────────────────────────
 // ParamKey and EffectKind include object variants ({ Custom: string }, { Script: string })

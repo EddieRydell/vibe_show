@@ -19,7 +19,7 @@ export function SequencesTab({ slug, onOpenSequence, setError }: Props) {
   const refresh = useCallback(() => {
     cmd.listSequences()
       .then(setSequences)
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
   }, [setError]);
 
   useEffect(refresh, [refresh]);
@@ -32,7 +32,7 @@ export function SequencesTab({ slug, onOpenSequence, setError }: Props) {
         setShowCreate(false);
         refresh();
       })
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
   }, [newName, refresh, setError]);
 
   const [deleteTarget, setDeleteTarget] = useState<{ slug: string; name: string } | null>(null);
@@ -48,7 +48,7 @@ export function SequencesTab({ slug, onOpenSequence, setError }: Props) {
     if (!deleteTarget) return;
     cmd.deleteSequence(deleteTarget.slug)
       .then(refresh)
-      .catch((e) => setError(String(e)));
+      .catch((e: unknown) => setError(String(e)));
     setDeleteTarget(null);
   }, [deleteTarget, refresh, setError]);
 
@@ -66,7 +66,7 @@ export function SequencesTab({ slug, onOpenSequence, setError }: Props) {
         try {
           await cmd.importVixenSequence(slug, timPath);
         } catch (e) {
-          setError(`Failed to import sequence: ${e}`);
+          setError(`Failed to import sequence: ${String(e)}`);
         }
       }
       refresh();
@@ -81,7 +81,7 @@ export function SequencesTab({ slug, onOpenSequence, setError }: Props) {
         <h3 className="text-text text-sm font-medium">Sequences</h3>
         <div className="flex items-center gap-2">
           <button
-            onClick={handleImportVixenSequence}
+            onClick={() => { void handleImportVixenSequence(); }}
             disabled={importingVixen}
             className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text rounded border px-3 py-1 text-xs transition-colors disabled:opacity-50"
           >

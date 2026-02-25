@@ -6,8 +6,6 @@ use crate::model::{
     FixtureGroup, Layout, Patch, ParamKey, ParamValue,
 };
 use crate::model::AnalysisFeatures;
-use crate::settings::LlmProvider;
-
 fn default_blend_mode() -> BlendMode {
     BlendMode::Override
 }
@@ -35,7 +33,7 @@ pub struct AddEffectParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
-pub struct EffectTarget {
+pub struct EffectLocation {
     pub track_index: usize,
     pub effect_index: usize,
 }
@@ -44,8 +42,8 @@ pub struct EffectTarget {
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
 pub struct DeleteEffectsParams {
-    /// Array of effect targets to delete.
-    pub targets: Vec<EffectTarget>,
+    /// Array of effect locations to delete.
+    pub targets: Vec<EffectLocation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -83,55 +81,108 @@ pub struct DeleteTrackParams {
     pub track_index: usize,
 }
 
+/// A single action within a batch edit operation.
+/// Typed union — adding a variant without handling it is a compiler error.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+#[serde(tag = "action", content = "params")]
+pub enum BatchAction {
+    #[serde(rename = "add_effect")]
+    AddEffect(AddEffectParams),
+    #[serde(rename = "delete_effects")]
+    DeleteEffects(DeleteEffectsParams),
+    #[serde(rename = "update_effect_param")]
+    UpdateEffectParam(UpdateEffectParamParams),
+    #[serde(rename = "update_effect_time_range")]
+    UpdateEffectTimeRange(UpdateEffectTimeRangeParams),
+    #[serde(rename = "add_track")]
+    AddTrack(AddTrackParams),
+    #[serde(rename = "delete_track")]
+    DeleteTrack(DeleteTrackParams),
+    #[serde(rename = "move_effect_to_track")]
+    MoveEffectToTrack(MoveEffectToTrackParams),
+    #[serde(rename = "update_sequence_settings")]
+    UpdateSequenceSettings(UpdateSequenceSettingsParams),
+    #[serde(rename = "write_script")]
+    WriteScript(WriteScriptParams),
+}
+
+impl BatchAction {
+    /// Convert a batch action into an `EditCommand`. Returns `Ok(None)` for
+    /// actions that are pre-processed (e.g. `WriteScript` is compiled before
+    /// the batch executes and has no corresponding `EditCommand`).
+    pub fn into_edit_command(
+        self,
+        sequence_index: usize,
+    ) -> Result<Option<crate::dispatcher::EditCommand>, String> {
+        use crate::dispatcher::EditCommand;
+        use crate::model::{EffectTarget, FixtureId};
+
+        match self {
+            BatchAction::AddEffect(p) => Ok(Some(EditCommand::AddEffect {
+                sequence_index,
+                track_index: p.track_index,
+                kind: p.kind,
+                start: p.start,
+                end: p.end,
+                blend_mode: p.blend_mode,
+                opacity: p.opacity,
+            })),
+            BatchAction::DeleteEffects(p) => Ok(Some(EditCommand::DeleteEffects {
+                sequence_index,
+                targets: p.targets.into_iter().map(|t| (t.track_index, t.effect_index)).collect(),
+            })),
+            BatchAction::UpdateEffectParam(p) => Ok(Some(EditCommand::UpdateEffectParam {
+                sequence_index,
+                track_index: p.track_index,
+                effect_index: p.effect_index,
+                key: p.key,
+                value: p.value,
+            })),
+            BatchAction::UpdateEffectTimeRange(p) => Ok(Some(EditCommand::UpdateEffectTimeRange {
+                sequence_index,
+                track_index: p.track_index,
+                effect_index: p.effect_index,
+                start: p.start,
+                end: p.end,
+            })),
+            BatchAction::AddTrack(p) => Ok(Some(EditCommand::AddTrack {
+                sequence_index,
+                name: p.name,
+                target: EffectTarget::Fixtures(vec![FixtureId(p.fixture_id)]),
+            })),
+            BatchAction::DeleteTrack(p) => Ok(Some(EditCommand::DeleteTrack {
+                sequence_index,
+                track_index: p.track_index,
+            })),
+            BatchAction::MoveEffectToTrack(p) => Ok(Some(EditCommand::MoveEffectToTrack {
+                sequence_index,
+                from_track: p.from_track,
+                effect_index: p.effect_index,
+                to_track: p.to_track,
+            })),
+            BatchAction::UpdateSequenceSettings(p) => {
+                Ok(Some(EditCommand::UpdateSequenceSettings {
+                    sequence_index,
+                    name: p.name,
+                    audio_file: p.audio_file,
+                    duration: p.duration,
+                    frame_rate: p.frame_rate,
+                }))
+            }
+            BatchAction::WriteScript(_) => Ok(None), // Pre-processed
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
 pub struct BatchEditParams {
     #[serde(default)]
     pub description: String,
-    #[cfg_attr(feature = "tauri-app", ts(type = "any[]"))]
-    #[schemars(schema_with = "batch_commands_schema")]
-    pub commands: Vec<serde_json::Value>,
-}
-
-fn batch_commands_schema(_gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-    use schemars::schema::{
-        ArrayValidation, InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec,
-    };
-
-    let string_schema = SchemaObject {
-        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
-        ..SchemaObject::default()
-    };
-    let object_schema = SchemaObject {
-        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-        ..SchemaObject::default()
-    };
-
-    let mut properties = schemars::Map::new();
-    properties.insert("action".to_string(), Schema::Object(string_schema));
-    properties.insert("params".to_string(), Schema::Object(object_schema));
-
-    let item_schema = SchemaObject {
-        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-        object: Some(Box::new(ObjectValidation {
-            properties,
-            required: ["action".to_string()].into(),
-            ..ObjectValidation::default()
-        })),
-        ..SchemaObject::default()
-    };
-
-    Schema::Object(SchemaObject {
-        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Array))),
-        array: Some(Box::new(ArrayValidation {
-            items: Some(schemars::schema::SingleOrVec::Single(Box::new(
-                Schema::Object(item_schema),
-            ))),
-            ..ArrayValidation::default()
-        })),
-        ..SchemaObject::default()
-    })
+    pub commands: Vec<BatchAction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -230,10 +281,7 @@ pub struct InitializeDataDirParams {
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
 pub struct SetLlmConfigParams {
-    pub provider: LlmProvider,
     pub api_key: String,
-    #[serde(default)]
-    pub base_url: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
 }
@@ -342,14 +390,6 @@ pub struct SetGlobalCurveParams {
 }
 
 // ── Script extended params ─────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
-#[cfg_attr(feature = "tauri-app", ts(export))]
-pub struct CompileScriptParams {
-    pub name: String,
-    pub source: String,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]

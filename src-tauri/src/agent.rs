@@ -124,6 +124,20 @@ pub async fn start_agent_sidecar(
         command
     };
 
+    // Start the internal HTTP API server if not already running
+    let api_port = state.api_port.load(Ordering::Relaxed);
+    let api_port = if api_port == 0 {
+        let port = crate::api::start_api_server(Arc::clone(state))
+            .await
+            .map_err(|e| AppError::AgentError {
+                message: format!("Failed to start API server: {e}"),
+            })?;
+        state.api_port.store(port, Ordering::Relaxed);
+        port
+    } else {
+        api_port
+    };
+
     // Gather env vars
     let api_key = state
         .settings
@@ -133,7 +147,9 @@ pub async fn start_agent_sidecar(
         .unwrap_or_default();
 
     let data_dir = crate::state::get_data_dir(state)
-        .unwrap_or_default()
+        .map_err(|e| AppError::AgentError {
+            message: format!("Cannot start agent: {e}"),
+        })?
         .to_string_lossy()
         .to_string();
 
@@ -155,6 +171,7 @@ pub async fn start_agent_sidecar(
     }
 
     cmd.env("AGENT_PORT", "0") // Let OS pick a free port
+        .env("VIBELIGHTS_PORT", api_port.to_string())
         .env("VIBELIGHTS_DATA_DIR", &data_dir)
         .env("VIBELIGHTS_MODEL", &model);
 
@@ -410,7 +427,7 @@ async fn stream_agent_response(
 
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text = response.text().await.unwrap_or_else(|_| String::new());
         return Err(AppError::AgentError {
             message: format!("Agent sidecar error {status}: {text}"),
         });

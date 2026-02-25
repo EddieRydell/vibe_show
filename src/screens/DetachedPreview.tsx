@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { cmd } from "../commands";
+import { SHOW_REFRESHED, SELECTION_CHANGED } from "../events";
+import { useTauriListener } from "../hooks/useTauriListener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Frame, Show } from "../types";
 import { usePreviewRenderer } from "../hooks/usePreviewRenderer";
@@ -61,7 +62,7 @@ export function DetachedPreview() {
   const fetchShow = useCallback(() => {
     cmd.getShow()
       .then((s) => setShow(s))
-      .catch((e) => console.error("[Preview] get_show failed:", e));
+      .catch((e: unknown) => console.error("[Preview] get_show failed:", e));
   }, []);
 
   useEffect(() => {
@@ -69,24 +70,14 @@ export function DetachedPreview() {
   }, [fetchShow]);
 
   // Listen for show-refreshed events from the main window
-  useEffect(() => {
-    const unlisten = listen("show-refreshed", () => {
-      fetchShow();
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
+  useTauriListener(SHOW_REFRESHED, () => {
+    fetchShow();
   }, [fetchShow]);
 
   // Listen for selection-changed events from the main window
-  useEffect(() => {
-    const unlisten = listen<{ effects: [number, number][] }>("selection-changed", (event) => {
-      setSelectedEffects(event.payload.effects);
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, []);
+  useTauriListener<{ effects: [number, number][] }>(SELECTION_CHANGED, (payload) => {
+    setSelectedEffects(payload.effects);
+  });
 
   // Observe container size
   useEffect(() => {
@@ -199,7 +190,7 @@ export function DetachedPreview() {
   const displayFrame = isPreviewingSelection ? selectionFrame : frame;
 
   const handleClose = useCallback(() => {
-    getCurrentWindow().close();
+    void getCurrentWindow().close();
   }, []);
 
   const handleResetAll = useCallback(() => {

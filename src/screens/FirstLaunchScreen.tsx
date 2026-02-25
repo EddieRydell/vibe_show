@@ -51,7 +51,7 @@ export function FirstLaunchScreen({ onComplete }: Props) {
         {/* Step 1: Choose parent directory */}
         <div className="mt-6">
           <button
-            onClick={handleChooseParent}
+            onClick={() => { void handleChooseParent(); }}
             disabled={loading}
             className="border-border bg-surface text-text hover:bg-surface-2 rounded border px-4 py-2 text-sm transition-colors disabled:opacity-50"
           >
@@ -72,7 +72,7 @@ export function FirstLaunchScreen({ onComplete }: Props) {
               type="text"
               value={folderName}
               onChange={(e) => setFolderName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+              onKeyDown={(e) => { if (e.key === "Enter") void handleCreate(); }}
               className="border-border bg-surface text-text w-64 rounded border px-3 py-1.5 text-center text-sm outline-none focus:border-primary"
             />
             <p className="text-text-2 mt-1.5 text-[11px]">
@@ -83,7 +83,7 @@ export function FirstLaunchScreen({ onComplete }: Props) {
             </p>
 
             <button
-              onClick={handleCreate}
+              onClick={() => { void handleCreate(); }}
               disabled={loading || !folderName.trim()}
               className="bg-primary hover:bg-primary-hover mt-4 rounded-lg px-6 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-50"
             >

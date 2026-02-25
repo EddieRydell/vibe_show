@@ -52,7 +52,7 @@ export function AnalysisScreen({ filename, onBack }: Props) {
   }, [checkPython]);
 
   useEffect(() => {
-    (async () => {
+    void (async () => {
       const status = await checkPython();
       if (!status.deps_installed) {
         setShowPythonSetup(true);

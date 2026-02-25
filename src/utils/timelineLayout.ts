@@ -66,7 +66,7 @@ export function buildFixtureTrackMap(
   const map = new Map<number, Set<number>>();
 
   for (let trackIdx = 0; trackIdx < sequence.tracks.length; trackIdx++) {
-    const target = sequence.tracks[trackIdx].target;
+    const target = sequence.tracks[trackIdx]!.target;
     let fixtureIds: Iterable<number>;
 
     if (target === "All") {
@@ -101,9 +101,9 @@ export function computeStackedLayoutFast(
   const effects: PlacedEffect[] = [];
 
   for (const trackIdx of trackIndices) {
-    const track = sequence.tracks[trackIdx];
+    const track = sequence.tracks[trackIdx]!;
     for (let effectIdx = 0; effectIdx < track.effects.length; effectIdx++) {
-      const effect = track.effects[effectIdx];
+      const effect = track.effects[effectIdx]!;
       effects.push({
         key: makeEffectKey(trackIdx, effectIdx),
         trackIndex: trackIdx,
@@ -127,7 +127,7 @@ export function computeStackedLayoutFast(
     const endSec = effect.startSec + effect.durationSec;
     let assignedLane = -1;
     for (let i = 0; i < laneEnds.length; i++) {
-      if (effect.startSec >= laneEnds[i]) {
+      if (effect.startSec >= laneEnds[i]!) {
         assignedLane = i;
         laneEnds[i] = endSec;
         break;

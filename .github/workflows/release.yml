@@ -1,0 +1,141 @@
+name: Release Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            label: macos-x64
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-x64
+
+    name: Build (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Toolchains ──────────────────────────────────────────────────
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - uses: oven-sh/setup-bun@v2
+
+      # ── Linux system deps ──────────────────────────────────────────
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      # ── Install ─────────────────────────────────────────────────────
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install agent-sidecar dependencies
+        run: cd agent-sidecar && bun install --frozen-lockfile
+
+      # ── Build ───────────────────────────────────────────────────────
+      # beforeBuildCommand (node scripts/prebuild.mjs) handles:
+      #   - downloading uv for this platform
+      #   - building the frontend
+      #   - compiling + staging the agent sidecar
+
+      - name: Build Tauri app (Windows — NSIS only, WIX has icon bug)
+        if: runner.os == 'Windows'
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles nsis
+
+      - name: Build Tauri app
+        if: runner.os != 'Windows'
+        run: pnpm tauri build --target ${{ matrix.target }}
+
+      # ── Upload artifacts ────────────────────────────────────────────
+
+      - name: Upload Windows installers
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibelights-${{ matrix.label }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+
+      - name: Upload macOS installer
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibelights-${{ matrix.label }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+
+      - name: Upload Linux installers
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibelights-${{ matrix.label }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+            src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
+
+  # ── Release (tag pushes only) ─────────────────────────────────────────
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    name: Create GitHub Release
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: artifacts/**/*
+        # Code signing placeholders:
+        # - Apple: set APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+        #          APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD,
+        #          APPLE_TEAM_ID secrets and add tauri-action signing config
+        # - Windows: set WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD
+        #            secrets and configure signtool in tauri.conf.json

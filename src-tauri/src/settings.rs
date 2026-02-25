@@ -1,59 +1,33 @@
 use std::path::{Path, PathBuf};
 
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::model::AnalysisFeatures;
 use crate::project::{read_json, write_json, ProjectError};
 
-// ── LLM provider types ──────────────────────────────────────────
+// ── LLM config types ────────────────────────────────────────────
 
-/// Which LLM provider to use for the chat assistant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
-#[ts(export)]
-pub enum LlmProvider {
-    Anthropic,
-    OpenAiCompatible,
-}
-
-/// Full configuration for the chosen LLM provider.
+/// Full configuration for the LLM provider (Anthropic only).
 ///
 /// The `api_key` field is never written to `settings.json`. It is stored in a
 /// separate credentials file and loaded/saved via [`load_api_key`]/[`save_api_key`].
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct LlmProviderConfig {
-    pub provider: LlmProvider,
     /// Received over IPC but never persisted in settings.json (stored in separate credentials file).
     #[serde(default, skip_serializing)]
     pub api_key: Option<String>,
-    /// Base URL for OpenAI-compatible providers (ignored for Anthropic).
-    #[serde(default)]
-    pub base_url: Option<String>,
     /// Model override. None = use provider default.
     #[serde(default)]
     pub model: Option<String>,
-}
-
-impl Default for LlmProviderConfig {
-    fn default() -> Self {
-        Self {
-            provider: LlmProvider::Anthropic,
-            api_key: None,
-            base_url: None,
-            model: None,
-        }
-    }
 }
 
 /// Redacted view of the LLM config returned to the frontend (no raw API key).
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 pub struct LlmConfigInfo {
-    pub provider: LlmProvider,
     pub has_api_key: bool,
-    pub base_url: Option<String>,
     pub model: Option<String>,
 }
 
@@ -61,9 +35,7 @@ impl LlmConfigInfo {
     #[must_use]
     pub fn from_config(config: &LlmProviderConfig) -> Self {
         Self {
-            provider: config.provider,
             has_api_key: config.api_key.as_ref().is_some_and(|k| !k.is_empty()),
-            base_url: config.base_url.clone(),
             model: config.model.clone(),
         }
     }
@@ -144,7 +116,6 @@ pub fn load_settings(app_config_dir: &Path) -> Option<AppSettings> {
     if let Some(ref key) = settings.claude_api_key {
         if !key.is_empty() && settings.llm.api_key.is_none() {
             settings.llm.api_key = Some(key.clone());
-            settings.llm.provider = LlmProvider::Anthropic;
             // Persist to credentials file and re-save settings (drops claude_api_key)
             let _ = save_api_key(app_config_dir, key);
             let _ = save_settings(app_config_dir, &settings);
@@ -186,7 +157,7 @@ mod tests {
         let loaded = load_settings(&dir).expect("should load");
         assert_eq!(loaded.data_dir, PathBuf::from("/some/data/dir"));
         assert_eq!(loaded.last_setup, None);
-        assert!(matches!(loaded.llm.provider, LlmProvider::Anthropic));
+        assert!(loaded.llm.api_key.is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -208,7 +179,6 @@ mod tests {
         let loaded = load_settings(&dir).expect("should load");
         // Key should be migrated into llm config
         assert_eq!(loaded.llm.api_key.as_deref(), Some("sk-ant-test-key"));
-        assert!(matches!(loaded.llm.provider, LlmProvider::Anthropic));
         // And saved to credentials file
         assert_eq!(load_api_key(&dir).as_deref(), Some("sk-ant-test-key"));
 

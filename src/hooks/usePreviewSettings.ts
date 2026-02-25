@@ -20,7 +20,7 @@ function load(): PreviewSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULTS;
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as Partial<PreviewSettings>;
     return {
       bulbSize: parsed.bulbSize ?? DEFAULTS.bulbSize,
       bulbOpacity: parsed.bulbOpacity ?? DEFAULTS.bulbOpacity,

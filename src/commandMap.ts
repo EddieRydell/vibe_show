@@ -1,11 +1,13 @@
 /**
- * Type-safe command return types, auto-derived from the generated CommandResult
- * discriminated union. No manual map — Rust is the single source of truth.
+ * Type-safe command types, auto-derived from the generated Command and
+ * CommandResult discriminated unions. No manual map — Rust is the single
+ * source of truth.
  *
  * When a Rust command variant is added/removed, `cargo test --lib` regenerates
- * CommandResult.ts, and these types update automatically.
+ * Command.ts and CommandResult.ts, and these types update automatically.
  */
 
+import type { Command } from "../src-tauri/bindings/Command";
 import type { CommandResult } from "../src-tauri/bindings/CommandResult";
 
 // ── Core derived types ──────────────────────────────────────────────
@@ -21,6 +23,10 @@ export type CommandData<C extends CommandName> =
 export type CommandReturnMap = {
   [K in CommandName]: CommandData<K>;
 };
+
+/** Extract the `params` type for a specific command, or `undefined` for no-params commands. */
+export type CommandParams<C extends CommandName> =
+  Extract<Command, { command: C }> extends { params: infer P } ? P : undefined;
 
 // ── Helper types ────────────────────────────────────────────────────
 

@@ -42,7 +42,7 @@ export function ScriptPreview({
 
     const cellW = w / strip.length;
     for (let i = 0; i < strip.length; i++) {
-      const [r, g, b] = strip[i];
+      const [r, g, b] = strip[i]!;
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(Math.floor(i * cellW), 0, Math.ceil(cellW) + 1, h);
     }
@@ -65,10 +65,10 @@ export function ScriptPreview({
       for (let col = 0; col < width; col++) {
         const srcIdx = (row * width + col) * 4;
         const dstIdx = (row * width + col) * 4;
-        imageData.data[dstIdx] = pixels[srcIdx];
-        imageData.data[dstIdx + 1] = pixels[srcIdx + 1];
-        imageData.data[dstIdx + 2] = pixels[srcIdx + 2];
-        imageData.data[dstIdx + 3] = pixels[srcIdx + 3];
+        imageData.data[dstIdx] = pixels[srcIdx]!;
+        imageData.data[dstIdx + 1] = pixels[srcIdx + 1]!;
+        imageData.data[dstIdx + 2] = pixels[srcIdx + 2]!;
+        imageData.data[dstIdx + 3] = pixels[srcIdx + 3]!;
       }
     }
     ctx.putImageData(imageData, 0, 0);
@@ -85,7 +85,7 @@ export function ScriptPreview({
     const { width, height, pixels } = heatmap;
     const imageData = ctx.createImageData(width, height);
     for (let i = 0; i < pixels.length; i++) {
-      imageData.data[i] = pixels[i];
+      imageData.data[i] = pixels[i]!;
     }
     ctx.putImageData(imageData, 0, 0);
 

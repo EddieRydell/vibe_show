@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WaveformData } from "../hooks/useAudio";
 import type { AudioAnalysis } from "../types";
+import { formatRulerTime } from "../utils/formatTime";
 import { sectionColor } from "../utils/sectionColor";
+import {
+  MIN_PX_PER_SEC,
+  MAX_PX_PER_SEC,
+  DEFAULT_PX_PER_SEC,
+  ZOOM_FACTOR,
+  RULER_HEIGHT,
+} from "../utils/timelineConstants";
 
 interface ManualBeat {
   id: string;
@@ -23,20 +31,9 @@ interface AnalysisWorkspaceProps {
 }
 
 const LABEL_WIDTH = 120;
-const RULER_HEIGHT = 28;
 const WAVEFORM_HEIGHT = 48;
 const BEAT_LANE_HEIGHT = 36;
-const MIN_PX_PER_SEC = 10;
-const MAX_PX_PER_SEC = 500;
-const DEFAULT_PX_PER_SEC = 40;
-const ZOOM_FACTOR = 1.15;
 const BEAT_HIT_WIDTH = 8;
-
-function formatRulerTime(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return m > 0 ? `${m}:${s.toString().padStart(2, "0")}` : `${s}s`;
-}
 
 export function AnalysisWorkspace({
   duration,
@@ -137,7 +134,7 @@ export function AnalysisWorkspace({
       if (!canvas || !waveform) return;
       const width = Math.ceil(contentWidth);
       const height = WAVEFORM_HEIGHT;
-      if (width <= 0 || height <= 0) return;
+      if (width <= 0) return;
 
       const dpr = window.devicePixelRatio || 1;
       canvas.width = width * dpr;
@@ -167,7 +164,7 @@ export function AnalysisWorkspace({
       for (let px = 0; px < width; px++) {
         const timeSec = px / pxPerSec;
         const peakIndex = Math.floor((timeSec / audioDuration) * peaks.length);
-        const amplitude = peakIndex >= 0 && peakIndex < peaks.length ? peaks[peakIndex] : 0;
+        const amplitude = (peakIndex >= 0 && peakIndex < peaks.length ? peaks[peakIndex] : 0) ?? 0;
         ctx.lineTo(px, centerY - amplitude * maxBarHeight);
       }
       ctx.lineTo(width, centerY);
@@ -175,7 +172,7 @@ export function AnalysisWorkspace({
       for (let px = width - 1; px >= 0; px--) {
         const timeSec = px / pxPerSec;
         const peakIndex = Math.floor((timeSec / audioDuration) * peaks.length);
-        const amplitude = peakIndex >= 0 && peakIndex < peaks.length ? peaks[peakIndex] : 0;
+        const amplitude = (peakIndex >= 0 && peakIndex < peaks.length ? peaks[peakIndex] : 0) ?? 0;
         ctx.lineTo(px, centerY + amplitude * maxBarHeight);
       }
       ctx.closePath();

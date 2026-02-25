@@ -6,71 +6,13 @@ use crate::dispatcher::EditCommand;
 use crate::error::AppError;
 use crate::model::{EffectTarget, FixtureId};
 use crate::registry::params::{
-    AddEffectParams, AddTrackParams, BatchEditParams, DeleteEffectsParams, DeleteTrackParams,
-    MoveEffectToTrackParams, UpdateEffectParamParams, UpdateEffectTimeRangeParams,
-    UpdateSequenceSettingsParams,
+    AddEffectParams, AddTrackParams, BatchAction, BatchEditParams, DeleteEffectsParams,
+    DeleteTrackParams, MoveEffectToTrackParams, UpdateEffectParamParams,
+    UpdateEffectTimeRangeParams, UpdateSequenceSettingsParams,
 };
+use crate::registry::validation::{validate_opacity, validate_positive_finite, validate_time_range};
 use crate::registry::{CommandOutput, CommandResult};
 use crate::state::AppState;
-
-// ── Validation helpers ──────────────────────────────────────────
-
-fn validate_time_range(start: f64, end: f64) -> Result<(), AppError> {
-    if !start.is_finite() || !end.is_finite() {
-        return Err(AppError::ValidationError {
-            message: "Time values must be finite".to_string(),
-        });
-    }
-    if start < 0.0 {
-        return Err(AppError::ValidationError {
-            message: "Start time must be non-negative".to_string(),
-        });
-    }
-    if start >= end {
-        return Err(AppError::ValidationError {
-            message: format!("Start ({start:.3}) must be less than end ({end:.3})"),
-        });
-    }
-    Ok(())
-}
-
-fn validate_opacity(opacity: f64) -> Result<(), AppError> {
-    if !opacity.is_finite() {
-        return Err(AppError::ValidationError {
-            message: "Opacity must be finite".to_string(),
-        });
-    }
-    if !(0.0..=1.0).contains(&opacity) {
-        return Err(AppError::ValidationError {
-            message: format!("Opacity ({opacity:.3}) must be between 0.0 and 1.0"),
-        });
-    }
-    Ok(())
-}
-
-fn validate_positive_finite(value: f64, name: &str) -> Result<(), AppError> {
-    if !value.is_finite() {
-        return Err(AppError::ValidationError {
-            message: format!("{name} must be finite"),
-        });
-    }
-    if value <= 0.0 {
-        return Err(AppError::ValidationError {
-            message: format!("{name} must be positive"),
-        });
-    }
-    Ok(())
-}
-
-// ── String-returning variants for batch_edit context ────────────
-
-fn validate_time_range_str(start: f64, end: f64) -> Result<(), String> {
-    validate_time_range(start, end).map_err(|e| e.to_string())
-}
-
-fn validate_opacity_str(opacity: f64) -> Result<(), String> {
-    validate_opacity(opacity).map_err(|e| e.to_string())
-}
 
 // ── Handlers ────────────────────────────────────────────────────
 
@@ -276,7 +218,6 @@ pub fn update_sequence_settings(
     Ok(CommandOutput::new("Updated sequence settings.", CommandResult::UpdateSequenceSettings))
 }
 
-#[allow(clippy::cast_possible_truncation)]
 pub fn batch_edit(state: &Arc<AppState>, p: BatchEditParams) -> Result<CommandOutput, AppError> {
     // Resolve active sequence index up front so batch commands target the right sequence.
     let seq_idx = {
@@ -285,43 +226,22 @@ pub fn batch_edit(state: &Arc<AppState>, p: BatchEditParams) -> Result<CommandOu
     };
 
     let mut edit_commands = Vec::new();
-    for (i, cmd_val) in p.commands.iter().enumerate() {
-        let action = cmd_val
-            .get("action")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| AppError::ValidationError {
-                message: format!("Command {i}: missing action"),
-            })?;
-        let params = cmd_val
-            .get("params")
-            .unwrap_or(&serde_json::Value::Null);
-
-        // Special handling for write_script: compile first
-        if action == "write_script" {
-            let source = params
-                .get("source")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| AppError::ValidationError {
-                    message: format!("Command {i}: missing source"),
-                })?;
-            let script_name = params
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| AppError::ValidationError {
-                    message: format!("Command {i}: missing name"),
-                })?;
-            match crate::dsl::compile_source(source) {
+    for (i, action) in p.commands.into_iter().enumerate() {
+        // Pre-process WriteScript: compile + cache before converting to edit commands
+        if let BatchAction::WriteScript(ref ws) = action {
+            match crate::dsl::compile_source(&ws.source) {
                 Ok(compiled) => {
                     state
                         .script_cache
                         .lock()
-                        .insert(script_name.to_string(), Arc::new(compiled));
+                        .insert(ws.name.clone(), Arc::new(compiled));
                 }
                 Err(errors) => {
                     let msgs: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
                     return Err(AppError::ValidationError {
                         message: format!(
-                            "Command {i} (write_script \"{script_name}\"): compile errors: {}",
+                            "Command {i} (write_script \"{}\"): compile errors: {}",
+                            ws.name,
                             msgs.join("; ")
                         ),
                     });
@@ -329,18 +249,20 @@ pub fn batch_edit(state: &Arc<AppState>, p: BatchEditParams) -> Result<CommandOu
             }
         }
 
-        let cmd =
-            parse_batch_command(action, params, seq_idx).map_err(|e| AppError::ValidationError {
-                message: format!("Command {i} ({action}): {e}"),
-            })?;
-        edit_commands.push(cmd);
+        if let Some(cmd) = action.into_edit_command(seq_idx).map_err(|e| {
+            AppError::ValidationError {
+                message: format!("Command {i}: {e}"),
+            }
+        })? {
+            edit_commands.push(cmd);
+        }
     }
 
     let n = edit_commands.len();
     let description = if p.description.is_empty() {
         "Batch edit".to_string()
     } else {
-        p.description.clone()
+        p.description
     };
     let batch = EditCommand::Batch {
         description: description.clone(),
@@ -353,138 +275,4 @@ pub fn batch_edit(state: &Arc<AppState>, p: BatchEditParams) -> Result<CommandOu
         format!("Executed {n} operations as single undoable batch: \"{description}\"."),
         CommandResult::BatchEdit,
     ))
-}
-
-/// Parse a single command from a batch_edit entry into an EditCommand.
-#[allow(clippy::cast_possible_truncation)]
-fn parse_batch_command(
-    action: &str,
-    params: &serde_json::Value,
-    sequence_index: usize,
-) -> Result<EditCommand, String> {
-    use serde_json::Value;
-    match action {
-        "add_effect" => {
-            let blend_mode = params
-                .get("blend_mode")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or(crate::model::BlendMode::Override);
-            let opacity = params
-                .get("opacity")
-                .and_then(Value::as_f64)
-                .unwrap_or(1.0);
-            let start = params
-                .get("start")
-                .and_then(Value::as_f64)
-                .ok_or("Missing start")?;
-            let end = params
-                .get("end")
-                .and_then(Value::as_f64)
-                .ok_or("Missing end")?;
-            validate_time_range_str(start, end)?;
-            validate_opacity_str(opacity)?;
-            Ok(EditCommand::AddEffect {
-                sequence_index,
-                track_index: params
-                    .get("track_index")
-                    .and_then(Value::as_u64)
-                    .ok_or("Missing track_index")? as usize,
-                kind: serde_json::from_value(
-                    params.get("kind").cloned().unwrap_or(Value::Null),
-                )
-                .map_err(|e| e.to_string())?,
-                start,
-                end,
-                blend_mode,
-                opacity,
-            })
-        }
-        "delete_effects" => {
-            let targets: Vec<(usize, usize)> = params
-                .get("targets")
-                .and_then(Value::as_array)
-                .ok_or("Missing targets")?
-                .iter()
-                .map(|pair| {
-                    let arr = pair.as_array().ok_or("Invalid target pair")?;
-                    Ok((
-                        arr.first()
-                            .and_then(Value::as_u64)
-                            .ok_or("Invalid track index")? as usize,
-                        arr.get(1)
-                            .and_then(Value::as_u64)
-                            .ok_or("Invalid effect index")? as usize,
-                    ))
-                })
-                .collect::<Result<_, String>>()?;
-            Ok(EditCommand::DeleteEffects {
-                sequence_index,
-                targets,
-            })
-        }
-        "update_effect_param" => Ok(EditCommand::UpdateEffectParam {
-            sequence_index,
-            track_index: params
-                .get("track_index")
-                .and_then(Value::as_u64)
-                .ok_or("Missing track_index")? as usize,
-            effect_index: params
-                .get("effect_index")
-                .and_then(Value::as_u64)
-                .ok_or("Missing effect_index")? as usize,
-            key: serde_json::from_value(params.get("key").cloned().unwrap_or(Value::Null))
-                .map_err(|e| format!("Invalid param key: {e}"))?,
-            value: serde_json::from_value(params.get("value").cloned().unwrap_or(Value::Null))
-                .map_err(|e| e.to_string())?,
-        }),
-        "update_effect_time_range" => {
-            let start = params
-                .get("start")
-                .and_then(Value::as_f64)
-                .ok_or("Missing start")?;
-            let end = params
-                .get("end")
-                .and_then(Value::as_f64)
-                .ok_or("Missing end")?;
-            validate_time_range_str(start, end)?;
-            Ok(EditCommand::UpdateEffectTimeRange {
-                sequence_index,
-                track_index: params
-                    .get("track_index")
-                    .and_then(Value::as_u64)
-                    .ok_or("Missing track_index")? as usize,
-                effect_index: params
-                    .get("effect_index")
-                    .and_then(Value::as_u64)
-                    .ok_or("Missing effect_index")? as usize,
-                start,
-                end,
-            })
-        }
-        "add_track" => {
-            let fixture_id = params
-                .get("fixture_id")
-                .and_then(Value::as_u64)
-                .ok_or("Missing fixture_id")? as u32;
-            Ok(EditCommand::AddTrack {
-                sequence_index,
-                name: params
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .ok_or("Missing name")?
-                    .to_string(),
-                target: crate::model::EffectTarget::Fixtures(vec![crate::model::FixtureId(
-                    fixture_id,
-                )]),
-            })
-        }
-        "delete_track" => Ok(EditCommand::DeleteTrack {
-            sequence_index,
-            track_index: params
-                .get("track_index")
-                .and_then(Value::as_u64)
-                .ok_or("Missing track_index")? as usize,
-        }),
-        _ => Err(format!("Unsupported batch action: {action}")),
-    }
 }

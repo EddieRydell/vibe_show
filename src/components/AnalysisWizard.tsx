@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { useState, useCallback } from "react";
 import { cmd } from "../commands";
+import { PROGRESS } from "../events";
 import type { AnalysisFeatures, AudioAnalysis, ProgressEvent } from "../types";
+import { useTauriListener } from "../hooks/useTauriListener";
 
 interface AnalysisWizardProps {
   onAnalyze: (features: AnalysisFeatures) => Promise<AudioAnalysis>;
@@ -40,17 +41,12 @@ export function AnalysisWizard({ onAnalyze, onClose }: AnalysisWizardProps) {
   const [result, setResult] = useState<AudioAnalysis | null>(null);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    const unlisten = listen<ProgressEvent>("progress", (event) => {
-      if (event.payload.operation === "analysis") {
-        setProgress(event.payload.progress);
-        setProgressMessage(event.payload.phase);
-      }
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, []);
+  useTauriListener<ProgressEvent>(PROGRESS, (p) => {
+    if (p.operation === "analysis") {
+      setProgress(p.progress);
+      setProgressMessage(p.phase);
+    }
+  });
 
   const toggleFeature = useCallback((key: keyof AnalysisFeatures) => {
     setFeatures((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -109,7 +105,7 @@ export function AnalysisWizard({ onAnalyze, onClose }: AnalysisWizardProps) {
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (phase === "running") handleCancelAnalysis();
+        if (phase === "running") void handleCancelAnalysis();
         else onClose();
       }
     },
@@ -122,7 +118,7 @@ export function AnalysisWizard({ onAnalyze, onClose }: AnalysisWizardProps) {
       onKeyDown={handleKeyDown}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
-          if (phase === "running") handleCancelAnalysis();
+          if (phase === "running") void handleCancelAnalysis();
           else onClose();
         }
       }}
@@ -239,7 +235,7 @@ export function AnalysisWizard({ onAnalyze, onClose }: AnalysisWizardProps) {
                 Cancel
               </button>
               <button
-                onClick={handleRun}
+                onClick={() => { void handleRun(); }}
                 disabled={!anySelected}
                 className="border-primary bg-primary hover:bg-primary-hover rounded border px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-40"
               >
@@ -249,7 +245,7 @@ export function AnalysisWizard({ onAnalyze, onClose }: AnalysisWizardProps) {
           )}
           {phase === "running" && (
             <button
-              onClick={handleCancelAnalysis}
+              onClick={() => { void handleCancelAnalysis(); }}
               className="border-border bg-surface-2 text-text-2 hover:bg-bg rounded border px-3 py-1.5 text-xs transition-colors"
             >
               Cancel Analysis

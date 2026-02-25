@@ -223,7 +223,7 @@ pub fn describe_effect(effect: &EffectInstance) -> String {
 
     let mut param_strs = Vec::new();
     for s in &schema {
-        if let Some(val) = effect.params.get(s.key.clone()) {
+        if let Some(val) = effect.params.get(&s.key) {
             param_strs.push(format!("{}={}", s.key, val));
         }
     }

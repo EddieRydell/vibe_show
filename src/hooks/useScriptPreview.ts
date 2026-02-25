@@ -48,7 +48,7 @@ export function useScriptPreview({
     const frame: Array<[number, number, number, number]> = [];
     for (let row = 0; row < height; row++) {
       const idx = (row * width + col) * 4;
-      frame.push([pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]]);
+      frame.push([pixels[idx]!, pixels[idx + 1]!, pixels[idx + 2]!, pixels[idx + 3]!]);
     }
     setStrip(frame);
   }, [heatmap, currentTime]);

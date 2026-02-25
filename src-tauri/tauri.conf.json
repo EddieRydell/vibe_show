@@ -6,8 +6,15 @@
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "node scripts/prebuild.mjs",
     "frontendDist": "../dist"
+  },
+  "bundle": {
+    "resources": {
+      "resources/uv*": "resources/",
+      "resources/python/": "resources/python/",
+      "resources/agent-sidecar/": "resources/agent-sidecar/"
+    }
   },
   "app": {
     "windows": [

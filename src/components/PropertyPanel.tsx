@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cmd } from "../commands";
 import { Link, Maximize2 } from "lucide-react";
-import type { Color, ColorMode, ColorStop, CurvePoint, EffectDetail, ParamKey, ParamSchema, ParamValue } from "../types";
+import type { BlendMode, Color, ColorMode, ColorStop, CurvePoint, EffectDetail, ParamKey, ParamSchema, ParamValue } from "../types";
+import { useDebouncedCallback } from "../hooks/useDebounce";
 import { CurveEditorDialog } from "./CurveEditorDialog";
 import { GradientEditorDialog } from "./GradientEditorDialog";
 import { paramKeyStr, effectKindLabel } from "../types";
@@ -19,16 +20,17 @@ import {
   GradientEditor,
   SelectInput,
 } from "./controls";
+import { PANEL_WIDTH } from "../utils/layoutConstants";
+import { useToast } from "../hooks/useToast";
 
 interface PropertyPanelProps {
   selectedEffect: string | null;
   sequenceIndex: number;
   onParamChange: () => void;
 }
-
-const PANEL_WIDTH = 260;
 const DEBOUNCE_MS = 50;
 
+const DEFAULT_BLEND: BlendMode = "Override";
 const DEFAULT_COLOR: Color = { r: 255, g: 255, b: 255, a: 255 };
 const DEFAULT_COLOR_LIST: Color[] = [
   { r: 255, g: 0, b: 0, a: 255 },
@@ -77,7 +79,7 @@ function getDefaultColorMode(schema: ParamSchema): string {
   const pt = schema.param_type;
   if (typeof pt === "object" && "ColorMode" in pt) {
     const opts = pt.ColorMode.options;
-    if (opts.length > 0) return opts[0];
+    if (opts.length > 0) return opts[0]!;
   }
   return "";
 }
@@ -88,9 +90,9 @@ export function PropertyPanel({
   onParamChange,
 }: PropertyPanelProps) {
   const showVersion = useShowVersion();
+  const { showError } = useToast();
   const [detail, setDetail] = useState<EffectDetail | null>(null);
   const [loading, setLoading] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const currentKeyRef = useRef<string | null>(null);
   const [gradientNames, setGradientNames] = useState<string[]>([]);
   const [curveNames, setCurveNames] = useState<string[]>([]);
@@ -133,18 +135,18 @@ export function PropertyPanel({
           setDetail(d);
         }
       })
-      .catch((e) => console.error("[VibeLights] Failed to get effect detail:", e))
+      .catch((e: unknown) => console.error("[VibeLights] Failed to get effect detail:", e))
       .finally(() => setLoading(false));
   }, [selectedEffect, sequenceIndex, showVersion]);
 
-  // Clear debounce timer on unmount to prevent firing after cleanup
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-      }
-    };
-  }, []);
+  const debouncedIpc = useDebouncedCallback(
+    (trackIndex: number, effectIndex: number, key: ParamKey, value: ParamValue) => {
+      cmd.updateEffectParam(trackIndex, effectIndex, key, value)
+        .then(() => onParamChange())
+        .catch(showError);
+    },
+    DEBOUNCE_MS,
+  );
 
   const updateParam = useCallback(
     (key: string, value: ParamValue) => {
@@ -158,15 +160,9 @@ export function PropertyPanel({
         return { ...prev, params: { ...prev.params, [key]: value } };
       });
 
-      // Debounced IPC call
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        cmd.updateEffectParam(parsed.trackIndex, parsed.effectIndex, key as ParamKey, value)
-          .then(() => onParamChange())
-          .catch((e) => console.error("[VibeLights] Failed to update param:", e));
-      }, DEBOUNCE_MS);
+      debouncedIpc(parsed.trackIndex, parsed.effectIndex, key as ParamKey, value);
     },
-    [selectedEffect, sequenceIndex, onParamChange],
+    [selectedEffect, debouncedIpc],
   );
 
   if (!selectedEffect) {
@@ -203,7 +199,7 @@ export function PropertyPanel({
           {detail.track_name} &middot; {formatTimeDuration(detail.time_range.start)} -{" "}
           {formatTimeDuration(detail.time_range.end)}
         </div>
-        {detail.blend_mode !== "Override" && (
+        {detail.blend_mode !== DEFAULT_BLEND && (
           <div className="text-text-2 mt-0.5 text-[10px]">Blend: {detail.blend_mode}</div>
         )}
         {detail.opacity < 1.0 && (
@@ -366,7 +362,7 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames, onE
   }
 
   if (typeof pt === "object" && "Float" in pt) {
-    const value = getParam(params, keyStr, "Float", getDefault(schema, "Float", 0));
+    const value = getParam(params, keyStr, "Float", getDefault(schema, "Float", 0)) as number;
     return (
       <FloatSlider
         label={schema.label}
@@ -380,7 +376,7 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames, onE
   }
 
   if (typeof pt === "object" && "Int" in pt) {
-    const value = getParam(params, keyStr, "Int", getDefault(schema, "Int", 0));
+    const value = getParam(params, keyStr, "Int", getDefault(schema, "Int", 0)) as number;
     return (
       <IntSlider
         label={schema.label}
@@ -393,21 +389,21 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames, onE
   }
 
   if (pt === "Bool") {
-    const value = getParam(params, keyStr, "Bool", getDefault(schema, "Bool", false));
+    const value = getParam(params, keyStr, "Bool", getDefault(schema, "Bool", false)) as boolean;
     return (
       <BoolToggle label={schema.label} value={value} onChange={(v) => onChange({ Bool: v })} />
     );
   }
 
   if (pt === "Color") {
-    const value = getParam(params, keyStr, "Color", getDefault(schema, "Color", DEFAULT_COLOR));
+    const value = getParam(params, keyStr, "Color", getDefault(schema, "Color", DEFAULT_COLOR)) as Color;
     return (
       <ColorInput label={schema.label} value={value} onChange={(v) => onChange({ Color: v })} />
     );
   }
 
   if (typeof pt === "object" && "ColorList" in pt) {
-    const value = getParam(params, keyStr, "ColorList", getDefault(schema, "ColorList", DEFAULT_COLOR_LIST));
+    const value = getParam(params, keyStr, "ColorList", getDefault(schema, "ColorList", DEFAULT_COLOR_LIST)) as Color[];
     return (
       <ColorListEditor
         label={schema.label}
@@ -474,7 +470,7 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames, onE
   }
 
   if (typeof pt === "object" && "ColorMode" in pt) {
-    const value = getParam(params, keyStr, "ColorMode", getDefaultColorMode(schema));
+    const value = getParam(params, keyStr, "ColorMode", getDefaultColorMode(schema)) as string;
     return (
       <SelectInput
         label={schema.label}
@@ -486,7 +482,7 @@ function ParamControl({ schema, params, onChange, gradientNames, curveNames, onE
   }
 
   if (typeof pt === "object" && "Text" in pt) {
-    const value = getParam(params, keyStr, "Text", getDefault(schema, "Text", ""));
+    const value = getParam(params, keyStr, "Text", getDefault(schema, "Text", "")) as string;
     return (
       <SelectInput
         label={schema.label}

@@ -1,23 +1,10 @@
 import type { Color } from "../../types";
+import { colorToHex, hexToColor } from "../../utils/colorUtils";
 
 interface ColorInputProps {
   label: string;
   value: Color;
   onChange: (value: Color) => void;
-}
-
-function colorToHex(c: Color): string {
-  const r = c.r.toString(16).padStart(2, "0");
-  const g = c.g.toString(16).padStart(2, "0");
-  const b = c.b.toString(16).padStart(2, "0");
-  return `#${r}${g}${b}`;
-}
-
-function hexToColor(hex: string): Color {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return { r, g, b, a: 255 };
 }
 
 export function ColorInput({ label, value, onChange }: ColorInputProps) {

@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 
 use serde::Serialize;
@@ -109,7 +110,8 @@ pub struct AppState {
     /// Port the Python sidecar is listening on (0 = not running).
     pub python_port: AtomicU16,
     /// Cache of audio analysis results. Key is media filename.
-    pub analysis_cache: Mutex<HashMap<String, AudioAnalysis>>,
+    /// Uses IndexMap to preserve insertion order for FIFO eviction.
+    pub analysis_cache: Mutex<IndexMap<String, AudioAnalysis>>,
     /// Handle to the agent sidecar process (Node.js).
     pub agent_sidecar: Mutex<Option<tokio::process::Child>>,
     /// Port the agent sidecar is listening on (0 = not running).
@@ -124,6 +126,8 @@ pub struct AppState {
     pub global_libraries: Mutex<LibrariesFile>,
     /// Cancellation flags for long-running operations.
     pub cancellation: CancellationRegistry,
+    /// Port the internal HTTP API server is listening on (0 = not started).
+    pub api_port: AtomicU16,
 }
 
 impl AppState {
@@ -192,16 +196,13 @@ impl AppState {
     }
 
     /// Insert an analysis result into the cache, evicting the oldest entry
-    /// if the cache exceeds `MAX_ANALYSIS_CACHE` entries.
+    /// (by insertion order) if the cache exceeds `MAX_ANALYSIS_CACHE` entries.
     pub fn cache_analysis(&self, key: String, value: AudioAnalysis) {
         const MAX_ANALYSIS_CACHE: usize = 10;
         let mut cache = self.analysis_cache.lock();
         cache.insert(key, value);
         while cache.len() > MAX_ANALYSIS_CACHE {
-            // Remove an arbitrary entry to stay within the cap.
-            if let Some(first_key) = cache.keys().next().cloned() {
-                cache.remove(&first_key);
-            }
+            cache.shift_remove_index(0);
         }
     }
 

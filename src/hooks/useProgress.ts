@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import type { ProgressEvent } from "../types";
+import { PROGRESS } from "../events";
+import { useTauriListener } from "./useTauriListener";
 
 export interface TrackedOperation {
   event: ProgressEvent;
@@ -22,32 +23,21 @@ export function useProgress(): Map<string, TrackedOperation> {
   const opsRef = useRef(ops);
   opsRef.current = ops;
 
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-
-    listen<ProgressEvent>("progress", (event) => {
-      const ev = event.payload;
-      setOps((prev) => {
-        const next = new Map(prev);
-        if (ev.progress >= 1.0) {
-          next.delete(ev.operation);
-        } else {
-          next.set(ev.operation, {
-            event: ev,
-            lastUpdate: Date.now(),
-            stale: false,
-          });
-        }
-        return next;
-      });
-    }).then((fn) => {
-      unlisten = fn;
+  useTauriListener<ProgressEvent>(PROGRESS, (ev) => {
+    setOps((prev) => {
+      const next = new Map(prev);
+      if (ev.progress >= 1.0) {
+        next.delete(ev.operation);
+      } else {
+        next.set(ev.operation, {
+          event: ev,
+          lastUpdate: Date.now(),
+          stale: false,
+        });
+      }
+      return next;
     });
-
-    return () => {
-      unlisten?.();
-    };
-  }, []);
+  });
 
   // Periodically check for stale operations
   useEffect(() => {

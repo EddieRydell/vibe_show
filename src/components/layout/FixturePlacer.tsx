@@ -46,7 +46,7 @@ export function FixturePlacer({ fixtures, layouts, onPlace }: Props) {
           >
             <div className="font-medium">{f.name}</div>
             <div className="text-text-2 text-[10px]">
-              {f.pixel_count}px {f.bulb_shape && f.bulb_shape !== "LED" ? `(${f.bulb_shape})` : ""}
+              {f.pixel_count}px {f.bulb_shape !== "LED" ? `(${f.bulb_shape})` : ""}
             </div>
           </button>
         ))}

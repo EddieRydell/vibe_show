@@ -3,11 +3,14 @@
  * All operations go through a single Tauri IPC endpoint.
  *
  * Return types are inferred from CommandReturnMap — no manual `as T` casts.
+ * Param types are checked against CommandParams — field name typos and
+ * missing fields are compile errors.
  */
 
 import { invoke } from "@tauri-apps/api/core";
 import type { CommandResult } from "../src-tauri/bindings/CommandResult";
 import type {
+  CommandParams,
   CommandReturnMap,
   DataCommand,
   UnitCommand,
@@ -20,7 +23,6 @@ import type {
   FixtureDef,
   FixtureGroup,
   Layout,
-  LlmProvider,
   Patch,
   ParamKey,
   ParamValue,
@@ -34,19 +36,21 @@ import type {
 
 async function exec<C extends UnitCommand>(
   command: C,
-  params?: unknown,
+  ...args: CommandParams<C> extends undefined ? [] : [params: CommandParams<C>]
 ): Promise<void> {
+  const params = args[0];
   await invoke<CommandResult>("exec", {
-    cmd: params ? { command, params } : { command },
+    cmd: params !== undefined ? { command, params } : { command },
   });
 }
 
 async function execData<C extends DataCommand>(
   command: C,
-  params?: unknown,
+  ...args: CommandParams<C> extends undefined ? [] : [params: CommandParams<C>]
 ): Promise<CommandReturnMap[C]> {
+  const params = args[0];
   const result = await invoke<CommandResult>("exec", {
-    cmd: params ? { command, params } : { command },
+    cmd: params !== undefined ? { command, params } : { command },
   });
   return (result as { data: CommandReturnMap[C] }).data;
 }
@@ -88,16 +92,16 @@ export const cmd = {
     kind: EffectKind,
     start: number,
     end: number,
-    blendMode?: BlendMode,
-    opacity?: number,
+    blendMode: BlendMode = "Override",
+    opacity = 1.0,
   ) =>
     execData("AddEffect", {
       track_index: trackIndex,
       kind,
       start,
       end,
-      ...(blendMode !== undefined && { blend_mode: blendMode }),
-      ...(opacity !== undefined && { opacity }),
+      blend_mode: blendMode,
+      opacity,
     }),
   deleteEffects: (targets: [number, number][]) =>
     exec("DeleteEffects", {
@@ -159,15 +163,11 @@ export const cmd = {
   initializeDataDir: (dataDir: string) =>
     execData("InitializeDataDir", { data_dir: dataDir }),
   setLlmConfig: (p: {
-    provider: LlmProvider;
     apiKey: string;
-    baseUrl?: string | null;
     model?: string | null;
   }) =>
     exec("SetLlmConfig", {
-      provider: p.provider,
       api_key: p.apiKey,
-      base_url: p.baseUrl ?? null,
       model: p.model ?? null,
     }),
   getLlmConfig: () => execData("GetLlmConfig"),

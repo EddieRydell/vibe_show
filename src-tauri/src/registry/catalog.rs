@@ -32,7 +32,7 @@ pub(super) fn entry(info: CommandInfo, param_schema: Value) -> CommandRegistryEn
         description: info.description,
         category: info.category,
         undoable: info.undoable,
-        llm_hidden: info.is_llm_hidden(),
+        llm_hidden: info.llm_hidden,
         param_schema,
     }
 }
@@ -46,62 +46,6 @@ pub fn command_registry() -> Vec<CommandRegistryEntry> {
     super::Command::registry_entries()
 }
 
-/// Generate the minimal `tools` array for LLM chat.
-/// Instead of dumping all command schemas (which blows past token limits),
-/// we expose just 3 meta-tools: `help`, `run`, and `batch`.
-/// The LLM discovers specific commands via `help` and invokes them via `run`/`batch`.
-pub fn to_llm_tools() -> Value {
-    serde_json::json!([
-        {
-            "name": "help",
-            "description": "Discover available commands. No args = list categories. Provide a category name to see its commands, or a command name to see its full parameter schema.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "topic": {
-                        "type": "string",
-                        "description": "Category name (e.g. 'edit') or command name (e.g. 'add_effect')"
-                    }
-                }
-            }
-        },
-        {
-            "name": "run",
-            "description": "Execute a single command. Use help() first to discover command names and parameters.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "command": { "type": "string", "description": "Command name (e.g. 'add_effect', 'get_show')" },
-                    "params": { "type": "object", "description": "Command parameters (see help for schema)" }
-                },
-                "required": ["command"]
-            }
-        },
-        {
-            "name": "batch",
-            "description": "Execute multiple edit commands as a single undoable operation. Each entry has 'command' and optional 'params'.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "description": { "type": "string", "description": "Human-readable description of the batch" },
-                    "commands": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "command": { "type": "string" },
-                                "params": { "type": "object" }
-                            },
-                            "required": ["command"]
-                        }
-                    }
-                },
-                "required": ["description", "commands"]
-            }
-        }
-    ])
-}
-
 /// Generate help text for LLM command discovery.
 /// Three tiers: no topic → categories, category → command list, command → full schema.
 pub fn help_text(topic: Option<&str>) -> String {
@@ -110,27 +54,12 @@ pub fn help_text(topic: Option<&str>) -> String {
 
     match topic {
         None => {
-            // Tier 1: category overview
-            let categories = [
-                ("edit", CommandCategory::Edit, "Add, delete, move effects and tracks, update params"),
-                ("playback", CommandCategory::Playback, "Play, pause, seek, undo, redo"),
-                ("query", CommandCategory::Query, "Inspect show state and effect types"),
-                ("analysis", CommandCategory::Analysis, "Audio analysis: beats, sections, mood"),
-                ("library", CommandCategory::Library, "Manage gradients, curves, scripts"),
-                ("script", CommandCategory::Script, "Write and compile DSL scripts"),
-                ("settings", CommandCategory::Settings, "App settings and data directory"),
-                ("setup", CommandCategory::Setup, "Setup CRUD: list, create, open, delete"),
-                ("sequence", CommandCategory::Sequence, "Sequence CRUD: list, create, open, delete"),
-                ("media", CommandCategory::Media, "Audio file management"),
-                ("chat", CommandCategory::Chat, "Chat history management"),
-                ("import", CommandCategory::Import, "Vixen 3 project import"),
-            ];
-
+            // Tier 1: category overview (driven by CommandCategory::all() — exhaustive)
             let mut lines = vec!["Available command categories:".to_string()];
-            for (name, cat, desc) in &categories {
+            for cat in CommandCategory::all() {
                 let count = visible.iter().filter(|e| e.category == *cat).count();
                 if count > 0 {
-                    lines.push(format!("  {name} ({count}) — {desc}"));
+                    lines.push(format!("  {} ({count}) — {}", cat.slug(), cat.description()));
                 }
             }
             lines.push(String::new());
@@ -157,9 +86,7 @@ pub fn help_text(topic: Option<&str>) -> String {
             let cat_lower = topic.to_lowercase();
             let matching: Vec<&&CommandRegistryEntry> = visible
                 .iter()
-                .filter(|e| {
-                    format!("{:?}", e.category).to_lowercase() == cat_lower
-                })
+                .filter(|e| e.category.slug() == cat_lower)
                 .collect();
 
             if matching.is_empty() {
@@ -202,4 +129,41 @@ pub fn to_json_schema() -> Value {
 /// Deserialize a tool call (name + JSON input) into a Command.
 pub fn deserialize_from_tool_call(name: &str, input: &Value) -> Result<super::Command, String> {
     super::Command::from_tool_call(name, input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_text_lists_all_categories() {
+        let output = help_text(None);
+        for cat in CommandCategory::all() {
+            assert!(
+                output.contains(cat.slug()),
+                "help_text(None) missing category: {}",
+                cat.slug()
+            );
+        }
+    }
+
+    #[test]
+    fn help_text_python_returns_commands() {
+        let output = help_text(Some("python"));
+        assert!(
+            output.contains("python commands:"),
+            "help_text('python') should list python commands, got: {output}"
+        );
+        assert!(output.contains("get_python_status"));
+    }
+
+    #[test]
+    fn help_text_agent_returns_commands() {
+        let output = help_text(Some("agent"));
+        assert!(
+            output.contains("agent commands:"),
+            "help_text('agent') should list agent commands, got: {output}"
+        );
+        assert!(output.contains("send_agent_message"));
+    }
 }

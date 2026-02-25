@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::error::AppError;
 use crate::registry::params::{
-    CompileScriptParams, CompileScriptPreviewParams, NameParams, RenameParams, WriteScriptParams,
+    CompileScriptPreviewParams, NameParams, RenameParams, WriteScriptParams,
 };
 use crate::registry::reference;
 use crate::registry::{CommandOutput, CommandResult};
@@ -94,19 +94,6 @@ pub fn list_global_scripts(state: &Arc<AppState>) -> Result<CommandOutput, AppEr
         serde_json::to_string(&pairs).unwrap_or_default(),
         CommandResult::ListGlobalScripts(pairs),
     ))
-}
-
-pub fn compile_global_script(
-    state: &Arc<AppState>,
-    p: CompileScriptParams,
-) -> Result<CommandOutput, AppError> {
-    let result = super::common::compile_and_cache(state, p.name.clone(), &p.source);
-    if result.success {
-        state.global_libraries.lock().scripts.insert(p.name, p.source);
-        global_lib::persist_inner(state);
-    }
-    let msg = if result.success { "Compiled and saved." } else { "Compile failed." };
-    Ok(CommandOutput::new(msg, CommandResult::CompileScript(result)))
 }
 
 pub fn compile_script_preview(

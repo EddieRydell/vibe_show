@@ -30,13 +30,13 @@ export async function buildSystemPrompt(
   );
   lines.push("");
 
-  // Workflow guidance
+  // SSOT: workflow command names must match define_commands! in registry/mod.rs
   lines.push("## Workflow");
   lines.push(
-    "1. **Inspect** — Use get_show_description for a rich overview, or get_show for full data.",
+    "1. **Inspect** — Use describe_show for a rich overview, or get_show for full data.",
   );
   lines.push(
-    "2. **Plan** — Decide what effects/tracks to add or modify. Use get_effect_catalog to see available effect types.",
+    "2. **Plan** — Decide what effects/tracks to add or modify. Use list_effects to see available effect types, get_effect_detail for schemas.",
   );
   lines.push(
     "3. **Edit** — Use vibelights_batch for multiple related changes (single undo step). Use vibelights_command for single operations.",
@@ -46,49 +46,27 @@ export async function buildSystemPrompt(
   );
   lines.push("");
 
-  // Effect types
-  lines.push("## Effect types");
-  lines.push("Built-in effects: Solid, Chase, Rainbow, Strobe, Gradient, Twinkle, Script");
-  lines.push("- Use get_effect_catalog for full parameter schemas for each type.");
+  // Discovery
+  lines.push("## Discovery");
   lines.push(
-    '- Script effects use the VibeLights DSL. Call get_dsl_reference for the full language reference.',
+    "Use vibelights_help() to discover all available commands, categories, and parameter schemas at runtime.",
+  );
+  lines.push(
+    "Use vibelights_help({topic: \"category\"}) for details on a specific category.",
   );
   lines.push("");
 
-  // Param format
-  lines.push("## Param value format");
-  lines.push(
-    'Effect params use tagged format: {"Float": 1.0}, {"Color": {"r":255,"g":0,"b":0,"a":255}}, {"Bool": true}, {"Int": 5}',
-  );
-  lines.push(
-    '- Curve: {"Curve":{"points":[{"x":0,"y":0},{"x":1,"y":1}]}}',
-  );
-  lines.push(
-    '- Gradient: {"ColorGradient":{"stops":[{"position":0,"color":{"r":255,"g":0,"b":0,"a":255}},{"position":1,"color":{"r":0,"g":0,"b":255,"a":255}}]}}',
-  );
-  lines.push('- Library refs: {"GradientRef":"name"} or {"CurveRef":"name"}');
-  lines.push("");
-
-  // Key commands by category
-  lines.push("## Key commands");
-  lines.push("**Query**: get_show, get_show_description, get_effect_catalog, get_effect_detail");
-  lines.push("**Edit**: add_effect, update_effect_param, update_effect_time, delete_effects, add_track, batch_edit");
-  lines.push("**Script**: write_global_script, get_global_script_source, list_global_scripts, get_dsl_reference, compile_script_preview");
-  lines.push("**Analysis**: get_analysis_summary, get_beats_in_range, get_sections, get_analysis_detail");
-  lines.push("**Library**: list_global_library, set_global_gradient, set_global_curve, list_global_gradients, list_global_curves, list_global_scripts");
-  lines.push("**Sequence**: save_current_sequence, list_sequences, open_sequence");
-  lines.push("**Profile**: list_profiles, open_profile, get_design_guide");
-  lines.push("Use vibelights_help({topic: \"category\"}) for full details on any category.");
-  lines.push("");
-
-  // Data directory layout
+  // SSOT: directory layout must match setup.rs / project.rs file I/O
   lines.push("## Data directory");
   lines.push(`Path: ${dataDir}`);
   lines.push("  libraries.json — global gradients, curves, scripts");
-  lines.push("  profiles/{slug}/profile.json — fixtures, groups, layout");
-  lines.push("  profiles/{slug}/sequences/{slug}.json — tracks, effects, timing");
-  lines.push("  profiles/{slug}/media/ — audio files");
-  lines.push("  profiles/{slug}/media/{file}.analysis.json — audio analysis results");
+  lines.push("  setups/{slug}/meta.json — setup metadata");
+  lines.push("  setups/{slug}/fixtures.json — fixtures, groups");
+  lines.push("  setups/{slug}/setup.json — controllers, patches");
+  lines.push("  setups/{slug}/layout.json — fixture layout");
+  lines.push("  setups/{slug}/sequences/{slug}.json — tracks, effects, timing");
+  lines.push("  setups/{slug}/media/ — audio files");
+  lines.push("  setups/{slug}/media/{file}.analysis.json — audio analysis results");
   lines.push("");
 
   // Rules
@@ -163,9 +141,10 @@ export async function buildSystemPrompt(
   }
 
   lines.push("");
+  // SSOT: example commands must match define_commands! in registry/mod.rs
   lines.push("## Tool usage examples");
   lines.push(
-    'vibelights_command({command: "get_show_description"}) — rich text overview of the show',
+    'vibelights_command({command: "describe_show"}) — rich text overview of the show',
   );
   lines.push(
     'vibelights_command({command: "add_effect", params: {track_index: 0, kind: "Rainbow", start: 0, end: 10}}) — add effect',

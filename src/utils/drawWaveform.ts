@@ -49,7 +49,7 @@ export function drawWaveform(
     const timeSec = px / pxPerSec;
     const peakIndex = Math.floor((timeSec / audioDuration) * peaks.length);
     if (peakIndex < 0 || peakIndex >= peaks.length) continue;
-    const amplitude = peaks[peakIndex];
+    const amplitude = peaks[peakIndex]!;
     const barH = amplitude * maxBarHeight;
     if (barH < 0.5) continue;
     ctx.fillRect(px, centerY - barH, 1, barH * 2);

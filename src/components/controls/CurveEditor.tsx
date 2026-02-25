@@ -133,11 +133,11 @@ export function CurveEditor({
       grad.addColorStop(1, "rgba(96, 165, 250, 0.03)");
 
       ctx.beginPath();
-      ctx.moveTo(toCanvasX(sorted[0].x), toCanvasY(0));
+      ctx.moveTo(toCanvasX(sorted[0]!.x), toCanvasY(0));
       for (const pt of sorted) {
         ctx.lineTo(toCanvasX(pt.x), toCanvasY(pt.y));
       }
-      ctx.lineTo(toCanvasX(sorted[sorted.length - 1].x), toCanvasY(0));
+      ctx.lineTo(toCanvasX(sorted[sorted.length - 1]!.x), toCanvasY(0));
       ctx.closePath();
       ctx.fillStyle = grad;
       ctx.fill();
@@ -146,17 +146,17 @@ export function CurveEditor({
       ctx.beginPath();
       ctx.strokeStyle = "#60a5fa";
       ctx.lineWidth = 1;
-      ctx.moveTo(toCanvasX(sorted[0].x), toCanvasY(sorted[0].y));
+      ctx.moveTo(toCanvasX(sorted[0]!.x), toCanvasY(sorted[0]!.y));
       for (let i = 1; i < sorted.length; i++) {
-        ctx.lineTo(toCanvasX(sorted[i].x), toCanvasY(sorted[i].y));
+        ctx.lineTo(toCanvasX(sorted[i]!.x), toCanvasY(sorted[i]!.y));
       }
       ctx.stroke();
     }
 
     // Points (no border)
     for (let i = 0; i < sorted.length; i++) {
-      const px = toCanvasX(sorted[i].x);
-      const py = toCanvasY(sorted[i].y);
+      const px = toCanvasX(sorted[i]!.x);
+      const py = toCanvasY(sorted[i]!.y);
       const isDragging = draggingIdx === i;
       const isHovered = hoveredPoint === i;
       const r = isDragging || isHovered ? pointR + 2 : pointR;
@@ -213,8 +213,8 @@ export function CurveEditor({
     (cx: number, cy: number): number | null => {
       const sorted = sortByX(value);
       for (let i = 0; i < sorted.length; i++) {
-        const px = toCanvasX(sorted[i].x);
-        const py = toCanvasY(sorted[i].y);
+        const px = toCanvasX(sorted[i]!.x);
+        const py = toCanvasY(sorted[i]!.y);
         if (Math.hypot(cx - px, cy - py) < pointR + 4) return i;
       }
       return null;

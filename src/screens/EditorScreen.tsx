@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { emitTo } from "@tauri-apps/api/event";
 import { cmd } from "../commands";
+import { SHOW_REFRESHED, SELECTION_CHANGED } from "../events";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Code, Layers, SlidersHorizontal } from "lucide-react";
 import { Timeline } from "../components/Timeline";
@@ -89,7 +90,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
         refreshAll();
         setLoading(false);
       })
-      .catch((e) => {
+      .catch((e: unknown) => {
         console.error("[VibeLights] Failed to open sequence:", e);
         setLoading(false);
       });
@@ -114,7 +115,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
   useEffect(() => {
     if (!previewOpen) return;
     const effects = deduplicateEffectKeys(selectedEffects);
-    emitTo("preview", "selection-changed", { effects }).catch(console.warn);
+    emitTo("preview", SELECTION_CHANGED, { effects }).catch(console.warn);
   }, [selectedEffects, previewOpen]);
 
   // ── Composed transport controls ────────────────────────────────────
@@ -157,7 +158,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
       // If region is set and current time is outside, seek to region start
       if (playback?.region) {
         const [regionStart, regionEnd] = playback.region;
-        const ct = playback.current_time ?? 0;
+        const ct = playback.current_time;
         if (ct < regionStart || ct >= regionEnd) {
           engineSeek(regionStart);
           if (audio.ready) audio.seek(regionStart);
@@ -186,7 +187,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
     if (!sequence) return;
     const allKeys = new Set<string>();
     for (let tIdx = 0; tIdx < sequence.tracks.length; tIdx++) {
-      for (let eIdx = 0; eIdx < sequence.tracks[tIdx].effects.length; eIdx++) {
+      for (let eIdx = 0; eIdx < sequence.tracks[tIdx]!.effects.length; eIdx++) {
         allKeys.add(makeEffectKey(tIdx, eIdx));
       }
     }
@@ -199,7 +200,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
       if (!opts?.skipDirty) setDirty(true);
       if (!opts?.skipRefreshAll) refreshAll();
       setRefreshKey((k) => k + 1);
-      if (previewOpen) emitTo("preview", "show-refreshed");
+      if (previewOpen) void emitTo("preview", SHOW_REFRESHED);
     },
     [refreshAll, previewOpen],
   );
@@ -290,7 +291,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
     previewWindowRef.current = previewWin;
     setPreviewOpen(true);
 
-    previewWin.onCloseRequested(() => {
+    void previewWin.onCloseRequested(() => {
       previewWindowRef.current = null;
       setPreviewOpen(false);
     });
@@ -359,7 +360,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
   // Load cached analysis when sequence is opened
   useEffect(() => {
     if (!loading && currentSequence?.audio_file) {
-      refreshAnalysis();
+      void refreshAnalysis();
     }
   }, [loading, currentSequence?.audio_file, refreshAnalysis]);
 
@@ -388,7 +389,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
 
   useKeyboard(keyboardActions);
 
-  const singleSelected = selectedEffects.size === 1 ? [...selectedEffects][0] : null;
+  const singleSelected = selectedEffects.size === 1 ? [...selectedEffects][0]! : null;
 
   if (loading) {
     const loadTracked = progressOps.get("open_sequence");
@@ -436,7 +437,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
           Sequence
         </button>
         <button
-          onClick={handleSave}
+          onClick={() => { void handleSave(); }}
           disabled={saveState === "saving" || (!dirty && saveState === "idle")}
           className={`rounded border px-2 py-0.5 text-[11px] transition-colors ${
             saveState === "saved"
@@ -484,11 +485,11 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
         onStop={handleStop}
         onSkipBack={() => seek(0)}
         onSkipForward={() => seek(playback?.duration ?? 0)}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        onTogglePreview={handleTogglePreview}
+        onUndo={() => { void handleUndo(); }}
+        onRedo={() => { void handleRedo(); }}
+        onTogglePreview={() => { void handleTogglePreview(); }}
         onToggleLoop={handleToggleLoop}
-        onAnalyze={handleAnalyze}
+        onAnalyze={() => { void handleAnalyze(); }}
       />
 
       {/* Error banner */}
@@ -525,7 +526,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
           />
         )}
         <PropertyPanel
-          selectedEffect={singleSelected}
+          selectedEffect={singleSelected ?? null}
           sequenceIndex={playback?.sequence_index ?? 0}
           onParamChange={handleParamChange}
         />
@@ -535,7 +536,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
       {addEffectState && (
         <EffectPicker
           position={addEffectState.screenPos}
-          onSelect={handleEffectTypeSelected}
+          onSelect={(kind) => { void handleEffectTypeSelected(kind); }}
           onCancel={() => setAddEffectState(null)}
         />
       )}
