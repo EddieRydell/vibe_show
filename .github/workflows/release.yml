@@ -18,15 +18,15 @@ jobs:
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
             label: windows-x64
+            bundles: nsis
           - runner: macos-latest
             target: aarch64-apple-darwin
             label: macos-arm64
-          - runner: macos-13
-            target: x86_64-apple-darwin
-            label: macos-x64
+            bundles: dmg
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             label: linux-x64
+            bundles: deb,appimage
 
     name: Build (${{ matrix.label }})
     runs-on: ${{ matrix.runner }}
@@ -78,13 +78,8 @@ jobs:
       #   - building the frontend
       #   - compiling + staging the agent sidecar
 
-      - name: Build Tauri app (Windows — NSIS only, WIX has icon bug)
-        if: runner.os == 'Windows'
-        run: pnpm tauri build --target ${{ matrix.target }} --bundles nsis
-
       - name: Build Tauri app
-        if: runner.os != 'Windows'
-        run: pnpm tauri build --target ${{ matrix.target }}
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       # ── Upload artifacts ────────────────────────────────────────────
 
