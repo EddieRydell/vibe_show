@@ -84,6 +84,18 @@ jobs:
       - name: Build Tauri app
         run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
+      # Ad-hoc sign the macOS .app with JIT entitlements so WebKit can
+      # use its JIT compiler. Without this, JS runs interpreted = unusable.
+      - name: Sign macOS app with JIT entitlements
+        if: runner.os == 'macOS'
+        run: |
+          APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/VibeLights.app"
+          codesign --force --deep --sign - --entitlements src-tauri/Entitlements.plist "$APP"
+          # Recreate the .dmg with the signed app
+          DMG_DIR="src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
+          rm -f "$DMG_DIR"/*.dmg
+          hdiutil create -volname VibeLights -srcfolder "$APP" -ov -format UDZO "$DMG_DIR/VibeLights_0.1.0_aarch64.dmg"
+
       # ── Upload artifacts ────────────────────────────────────────────
 
       - name: Upload Windows installers
