@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn uses_time() {
-        let compiled = compile_src("let x = sin(t * 3.14)\nrgb(x, x, x)");
+        let compiled = compile_src("let x = sin(t * 3.14); rgb(x, x, x)");
         assert!(compiled.ops.contains(&Op::PushT));
         assert!(compiled.ops.contains(&Op::Sin));
         assert!(compiled.ops.contains(&Op::Mul));
@@ -547,7 +547,7 @@ mod tests {
 
     #[test]
     fn if_else_branches() {
-        let compiled = compile_src("if t > 0.5 {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 0.0, 1.0)\n}");
+        let compiled = compile_src("if t > 0.5 { rgb(1.0, 0.0, 0.0) } else { rgb(0.0, 0.0, 1.0) }");
         // Should have JumpIfFalse and Jump instructions
         let has_jump_if = compiled.ops.iter().any(|op| matches!(op, Op::JumpIfFalse(_)));
         let has_jump = compiled.ops.iter().any(|op| matches!(op, Op::Jump(_)));
@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn param_push() {
-        let compiled = compile_src("param speed: float(0.0, 10.0) = 1.0\nlet x = t * speed\nrgb(x, x, x)");
+        let compiled = compile_src("param speed: float(0.0, 10.0) = 1.0; let x = t * speed; rgb(x, x, x)");
         assert!(compiled.ops.contains(&Op::PushParam(0)));
         assert_eq!(compiled.params.len(), 1);
         assert_eq!(compiled.params[0].name, "speed");
@@ -581,13 +581,13 @@ mod tests {
 
     #[test]
     fn local_count_tracks_lets() {
-        let compiled = compile_src("let a = 1.0\nlet b = 2.0\nlet c = a + b\nrgb(c, c, c)");
+        let compiled = compile_src("let a = 1.0; let b = 2.0; let c = a + b; rgb(c, c, c)");
         assert!(compiled.local_count >= 3);
     }
 
     #[test]
     fn pi_and_tau_as_constants() {
-        let compiled = compile_src("let x = sin(t * PI)\nrgb(x, x, x)");
+        let compiled = compile_src("let x = sin(t * PI); rgb(x, x, x)");
         // PI should be in the constant pool
         assert!(compiled.constants.iter().any(|&c| (c - std::f64::consts::PI).abs() < f64::EPSILON));
     }
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn bitwise_ops_compile() {
-        let compiled = compile_src("let x = 3 & 1\nlet y = x | 2\nlet z = y ^ 1\nrgb(0.0, 0.0, 0.0)");
+        let compiled = compile_src("let x = 3 & 1; let y = x | 2; let z = y ^ 1; rgb(0.0, 0.0, 0.0)");
         assert!(compiled.ops.contains(&Op::BitAnd));
         assert!(compiled.ops.contains(&Op::BitOr));
         assert!(compiled.ops.contains(&Op::BitXor));
@@ -609,14 +609,14 @@ mod tests {
 
     #[test]
     fn shift_ops_compile() {
-        let compiled = compile_src("let x = 1 << 3\nlet y = x >> 1\nrgb(0.0, 0.0, 0.0)");
+        let compiled = compile_src("let x = 1 << 3; let y = x >> 1; rgb(0.0, 0.0, 0.0)");
         assert!(compiled.ops.contains(&Op::Shl));
         assert!(compiled.ops.contains(&Op::Shr));
     }
 
     #[test]
     fn enum_comparison_bytecode() {
-        let compiled = compile_src("enum Mode { A, B }\nparam mode: Mode = A\nif mode == Mode.A {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 1.0, 0.0)\n}");
+        let compiled = compile_src("enum Mode { A, B }\nparam mode: Mode = A;\nif mode == Mode.A { rgb(1.0, 0.0, 0.0) } else { rgb(0.0, 1.0, 0.0) }");
         // Enum comparison: PushParam(mode) + PushConst(variant_index) + Eq
         assert!(compiled.ops.contains(&Op::PushParam(0)));
         assert!(compiled.ops.contains(&Op::Eq));

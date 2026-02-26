@@ -72,34 +72,34 @@ pub fn dsl_reference() -> String {
 
 ## Script Structure
 ```
-@name "My Effect"       -- metadata: display name
-@spatial true           -- enable 2D position data (pos2d variable)
+@name "My Effect"       // metadata: display name
+@spatial true           // enable 2D position data (pos2d variable)
 
--- Type definitions (before params)
+// Type definitions (before params)
 enum Mode { Pulse, Wave, Sparkle }
 flags Features { Glow, Trail, Fade }
 
--- Parameters (user-configurable from the UI)
-param speed: float(0.1, 10.0) = 2.0
-param color1: color = #ff0000
-param grad: gradient = #ff0000, #0000ff
-param curve1: curve = 0:0, 0.5:1, 1:0
-param mode: Mode = Pulse
-param features: Features = Glow | Trail
-param count: int(1, 100) = 10
-param enabled: bool = true
+// Parameters (user-configurable from the UI)
+param speed: float(0.1, 10.0) = 2.0;
+param color1: color = #ff0000;
+param grad: gradient = #ff0000, #0000ff;
+param curve1: curve = 0:0, 0.5:1, 1:0;
+param mode: Mode = Pulse;
+param features: Features = Glow | Trail;
+param count: int(1, 100) = 10;
+param enabled: bool = true;
 
--- Local variables
-let phase = t * speed * TAU
-let x = sin(phase) * 0.5 + 0.5
+// Local variables
+let phase = t * speed * TAU;
+let x = sin(phase) * 0.5 + 0.5;
 
--- Functions
+// Functions
 fn pulse(center: float, width: float) -> float {
-    let d = abs(pos - center)
+    let d = abs(pos - center);
     smoothstep(0.0, width, d)
 }
 
--- Conditionals (if / else if / else)
+// Conditionals (if / else if / else)
 if mode == Mode.Pulse {
     color1.scale(pulse(0.5, 0.3))
 } else if mode == Mode.Wave {
@@ -108,13 +108,19 @@ if mode == Mode.Pulse {
     grad(t)
 }
 
--- Last expression is the output color
+// Last expression is the output color
 ```
+
+## Statement Termination
+- `;` required after `let` statements, expression statements, and `param` declarations
+- `;` NOT required after blocks: `enum { }`, `fn { }`, `if/else { }`, `switch { }`
+- `;` optional for `@metadata` directives
+- Last expression in a block (the return value) doesn't need `;`
+- Extra semicolons between statements are tolerated
 
 ## Comments
 ```
 // C-style line comment
--- Lua-style line comment (also valid)
 ```
 
 "#);
@@ -207,14 +213,14 @@ If-expressions return a value (the last expression in the taken branch).
 
 ### Boolean Logic
 ```
--- Combine conditions with && and ||
+// Combine conditions with && and ||
 if speed > 1.0 && enabled {
     color1
 } else {
     #000000
 }
 
--- Negate with !
+// Negate with !
 if !enabled {
     #000000
 } else {
@@ -225,30 +231,30 @@ if !enabled {
 ## Enum & Flags Usage
 ```
 enum Direction { Left, Right, Both }
-param dir: Direction = Left
+param dir: Direction = Left;
 
 if dir == Direction.Left { ... }
 ```
 
 ```
 flags Options { Sparkle, Glow, Pulse }
-param opts: Options = Sparkle | Glow
+param opts: Options = Sparkle | Glow;
 
--- Test individual flags with &
+// Test individual flags with &
 if opts & Options.Sparkle {
-    -- sparkle is enabled
+    // sparkle is enabled
 }
 
--- Combine flag tests with && and ||
+// Combine flag tests with && and ||
 if opts & Options.Sparkle && opts & Options.Glow {
-    -- both enabled
+    // both enabled
 }
 ```
 
 ## User-Defined Functions
 ```
 fn function_name(param1: type, param2: type) -> return_type {
-    -- function body (last expression is the return value)
+    // function body (last expression is the return value)
     expr
 }
 ```
@@ -259,47 +265,47 @@ Supported types in signatures: `float`, `int`, `bool`, `color`, `vec2`, `gradien
 ### Simple: Pulsing Color
 ```
 @name "Pulse"
-param color1: color = #ff0000
-param speed: float(0.1, 10.0) = 2.0
+param color1: color = #ff0000;
+param speed: float(0.1, 10.0) = 2.0;
 
-let brightness = sin(t * speed * TAU) * 0.5 + 0.5
+let brightness = sin(t * speed * TAU) * 0.5 + 0.5;
 color1.scale(brightness)
 ```
 
 ### Medium: Gradient Chase
 ```
 @name "Gradient Chase"
-param grad: gradient = #ff0000, #00ff00, #0000ff
-param speed: float(0.1, 5.0) = 1.0
-param width: float(0.1, 1.0) = 0.3
+param grad: gradient = #ff0000, #00ff00, #0000ff;
+param speed: float(0.1, 5.0) = 1.0;
+param width: float(0.1, 1.0) = 0.3;
 
-let head = fract(t * speed)
-let d = abs(pos - head)
-let d2 = min(d, 1.0 - d)
-let brightness = smoothstep(0.0, width, d2)
+let head = fract(t * speed);
+let d = abs(pos - head);
+let d2 = min(d, 1.0 - d);
+let brightness = smoothstep(0.0, width, d2);
 grad(pos).scale(brightness)
 ```
 
 ### Advanced: Rainbow Sparkles
 ```
 @name "Rainbow Sparkles"
-param colors: gradient = #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3
-param density: float(0.01, 1.0) = 0.15
-param speed: float(0.1, 10.0) = 2.0
-param sparkle_duration: float(0.05, 0.5) = 0.15
-param brightness: float(0.0, 2.0) = 1.0
-param sharpness: float(0.0, 1.0) = 0.7
+param colors: gradient = #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #9400d3;
+param density: float(0.01, 1.0) = 0.15;
+param speed: float(0.1, 10.0) = 2.0;
+param sparkle_duration: float(0.05, 0.5) = 0.15;
+param brightness: float(0.0, 2.0) = 1.0;
+param sharpness: float(0.0, 1.0) = 0.7;
 
-let time_phase = t * speed
-let sparkle_phase = hash(pixel, 456.0)
-let sparkle_time = fract(time_phase + sparkle_phase)
-let time_seed = floor(time_phase * 10.0)
-let is_sparkling = hash(pixel, time_seed) < density
-let pulse_pos = sparkle_time / sparkle_duration
-let pulse = 1.0 - pow(pulse_pos, 2.0)
-let active = if sparkle_time < sparkle_duration && is_sparkling { 1.0 } else { 0.0 }
-let final_brightness = clamp(pulse * active * brightness, 0.0, 1.0)
-let color_position = fract(hash(pixel, 789.0) + t * 0.5)
+let time_phase = t * speed;
+let sparkle_phase = hash(pixel, 456.0);
+let sparkle_time = fract(time_phase + sparkle_phase);
+let time_seed = floor(time_phase * 10.0);
+let is_sparkling = hash(pixel, time_seed) < density;
+let pulse_pos = sparkle_time / sparkle_duration;
+let pulse = 1.0 - pow(pulse_pos, 2.0);
+let active = if sparkle_time < sparkle_duration && is_sparkling { 1.0 } else { 0.0 };
+let final_brightness = clamp(pulse * active * brightness, 0.0, 1.0);
+let color_position = fract(hash(pixel, 789.0) + t * 0.5);
 colors(color_position).scale(final_brightness)
 ```
 
@@ -307,15 +313,15 @@ colors(color_position).scale(final_brightness)
 ```
 @name "Burst"
 @spatial true
-param color1: color = #ffffff
-param speed: float(0.5, 5.0) = 2.0
-param center_x: float(0.0, 1.0) = 0.5
-param center_y: float(0.0, 1.0) = 0.5
+param color1: color = #ffffff;
+param speed: float(0.5, 5.0) = 2.0;
+param center_x: float(0.0, 1.0) = 0.5;
+param center_y: float(0.0, 1.0) = 0.5;
 
-let center = vec2(center_x, center_y)
-let d = distance(pos2d, center)
-let wave = sin((d - t * speed) * TAU * 3.0) * 0.5 + 0.5
-let falloff = smoothstep(0.0, 0.8, d)
+let center = vec2(center_x, center_y);
+let d = distance(pos2d, center);
+let wave = sin((d - t * speed) * TAU * 3.0) * 0.5 + 0.5;
+let falloff = smoothstep(0.0, 0.8, d);
 color1.scale(wave * falloff)
 ```
 "#);

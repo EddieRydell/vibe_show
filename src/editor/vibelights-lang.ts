@@ -10,10 +10,11 @@ import {
 
 const KEYWORDS = new Set([
   "let", "fn", "if", "else", "param", "enum", "flags", "return",
+  "switch", "case", "default",
 ]);
 
 const TYPES = new Set([
-  "float", "int", "bool", "color", "vec2", "gradient", "curve",
+  "float", "int", "bool", "color", "gradient", "curve",
 ]);
 
 const BUILTINS = new Set([
@@ -120,25 +121,25 @@ function vibelightsCompletion(context: CompletionContext): CompletionResult | nu
       label: "param-float",
       type: "text" as const,
       detail: "float parameter",
-      apply: "param speed: float(0.1, 10.0) = 1.0",
+      apply: "param speed: float(0.1, 10.0) = 1.0;",
     },
     {
       label: "param-color",
       type: "text" as const,
       detail: "color parameter",
-      apply: "param color: color = #ffffff",
+      apply: "param color: color = #ffffff;",
     },
     {
       label: "param-bool",
       type: "text" as const,
       detail: "bool parameter",
-      apply: "param reverse: bool = false",
+      apply: "param reverse: bool = false;",
     },
     {
       label: "param-gradient",
       type: "text" as const,
       detail: "gradient parameter",
-      apply: "param palette: gradient = #000000, #ffffff",
+      apply: "param palette: gradient = #000000, #ffffff;",
     },
   ];
 

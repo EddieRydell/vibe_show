@@ -23,6 +23,9 @@ export default defineConfig(async () => ({
       },
     },
   },
+  optimizeDeps: {
+    entries: ["index.html"],
+  },
   server: {
     port: 1420,
     strictPort: true,

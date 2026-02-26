@@ -29,7 +29,7 @@ impl Parser {
         let mut functions = Vec::new();
         let mut body = Vec::new();
 
-        self.skip_newlines();
+        self.skip_terminators();
 
         while !self.at_eof() {
             match self.peek() {
@@ -62,12 +62,12 @@ impl Parser {
                         Ok(s) => body.push(s),
                         Err(e) => {
                             self.errors.push(e);
-                            self.recover_to_newline();
+                            self.recover_to_semicolon();
                         }
                     }
                 }
             }
-            self.skip_newlines();
+            self.skip_terminators();
         }
 
         if self.errors.is_empty() {
@@ -134,31 +134,31 @@ impl Parser {
         }
     }
 
-    fn skip_newlines(&mut self) {
-        while matches!(self.peek(), Token::Newline) {
+    fn skip_terminators(&mut self) {
+        while matches!(self.peek(), Token::Semicolon) {
             self.advance();
         }
     }
 
     fn expect_terminator(&mut self) -> Result<(), CompileError> {
-        if matches!(self.peek(), Token::Newline | Token::Eof | Token::RBrace) {
-            if matches!(self.peek(), Token::Newline) {
+        if matches!(self.peek(), Token::Semicolon | Token::Eof | Token::RBrace) {
+            if matches!(self.peek(), Token::Semicolon) {
                 self.advance();
             }
             Ok(())
         } else {
             Err(CompileError::parser(
-                format!("Expected newline or end of block, got {:?}", self.peek()),
+                format!("Expected ';' or end of block, got {:?}", self.peek()),
                 self.span(),
             ))
         }
     }
 
-    fn recover_to_newline(&mut self) {
-        while !matches!(self.peek(), Token::Newline | Token::Eof) {
+    fn recover_to_semicolon(&mut self) {
+        while !matches!(self.peek(), Token::Semicolon | Token::Eof) {
             self.advance();
         }
-        self.skip_newlines();
+        self.skip_terminators();
     }
 
     // ── Metadata ──────────────────────────────────────────────────
@@ -189,7 +189,10 @@ impl Parser {
             }
         };
         let end_span = self.span();
-        self.expect_terminator()?;
+        // Semicolon is optional after metadata directives
+        if matches!(self.peek(), Token::Semicolon) {
+            self.advance();
+        }
         Ok(Metadata {
             key,
             value,
@@ -208,7 +211,7 @@ impl Parser {
         };
         let (name, _) = self.expect_ident()?;
         self.expect(&Token::LBrace)?;
-        self.skip_newlines();
+        self.skip_terminators();
 
         let mut variants = Vec::new();
         while !matches!(self.peek(), Token::RBrace | Token::Eof) {
@@ -217,11 +220,10 @@ impl Parser {
             if matches!(self.peek(), Token::Comma) {
                 self.advance();
             }
-            self.skip_newlines();
+            self.skip_terminators();
         }
         let end_span = self.span();
         self.expect(&Token::RBrace)?;
-        self.expect_terminator()?;
 
         Ok(TypeDef {
             kind,
@@ -429,11 +431,10 @@ impl Parser {
         let return_type = self.parse_type_name()?;
 
         self.expect(&Token::LBrace)?;
-        self.skip_newlines();
+        self.skip_terminators();
         let body = self.parse_block()?;
         let end_span = self.span();
         self.expect(&Token::RBrace)?;
-        self.expect_terminator()?;
 
         Ok(FnDef {
             name,
@@ -450,7 +451,7 @@ impl Parser {
             Token::IntTy => { self.advance(); Ok(TypeName::Int) }
             Token::BoolTy => { self.advance(); Ok(TypeName::Bool) }
             Token::ColorTy => { self.advance(); Ok(TypeName::Color) }
-            Token::Vec2Ty => { self.advance(); Ok(TypeName::Vec2) }
+            Token::Ident(ref s) if s == "vec2" => { self.advance(); Ok(TypeName::Vec2) }
             Token::GradientTy => { self.advance(); Ok(TypeName::Gradient) }
             Token::CurveTy => { self.advance(); Ok(TypeName::Curve) }
             _ => Err(CompileError::parser(
@@ -464,10 +465,10 @@ impl Parser {
 
     fn parse_block(&mut self) -> Result<Vec<Stmt>, CompileError> {
         let mut stmts = Vec::new();
-        self.skip_newlines();
+        self.skip_terminators();
         while !matches!(self.peek(), Token::RBrace | Token::Eof) {
             stmts.push(self.parse_stmt()?);
-            self.skip_newlines();
+            self.skip_terminators();
         }
         Ok(stmts)
     }
@@ -933,13 +934,10 @@ impl Parser {
         self.expect(&Token::If)?;
         let condition = self.parse_expr()?;
         self.expect(&Token::LBrace)?;
-        self.skip_newlines();
+        self.skip_terminators();
         let then_body = self.parse_block()?;
         let mut end_span = self.span();
         self.expect(&Token::RBrace)?;
-
-        // Skip newlines between } and else to be whitespace-agnostic (#69)
-        self.skip_newlines();
 
         let else_body = if matches!(self.peek(), Token::Else) {
             self.advance();
@@ -950,7 +948,7 @@ impl Parser {
                 Some(vec![Stmt::Expr(nested)])
             } else {
                 self.expect(&Token::LBrace)?;
-                self.skip_newlines();
+                self.skip_terminators();
                 let body = self.parse_block()?;
                 end_span = self.span();
                 self.expect(&Token::RBrace)?;
@@ -975,7 +973,7 @@ impl Parser {
         self.expect(&Token::Switch)?;
         let scrutinee = self.parse_expr()?;
         self.expect(&Token::LBrace)?;
-        self.skip_newlines();
+        self.skip_terminators();
 
         let mut cases = Vec::new();
         let mut default = None;
@@ -987,7 +985,7 @@ impl Parser {
                 // Parse body: either a block or a single expression
                 let body = if matches!(self.peek(), Token::LBrace) {
                     self.advance();
-                    self.skip_newlines();
+                    self.skip_terminators();
                     let b = self.parse_block()?;
                     self.expect(&Token::RBrace)?;
                     b
@@ -1002,7 +1000,7 @@ impl Parser {
                 self.expect(&Token::FatArrow)?;
                 let body = if matches!(self.peek(), Token::LBrace) {
                     self.advance();
-                    self.skip_newlines();
+                    self.skip_terminators();
                     let b = self.parse_block()?;
                     self.expect(&Token::RBrace)?;
                     b
@@ -1017,7 +1015,7 @@ impl Parser {
                     self.span(),
                 ));
             }
-            self.skip_newlines();
+            self.skip_terminators();
         }
         let end_span = self.span();
         self.expect(&Token::RBrace)?;
@@ -1055,6 +1053,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_metadata_with_semicolons() {
+        let script = parse_str("@name \"Fire\"; @spatial false;");
+        assert_eq!(script.metadata.len(), 2);
+    }
+
+    #[test]
     fn parse_enum_def() {
         let script = parse_str("enum ColorMode { Static, Gradient, Rainbow }");
         assert_eq!(script.type_defs.len(), 1);
@@ -1073,7 +1077,7 @@ mod tests {
 
     #[test]
     fn parse_float_param() {
-        let script = parse_str("param speed: float(0.1, 10.0) = 2.0");
+        let script = parse_str("param speed: float(0.1, 10.0) = 2.0;");
         assert_eq!(script.params.len(), 1);
         assert_eq!(script.params[0].name, "speed");
         assert!(matches!(script.params[0].ty, ParamType::Float(Some((min, max))) if (min - 0.1).abs() < 0.001 && (max - 10.0).abs() < 0.001));
@@ -1081,21 +1085,21 @@ mod tests {
 
     #[test]
     fn parse_color_param() {
-        let script = parse_str("param col: color = #ff0000");
+        let script = parse_str("param col: color = #ff0000;");
         assert_eq!(script.params.len(), 1);
         assert!(matches!(script.params[0].default.kind, ExprKind::ColorLit { r: 255, g: 0, b: 0 }));
     }
 
     #[test]
     fn parse_enum_param_default() {
-        let script = parse_str("enum Mode { A, B }\nparam mode: Mode = A");
+        let script = parse_str("enum Mode { A, B }\nparam mode: Mode = A;");
         assert_eq!(script.params.len(), 1);
         assert!(matches!(script.params[0].default.kind, ExprKind::Ident(ref s) if s == "A"));
     }
 
     #[test]
     fn parse_flags_param_default() {
-        let script = parse_str("flags Opts { Mirror, Wrap }\nparam opts: Opts = Mirror | Wrap");
+        let script = parse_str("flags Opts { Mirror, Wrap }\nparam opts: Opts = Mirror | Wrap;");
         assert_eq!(script.params.len(), 1);
         assert!(matches!(script.params[0].default.kind, ExprKind::FlagCombine(ref flags) if flags == &["Mirror", "Wrap"]));
     }
@@ -1111,7 +1115,7 @@ mod tests {
 
     #[test]
     fn parse_let_and_expr() {
-        let script = parse_str("let x = 1.0 + 2.0\nx * 3.0");
+        let script = parse_str("let x = 1.0 + 2.0; x * 3.0");
         assert_eq!(script.body.len(), 2);
         assert!(matches!(script.body[0], Stmt::Let { ref name, .. } if name == "x"));
     }
@@ -1176,15 +1180,15 @@ mod tests {
 
 enum Mode { A, B }
 
-param speed: float(0.1, 10.0) = 1.0
-param mode: Mode = A
+param speed: float(0.1, 10.0) = 1.0;
+param mode: Mode = A;
 
 fn pulse(x: float) -> float {
     x * x
 }
 
-let phase = t * speed
-let intensity = pulse(phase)
+let phase = t * speed;
+let intensity = pulse(phase);
 
 if mode == Mode.A {
     rgb(intensity, 0.0, 0.0)
@@ -1202,7 +1206,7 @@ if mode == Mode.A {
 
     #[test]
     fn parse_gradient_param() {
-        let script = parse_str("param g: gradient = #000000, #ff4400, #ffffff");
+        let script = parse_str("param g: gradient = #000000, #ff4400, #ffffff;");
         assert_eq!(script.params.len(), 1);
         if let ExprKind::GradientLit(ref stops) = script.params[0].default.kind {
             assert_eq!(stops.len(), 3);
@@ -1263,7 +1267,7 @@ if mode == Mode.A {
 
     #[test]
     fn parse_power_operator() {
-        let script = parse_str("let x = 2.0 ** 3.0\nrgb(x, x, x)");
+        let script = parse_str("let x = 2.0 ** 3.0; rgb(x, x, x)");
         assert_eq!(script.body.len(), 2);
         if let Stmt::Let { value, .. } = &script.body[0] {
             assert!(matches!(value.kind, ExprKind::BinOp { op: BinOp::Pow, .. }));
@@ -1275,7 +1279,7 @@ if mode == Mode.A {
     #[test]
     fn parse_power_right_associative() {
         // 2 ** 3 ** 2 should parse as 2 ** (3 ** 2)
-        let script = parse_str("let x = 2.0 ** 3.0 ** 2.0\nrgb(x, x, x)");
+        let script = parse_str("let x = 2.0 ** 3.0 ** 2.0; rgb(x, x, x)");
         if let Stmt::Let { value, .. } = &script.body[0] {
             if let ExprKind::BinOp { op: BinOp::Pow, right, .. } = &value.kind {
                 assert!(matches!(right.kind, ExprKind::BinOp { op: BinOp::Pow, .. }),
@@ -1289,7 +1293,7 @@ if mode == Mode.A {
     #[test]
     fn parse_power_higher_precedence_than_mul() {
         // 2 * 3 ** 2 should parse as 2 * (3 ** 2)
-        let script = parse_str("let x = 2.0 * 3.0 ** 2.0\nrgb(x, x, x)");
+        let script = parse_str("let x = 2.0 * 3.0 ** 2.0; rgb(x, x, x)");
         if let Stmt::Let { value, .. } = &script.body[0] {
             if let ExprKind::BinOp { op: BinOp::Mul, right, .. } = &value.kind {
                 assert!(matches!(right.kind, ExprKind::BinOp { op: BinOp::Pow, .. }),
@@ -1304,7 +1308,7 @@ if mode == Mode.A {
 
     #[test]
     fn parse_bitwise_and() {
-        let script = parse_str("let x = 3 & 1\nrgb(0.0, 0.0, 0.0)");
+        let script = parse_str("let x = 3 & 1; rgb(0.0, 0.0, 0.0)");
         if let Stmt::Let { value, .. } = &script.body[0] {
             assert!(matches!(value.kind, ExprKind::BinOp { op: BinOp::BitAnd, .. }));
         } else { panic!("expected let"); }
@@ -1312,7 +1316,7 @@ if mode == Mode.A {
 
     #[test]
     fn parse_bitwise_xor() {
-        let script = parse_str("let x = 3 ^ 1\nrgb(0.0, 0.0, 0.0)");
+        let script = parse_str("let x = 3 ^ 1; rgb(0.0, 0.0, 0.0)");
         if let Stmt::Let { value, .. } = &script.body[0] {
             assert!(matches!(value.kind, ExprKind::BinOp { op: BinOp::BitXor, .. }));
         } else { panic!("expected let"); }
@@ -1320,7 +1324,7 @@ if mode == Mode.A {
 
     #[test]
     fn parse_shift_left() {
-        let script = parse_str("let x = 1 << 3\nrgb(0.0, 0.0, 0.0)");
+        let script = parse_str("let x = 1 << 3; rgb(0.0, 0.0, 0.0)");
         if let Stmt::Let { value, .. } = &script.body[0] {
             assert!(matches!(value.kind, ExprKind::BinOp { op: BinOp::Shl, .. }));
         } else { panic!("expected let"); }
@@ -1328,7 +1332,7 @@ if mode == Mode.A {
 
     #[test]
     fn parse_shift_right() {
-        let script = parse_str("let x = 8 >> 2\nrgb(0.0, 0.0, 0.0)");
+        let script = parse_str("let x = 8 >> 2; rgb(0.0, 0.0, 0.0)");
         if let Stmt::Let { value, .. } = &script.body[0] {
             assert!(matches!(value.kind, ExprKind::BinOp { op: BinOp::Shr, .. }));
         } else { panic!("expected let"); }
@@ -1337,7 +1341,7 @@ if mode == Mode.A {
     #[test]
     fn parse_bitwise_precedence() {
         // a | b ^ c & d should parse as a | (b ^ (c & d))
-        let script = parse_str("let x = 1 | 2 ^ 3 & 4\nrgb(0.0, 0.0, 0.0)");
+        let script = parse_str("let x = 1 | 2 ^ 3 & 4; rgb(0.0, 0.0, 0.0)");
         if let Stmt::Let { value, .. } = &script.body[0] {
             // Top-level should be BitOr
             assert!(matches!(value.kind, ExprKind::BinOp { op: BinOp::BitOr, .. }),
@@ -1365,7 +1369,7 @@ if mode == Mode.A {
     fn parse_switch_with_blocks() {
         let source = r#"switch x {
 case 1 => {
-    let r = 1.0
+    let r = 1.0;
     rgb(r, 0.0, 0.0)
 }
 default => rgb(0.0, 0.0, 0.0)

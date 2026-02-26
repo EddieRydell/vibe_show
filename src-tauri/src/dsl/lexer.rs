@@ -29,7 +29,6 @@ pub enum Token {
     IntTy,
     BoolTy,
     ColorTy,
-    Vec2Ty,
     GradientTy,
     CurveTy,
     PathTy,
@@ -71,7 +70,7 @@ pub enum Token {
     FatArrow,  // =>
 
     // Special
-    Newline,
+    Semicolon,
     Eof,
 }
 
@@ -116,21 +115,7 @@ impl<'a> Lexer<'a> {
             let ch = self.bytes[self.pos];
 
             match ch {
-                b'\n' | b'\r' => {
-                    // Collapse multiple newlines
-                    while self.pos < self.bytes.len()
-                        && (self.bytes[self.pos] == b'\n' || self.bytes[self.pos] == b'\r')
-                    {
-                        self.pos += 1;
-                    }
-                    // Suppress newline after tokens that indicate a continuation:
-                    // operators, comma, opening delimiters, and prior newlines.
-                    if let Some(last) = self.tokens.last() {
-                        if !Self::continues_expression(&last.token) {
-                            self.push(Token::Newline, start, self.pos);
-                        }
-                    }
-                }
+                b';' => { self.pos += 1; self.push(Token::Semicolon, start, self.pos); }
                 b'(' => { self.pos += 1; self.push(Token::LParen, start, self.pos); }
                 b')' => { self.pos += 1; self.push(Token::RParen, start, self.pos); }
                 b'{' => { self.pos += 1; self.push(Token::LBrace, start, self.pos); }
@@ -249,13 +234,6 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        // Remove trailing newline
-        if let Some(last) = self.tokens.last() {
-            if matches!(last.token, Token::Newline) {
-                self.tokens.pop();
-            }
-        }
-
         self.tokens.push(SpannedToken {
             token: Token::Eof,
             span: Span::new(self.pos, self.pos),
@@ -273,100 +251,18 @@ impl<'a> Lexer<'a> {
     }
 
     fn push(&mut self, token: Token, start: usize, end: usize) {
-        // If the new token is an infix operator and the previous token was a
-        // Newline, remove the Newline — the expression continues from the
-        // previous line.  This allows:
-        //   let x = a
-        //       + b
-        if Self::continues_from_previous(&token) {
-            if let Some(last) = self.tokens.last() {
-                if matches!(last.token, Token::Newline) {
-                    self.tokens.pop();
-                }
-            }
-        }
         self.tokens.push(SpannedToken {
             token,
             span: Span::new(start, end),
         });
     }
 
-    /// Returns true if a newline after this token should be suppressed,
-    /// because the token indicates an expression continues on the next line.
-    fn continues_expression(token: &Token) -> bool {
-        matches!(
-            token,
-            Token::Plus
-                | Token::Minus
-                | Token::Star
-                | Token::StarStar
-                | Token::Slash
-                | Token::Percent
-                | Token::Lt
-                | Token::Gt
-                | Token::Le
-                | Token::Ge
-                | Token::Shl
-                | Token::Shr
-                | Token::EqEq
-                | Token::Ne
-                | Token::And
-                | Token::Or
-                | Token::Pipe
-                | Token::Ampersand
-                | Token::Caret
-                | Token::Eq
-                | Token::Question
-                | Token::FatArrow
-                | Token::Comma
-                | Token::LParen
-                | Token::LBrace
-                | Token::Newline
-        )
-    }
-
-    /// Returns true if this token at the START of a new line means the
-    /// previous expression continues (leading operator continuation).
-    /// More conservative than `continues_expression` — excludes `-` and `!`
-    /// which are also valid unary operators at the start of a new statement.
-    fn continues_from_previous(token: &Token) -> bool {
-        matches!(
-            token,
-            Token::Plus
-                | Token::Star
-                | Token::StarStar
-                | Token::Slash
-                | Token::Percent
-                | Token::Lt
-                | Token::Gt
-                | Token::Le
-                | Token::Ge
-                | Token::Shl
-                | Token::Shr
-                | Token::EqEq
-                | Token::Ne
-                | Token::And
-                | Token::Or
-                | Token::Pipe
-                | Token::Ampersand
-                | Token::Caret
-                | Token::Dot
-                | Token::Question
-        )
-    }
-
     fn skip_whitespace_and_comments(&mut self) {
         while self.pos < self.bytes.len() {
             match self.bytes[self.pos] {
-                b' ' | b'\t' => self.pos += 1,
+                b' ' | b'\t' | b'\n' | b'\r' => self.pos += 1,
                 b'/' if self.bytes.get(self.pos + 1) == Some(&b'/') => {
                     // Line comment (// style): skip to end of line
-                    while self.pos < self.bytes.len() && self.bytes[self.pos] != b'\n' {
-                        self.pos += 1;
-                    }
-                }
-                b'-' if self.bytes.get(self.pos + 1) == Some(&b'-') => {
-                    // Line comment (-- style): skip to end of line
                     while self.pos < self.bytes.len() && self.bytes[self.pos] != b'\n' {
                         self.pos += 1;
                     }
@@ -484,7 +380,6 @@ impl<'a> Lexer<'a> {
             "int" => Token::IntTy,
             "bool" => Token::BoolTy,
             "color" => Token::ColorTy,
-            "vec2" => Token::Vec2Ty,
             "gradient" => Token::GradientTy,
             "curve" => Token::CurveTy,
             "path" => Token::PathTy,
@@ -520,10 +415,20 @@ mod tests {
 
     #[test]
     fn type_keywords() {
-        let tokens = tok("float int bool color vec2 gradient curve path");
+        let tokens = tok("float int bool color gradient curve path");
         assert_eq!(tokens, vec![
             Token::FloatTy, Token::IntTy, Token::BoolTy, Token::ColorTy,
-            Token::Vec2Ty, Token::GradientTy, Token::CurveTy, Token::PathTy, Token::Eof,
+            Token::GradientTy, Token::CurveTy, Token::PathTy, Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn vec2_is_ident() {
+        let tokens = tok("vec2(1.0, 2.0)");
+        assert_eq!(tokens, vec![
+            Token::Ident("vec2".into()), Token::LParen,
+            Token::Float(1.0), Token::Comma, Token::Float(2.0),
+            Token::RParen, Token::Eof,
         ]);
     }
 
@@ -562,12 +467,35 @@ mod tests {
     }
 
     #[test]
-    fn newlines_as_terminators() {
-        let tokens = tok("let x = 1\nlet y = 2");
+    fn semicolons_as_terminators() {
+        let tokens = tok("let x = 1; let y = 2;");
         assert_eq!(tokens, vec![
             Token::Let, Token::Ident("x".into()), Token::Eq, Token::Int(1),
-            Token::Newline,
+            Token::Semicolon,
             Token::Let, Token::Ident("y".into()), Token::Eq, Token::Int(2),
+            Token::Semicolon,
+            Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn newlines_are_whitespace() {
+        // Newlines are ignored — no Semicolon tokens produced
+        let tokens = tok("x +\ny");
+        assert_eq!(tokens, vec![
+            Token::Ident("x".into()), Token::Plus, Token::Ident("y".into()), Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn multiline_expression() {
+        // Multi-line expressions just work (newlines are whitespace)
+        let tokens = tok("rgb(1.0,\n0.0,\n0.0)");
+        assert_eq!(tokens, vec![
+            Token::Ident("rgb".into()), Token::LParen,
+            Token::Float(1.0), Token::Comma,
+            Token::Float(0.0), Token::Comma,
+            Token::Float(0.0), Token::RParen,
             Token::Eof,
         ]);
     }
@@ -577,17 +505,6 @@ mod tests {
         let tokens = tok("x + y // this is a comment\nz");
         assert_eq!(tokens, vec![
             Token::Ident("x".into()), Token::Plus, Token::Ident("y".into()),
-            Token::Newline,
-            Token::Ident("z".into()), Token::Eof,
-        ]);
-    }
-
-    #[test]
-    fn dash_dash_comments_stripped() {
-        let tokens = tok("x + y -- this is a comment\nz");
-        assert_eq!(tokens, vec![
-            Token::Ident("x".into()), Token::Plus, Token::Ident("y".into()),
-            Token::Newline,
             Token::Ident("z".into()), Token::Eof,
         ]);
     }
@@ -617,57 +534,19 @@ mod tests {
     }
 
     #[test]
-    fn no_newline_after_lbrace() {
+    fn braces_with_newlines() {
         let tokens = tok("{\nx\n}");
         assert_eq!(tokens, vec![
             Token::LBrace,
             Token::Ident("x".into()),
-            Token::Newline,
             Token::RBrace,
             Token::Eof,
         ]);
     }
 
     #[test]
-    fn no_newline_after_operator() {
-        let tokens = tok("1 +\n2");
-        assert_eq!(tokens, vec![
-            Token::Int(1), Token::Plus, Token::Int(2), Token::Eof,
-        ]);
-    }
-
-    #[test]
-    fn no_newline_after_comma() {
-        let tokens = tok("rgb(1.0,\n0.0,\n0.0)");
-        assert_eq!(tokens, vec![
-            Token::Ident("rgb".into()), Token::LParen,
-            Token::Float(1.0), Token::Comma,
-            Token::Float(0.0), Token::Comma,
-            Token::Float(0.0), Token::RParen,
-            Token::Eof,
-        ]);
-    }
-
-    #[test]
-    fn no_newline_after_comparison() {
-        let tokens = tok("x >=\ny");
-        assert_eq!(tokens, vec![
-            Token::Ident("x".into()), Token::Ge, Token::Ident("y".into()), Token::Eof,
-        ]);
-    }
-
-    #[test]
-    fn leading_operator_continuation() {
-        // Operator at start of next line should absorb the newline
-        let tokens = tok("a\n+ b");
-        assert_eq!(tokens, vec![
-            Token::Ident("a".into()), Token::Plus, Token::Ident("b".into()), Token::Eof,
-        ]);
-    }
-
-    #[test]
-    fn leading_dot_continuation() {
-        // Method call on next line
+    fn method_call_across_lines() {
+        // Method call on next line works because newlines are whitespace
         let tokens = tok("mycolor\n.scale(0.5)");
         assert_eq!(tokens, vec![
             Token::Ident("mycolor".into()), Token::Dot,
@@ -713,7 +592,6 @@ mod tests {
 
     #[test]
     fn star_star_vs_star() {
-        // Ensure ** doesn't break * parsing
         let tokens = tok("a * b ** c");
         assert_eq!(tokens, vec![
             Token::Ident("a".into()), Token::Star, Token::Ident("b".into()),
@@ -751,12 +629,31 @@ mod tests {
 
     #[test]
     fn fat_arrow_vs_eq() {
-        // Ensure => doesn't break = or == parsing
         let tokens = tok("a = b == c => d");
         assert_eq!(tokens, vec![
             Token::Ident("a".into()), Token::Eq, Token::Ident("b".into()),
             Token::EqEq, Token::Ident("c".into()), Token::FatArrow,
             Token::Ident("d".into()), Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn semicolon_token() {
+        let tokens = tok("let x = 1;");
+        assert_eq!(tokens, vec![
+            Token::Let, Token::Ident("x".into()), Token::Eq, Token::Int(1),
+            Token::Semicolon, Token::Eof,
+        ]);
+    }
+
+    #[test]
+    fn extra_semicolons_tolerated() {
+        let tokens = tok(";;; let x = 1;;;");
+        assert_eq!(tokens, vec![
+            Token::Semicolon, Token::Semicolon, Token::Semicolon,
+            Token::Let, Token::Ident("x".into()), Token::Eq, Token::Int(1),
+            Token::Semicolon, Token::Semicolon, Token::Semicolon,
+            Token::Eof,
         ]);
     }
 }

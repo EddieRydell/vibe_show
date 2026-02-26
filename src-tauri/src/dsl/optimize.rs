@@ -794,7 +794,7 @@ mod tests {
 
     #[test]
     fn fold_sin_pi() {
-        let compiled = compile_opt("let x = sin(PI)\nrgb(abs(x), 0.0, 0.0)");
+        let compiled = compile_opt("let x = sin(PI); rgb(abs(x), 0.0, 0.0)");
         // sin(PI) ≈ 0.0 — should be folded to a constant
         assert!(
             !compiled.ops.contains(&Op::Sin),
@@ -807,7 +807,7 @@ mod tests {
 
     #[test]
     fn fold_nested_sin_pi_div_2() {
-        let compiled = compile_opt("let x = sin(PI / 2.0)\nrgb(x, x, x)");
+        let compiled = compile_opt("let x = sin(PI / 2.0); rgb(x, x, x)");
         // sin(PI/2) = 1.0 — the entire chain should fold
         assert!(
             !compiled.ops.contains(&Op::Sin),
@@ -823,7 +823,7 @@ mod tests {
 
     #[test]
     fn fold_color_field() {
-        let compiled = compile_opt("let x = #ff0000.r\nrgb(x, 0.0, 0.0)");
+        let compiled = compile_opt("let x = #ff0000.r; rgb(x, 0.0, 0.0)");
         // #ff0000.r = 1.0 — should fold to constant
         assert!(
             !compiled.ops.contains(&Op::ColorR),
@@ -835,7 +835,7 @@ mod tests {
 
     #[test]
     fn fold_if_true() {
-        let compiled = compile_opt("if true {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 1.0, 0.0)\n}");
+        let compiled = compile_opt("if true { rgb(1.0, 0.0, 0.0) } else { rgb(0.0, 1.0, 0.0) }");
         // Should eliminate the else branch — no Jump instruction needed
         // (JumpIfFalse over a BoolLit(true) condition still emits but the else is gone)
         let color = run_compiled(&compiled, 0.0, 0, 1);
@@ -845,7 +845,7 @@ mod tests {
 
     #[test]
     fn fold_if_false() {
-        let compiled = compile_opt("if false {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 1.0, 0.0)\n}");
+        let compiled = compile_opt("if false { rgb(1.0, 0.0, 0.0) } else { rgb(0.0, 1.0, 0.0) }");
         // Should inline else body
         let color = run_compiled(&compiled, 0.0, 0, 1);
         assert_eq!(color.r, 0);
@@ -855,7 +855,7 @@ mod tests {
     #[test]
     fn peephole_identity_add_zero() {
         // x + 0.0 should eliminate the add
-        let compiled = compile_opt("let x = t + 0.0\nrgb(x, x, x)");
+        let compiled = compile_opt("let x = t + 0.0; rgb(x, x, x)");
         // The peephole pass should remove PushConst(0.0) + Add
         assert!(
             !compiled.ops.contains(&Op::Add),
@@ -867,7 +867,7 @@ mod tests {
     #[test]
     fn peephole_double_neg() {
         // -(-t) should eliminate both negations
-        let src = "let x = -(-t)\nrgb(x, x, x)";
+        let src = "let x = -(-t); rgb(x, x, x)";
         let compiled = compile_opt(src);
         let neg_count = compiled.ops.iter().filter(|&&op| op == Op::Neg).count();
         assert_eq!(neg_count, 0, "double neg should be eliminated, ops: {:?}", compiled.ops);
@@ -876,7 +876,7 @@ mod tests {
     #[test]
     fn no_fold_runtime() {
         // sin(t * PI) should NOT fold — t is runtime
-        let compiled = compile_opt("let x = sin(t * PI)\nrgb(x, x, x)");
+        let compiled = compile_opt("let x = sin(t * PI); rgb(x, x, x)");
         assert!(
             compiled.ops.contains(&Op::Sin),
             "sin(t * PI) must NOT be folded (t is runtime), ops: {:?}",
@@ -886,7 +886,7 @@ mod tests {
 
     #[test]
     fn end_to_end_optimized_matches_unoptimized() {
-        let src = "let x = sin(PI / 4.0) * 0.5 + 0.5\nrgb(x, x, x)";
+        let src = "let x = sin(PI / 4.0) * 0.5 + 0.5; rgb(x, x, x)";
         let opt = compile_opt(src);
         let unopt = compile_unopt(src);
 
@@ -904,7 +904,7 @@ mod tests {
     #[test]
     fn end_to_end_complex_expression() {
         // A more complex expression with multiple foldable subexpressions
-        let src = "let base = cos(0.0)\nlet x = base * 0.5\nrgb(x, x, x)";
+        let src = "let base = cos(0.0); let x = base * 0.5; rgb(x, x, x)";
         let opt = compile_opt(src);
         let unopt = compile_unopt(src);
 
@@ -918,7 +918,7 @@ mod tests {
     #[test]
     fn fold_preserves_runtime_if() {
         // Runtime condition should not be folded, but constant subexprs within should be
-        let src = "if t > 0.5 {\nrgb(1.0 + 0.0, 0.0, 0.0)\n} else {\nrgb(0.0, 1.0 + 0.0, 0.0)\n}";
+        let src = "if t > 0.5 { rgb(1.0 + 0.0, 0.0, 0.0) } else { rgb(0.0, 1.0 + 0.0, 0.0) }";
         let opt = compile_opt(src);
         let c_hi = run_compiled(&opt, 0.8, 0, 1);
         assert_eq!(c_hi.r, 255);
@@ -928,7 +928,7 @@ mod tests {
 
     #[test]
     fn peephole_mul_by_one() {
-        let compiled = compile_opt("let x = t * 1.0\nrgb(x, x, x)");
+        let compiled = compile_opt("let x = t * 1.0; rgb(x, x, x)");
         assert!(
             !compiled.ops.contains(&Op::Mul),
             "t * 1.0 should have Mul eliminated, ops: {:?}",
@@ -939,7 +939,7 @@ mod tests {
     #[test]
     fn fold_int_bitwise() {
         // 6 & 3 = 2, should fold at compile time
-        let compiled = compile_opt("let x = 6 & 3\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        let compiled = compile_opt("let x = 6 & 3; let n = x / 8.0; rgb(n, 0.0, 0.0)");
         assert!(
             !compiled.ops.contains(&Op::BitAnd),
             "6 & 3 should be folded, ops: {:?}",

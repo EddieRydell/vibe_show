@@ -965,7 +965,7 @@ mod tests {
 
     #[test]
     fn let_binding() {
-        let color = run("let v = 0.5\nrgb(v, v, v)");
+        let color = run("let v = 0.5; rgb(v, v, v)");
         assert_eq!(color.r, 128);
         assert_eq!(color.g, 128);
         assert_eq!(color.b, 128);
@@ -974,7 +974,7 @@ mod tests {
     #[test]
     fn time_variable() {
         // At t=0.5, sin(0.5 * PI) ≈ 1.0
-        let color = run("let s = sin(t * PI)\nrgb(s, s, s)");
+        let color = run("let s = sin(t * PI); rgb(s, s, s)");
         assert!(color.r > 250, "Expected near-white, got r={}", color.r);
     }
 
@@ -991,11 +991,11 @@ mod tests {
 
     #[test]
     fn if_else() {
-        let color_true = run_with_ctx("if t > 0.3 {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 0.0, 1.0)\n}", 0.5, 0, 10);
+        let color_true = run_with_ctx("if t > 0.3 { rgb(1.0, 0.0, 0.0) } else { rgb(0.0, 0.0, 1.0) }", 0.5, 0, 10);
         assert_eq!(color_true.r, 255);
         assert_eq!(color_true.b, 0);
 
-        let color_false = run_with_ctx("if t > 0.3 {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 0.0, 1.0)\n}", 0.1, 0, 10);
+        let color_false = run_with_ctx("if t > 0.3 { rgb(1.0, 0.0, 0.0) } else { rgb(0.0, 0.0, 1.0) }", 0.1, 0, 10);
         assert_eq!(color_false.r, 0);
         assert_eq!(color_false.b, 255);
     }
@@ -1003,11 +1003,11 @@ mod tests {
     #[test]
     fn math_operations() {
         // clamp(2.0, 0.0, 1.0) = 1.0
-        let color = run("let x = clamp(2.0, 0.0, 1.0)\nrgb(x, x, x)");
+        let color = run("let x = clamp(2.0, 0.0, 1.0); rgb(x, x, x)");
         assert_eq!(color.r, 255);
 
         // abs(-0.5) = 0.5
-        let color2 = run("let x = abs(-0.5)\nrgb(x, x, x)");
+        let color2 = run("let x = abs(-0.5); rgb(x, x, x)");
         assert_eq!(color2.r, 128);
     }
 
@@ -1030,8 +1030,8 @@ mod tests {
 
     #[test]
     fn hash_deterministic() {
-        let c1 = run("let h = hash(1.0, 2.0)\nrgb(h, h, h)");
-        let c2 = run("let h = hash(1.0, 2.0)\nrgb(h, h, h)");
+        let c1 = run("let h = hash(1.0, 2.0); rgb(h, h, h)");
+        let c2 = run("let h = hash(1.0, 2.0); rgb(h, h, h)");
         assert_eq!(c1.r, c2.r);
         assert_eq!(c1.g, c2.g);
     }
@@ -1047,7 +1047,7 @@ mod tests {
 
     #[test]
     fn gradient_param() {
-        let src = "param palette: gradient = #000000, #ffffff\npalette(t)";
+        let src = "param palette: gradient = #000000, #ffffff;\npalette(t)";
         let tokens = lex(src).unwrap();
         let script = parse(tokens).unwrap();
         let typed = type_check(&script).unwrap();
@@ -1077,13 +1077,13 @@ mod tests {
 
     #[test]
     fn user_function() {
-        let color = run("fn half(x: float) -> float {\nx * 0.5\n}\nlet v = half(1.0)\nrgb(v, v, v)");
+        let color = run("fn half(x: float) -> float { x * 0.5 }\nlet v = half(1.0); rgb(v, v, v)");
         assert_eq!(color.r, 128);
     }
 
     #[test]
     fn color_param() {
-        let src = "param bg: color = #ff0000\nbg";
+        let src = "param bg: color = #ff0000;\nbg";
         let tokens = lex(src).unwrap();
         let script = parse(tokens).unwrap();
         let typed = type_check(&script).unwrap();
@@ -1111,7 +1111,7 @@ mod tests {
 
     #[test]
     fn enum_param() {
-        let src = "enum Mode { Red, Green, Blue }\nparam mode: Mode = Red\nif mode == Mode.Red {\nrgb(1.0, 0.0, 0.0)\n} else {\nrgb(0.0, 1.0, 0.0)\n}";
+        let src = "enum Mode { Red, Green, Blue }\nparam mode: Mode = Red;\nif mode == Mode.Red { rgb(1.0, 0.0, 0.0) } else { rgb(0.0, 1.0, 0.0) }";
         let tokens = lex(src).unwrap();
         let script = parse(tokens).unwrap();
         let typed = type_check(&script).unwrap();
@@ -1161,9 +1161,9 @@ mod tests {
     fn validate_solid_red_matches_native() {
         // DSL solid red using float params for r/g/b
         let src = r#"
-param r: float(0.0, 1.0) = 1.0
-param g: float(0.0, 1.0) = 0.0
-param b: float(0.0, 1.0) = 0.0
+param r: float(0.0, 1.0) = 1.0;
+param g: float(0.0, 1.0) = 0.0;
+param b: float(0.0, 1.0) = 0.0;
 rgb(r, g, b)
 "#;
         let tokens = lex(src).unwrap();
@@ -1215,10 +1215,10 @@ rgb(r, g, b)
         //
         // DSL must use `pixel * 1.0 / pixels` (not `pos`, which is pixel/(pixels-1))
         let dsl_src = r#"
-param speed: float(0.1, 20.0) = 1.0
-param spread: float(0.1, 10.0) = 1.0
-let spatial = pixel * 1.0 / pixels * spread
-let hue = (t * speed + spatial) * 360.0 % 360.0
+param speed: float(0.1, 20.0) = 1.0;
+param spread: float(0.1, 10.0) = 1.0;
+let spatial = pixel * 1.0 / pixels * spread;
+let hue = (t * speed + spatial) * 360.0 % 360.0;
 hsv(hue, 1.0, 1.0)
 "#;
         let tokens = lex(dsl_src).unwrap();
@@ -1275,9 +1275,9 @@ hsv(hue, 1.0, 1.0)
         // Native strobe: phase = (t * rate).fract(); if phase < duty_cycle { color } else { black }
         // DSL equivalent:
         let dsl_src = r#"
-param rate: float(1.0, 50.0) = 10.0
-param duty_cycle: float(0.0, 1.0) = 0.5
-let phase = fract(t * rate)
+param rate: float(1.0, 50.0) = 10.0;
+param duty_cycle: float(0.0, 1.0) = 0.5;
+let phase = fract(t * rate);
 if phase < duty_cycle {
     rgb(1.0, 1.0, 1.0)
 } else {
@@ -1328,7 +1328,7 @@ if phase < duty_cycle {
     #[test]
     fn bitwise_and() {
         // 6 & 3 = 2 → 2/255 ≈ very dark
-        let color = run("let x = 6 & 3\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        let color = run("let x = 6 & 3; let n = x / 8.0; rgb(n, 0.0, 0.0)");
         // 6 & 3 = 2, 2/8 = 0.25 → 64
         assert_eq!(color.r, 64, "6 & 3 = 2, /8.0 → 0.25 → 64, got {}", color.r);
     }
@@ -1336,7 +1336,7 @@ if phase < duty_cycle {
     #[test]
     fn bitwise_or() {
         // 5 | 3 = 7
-        let color = run("let x = 5 | 3\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        let color = run("let x = 5 | 3; let n = x / 8.0; rgb(n, 0.0, 0.0)");
         // 5 | 3 = 7, 7/8 = 0.875 → 223
         assert_eq!(color.r, 223, "5 | 3 = 7, /8.0 → 0.875 → 223, got {}", color.r);
     }
@@ -1344,7 +1344,7 @@ if phase < duty_cycle {
     #[test]
     fn bitwise_xor() {
         // 5 ^ 3 = 6
-        let color = run("let x = 5 ^ 3\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        let color = run("let x = 5 ^ 3; let n = x / 8.0; rgb(n, 0.0, 0.0)");
         // 5 ^ 3 = 6, 6/8 = 0.75 → 191
         assert_eq!(color.r, 191, "5 ^ 3 = 6, /8.0 → 0.75 → 191, got {}", color.r);
     }
@@ -1352,21 +1352,21 @@ if phase < duty_cycle {
     #[test]
     fn shift_left() {
         // 1 << 3 = 8
-        let color = run("let x = 1 << 3\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        let color = run("let x = 1 << 3; let n = x / 8.0; rgb(n, 0.0, 0.0)");
         assert_eq!(color.r, 255, "1 << 3 = 8, /8.0 → 1.0 → 255, got {}", color.r);
     }
 
     #[test]
     fn shift_right() {
         // 8 >> 2 = 2
-        let color = run("let x = 8 >> 2\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        let color = run("let x = 8 >> 2; let n = x / 8.0; rgb(n, 0.0, 0.0)");
         assert_eq!(color.r, 64, "8 >> 2 = 2, /8.0 → 0.25 → 64, got {}", color.r);
     }
 
     #[test]
     fn shift_clamped() {
         // Negative shift amounts should be clamped to 0
-        let color = run("let x = 8 >> 0\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        let color = run("let x = 8 >> 0; let n = x / 8.0; rgb(n, 0.0, 0.0)");
         assert_eq!(color.r, 255, "8 >> 0 = 8, /8.0 → 1.0 → 255, got {}", color.r);
     }
 
@@ -1374,14 +1374,14 @@ if phase < duty_cycle {
 
     #[test]
     fn if_else_with_newlines_between() {
-        let color = run("if t > 0.3 {\nrgb(1.0, 0.0, 0.0)\n}\n\nelse {\nrgb(0.0, 0.0, 1.0)\n}");
+        let color = run("if t > 0.3 { rgb(1.0, 0.0, 0.0) } else { rgb(0.0, 0.0, 1.0) }");
         assert_eq!(color.r, 255);
         assert_eq!(color.b, 0);
     }
 
     #[test]
     fn if_else_with_blank_lines() {
-        let color = run_with_ctx("if t > 0.3 {\nrgb(1.0, 0.0, 0.0)\n}\n\n\n\nelse {\nrgb(0.0, 0.0, 1.0)\n}", 0.1, 0, 10);
+        let color = run_with_ctx("if t > 0.3 { rgb(1.0, 0.0, 0.0) } else { rgb(0.0, 0.0, 1.0) }", 0.1, 0, 10);
         assert_eq!(color.r, 0);
         assert_eq!(color.b, 255);
     }
@@ -1414,14 +1414,14 @@ if phase < duty_cycle {
     #[test]
     fn power_operator() {
         // 2.0 ** 3.0 = 8.0, clamped to 1.0 for color
-        let color = run("let x = 2.0 ** 3.0\nlet n = x / 8.0\nrgb(n, 0.0, 0.0)");
+        let color = run("let x = 2.0 ** 3.0; let n = x / 8.0; rgb(n, 0.0, 0.0)");
         assert_eq!(color.r, 255);
     }
 
     #[test]
     fn power_right_associative() {
         // 2 ** 3 ** 2 = 2 ** 9 = 512, normalized to check it's 512 not 64
-        let color = run("let x = 2.0 ** 3.0 ** 2.0\nlet n = x / 512.0\nrgb(n, 0.0, 0.0)");
+        let color = run("let x = 2.0 ** 3.0 ** 2.0; let n = x / 512.0; rgb(n, 0.0, 0.0)");
         assert_eq!(color.r, 255);
     }
 
@@ -1429,7 +1429,7 @@ if phase < duty_cycle {
 
     #[test]
     fn switch_enum_first_case() {
-        let src = "enum Mode { Red, Green, Blue }\nparam mode: Mode = Red\nswitch mode {\ncase Mode.Red => rgb(1.0, 0.0, 0.0)\ncase Mode.Green => rgb(0.0, 1.0, 0.0)\ndefault => rgb(0.0, 0.0, 1.0)\n}";
+        let src = "enum Mode { Red, Green, Blue }\nparam mode: Mode = Red;\nswitch mode {\ncase Mode.Red => rgb(1.0, 0.0, 0.0)\ncase Mode.Green => rgb(0.0, 1.0, 0.0)\ndefault => rgb(0.0, 0.0, 1.0)\n}";
         let tokens = lex(src).unwrap();
         let script = parse(tokens).unwrap();
         let typed = type_check(&script).unwrap();
@@ -1447,7 +1447,7 @@ if phase < duty_cycle {
 
     #[test]
     fn switch_enum_second_case() {
-        let src = "enum Mode { Red, Green, Blue }\nparam mode: Mode = Red\nswitch mode {\ncase Mode.Red => rgb(1.0, 0.0, 0.0)\ncase Mode.Green => rgb(0.0, 1.0, 0.0)\ndefault => rgb(0.0, 0.0, 1.0)\n}";
+        let src = "enum Mode { Red, Green, Blue }\nparam mode: Mode = Red;\nswitch mode {\ncase Mode.Red => rgb(1.0, 0.0, 0.0)\ncase Mode.Green => rgb(0.0, 1.0, 0.0)\ndefault => rgb(0.0, 0.0, 1.0)\n}";
         let tokens = lex(src).unwrap();
         let script = parse(tokens).unwrap();
         let typed = type_check(&script).unwrap();
@@ -1465,7 +1465,7 @@ if phase < duty_cycle {
 
     #[test]
     fn switch_default_fallthrough() {
-        let src = "enum Mode { Red, Green, Blue }\nparam mode: Mode = Red\nswitch mode {\ncase Mode.Red => rgb(1.0, 0.0, 0.0)\ncase Mode.Green => rgb(0.0, 1.0, 0.0)\ndefault => rgb(0.0, 0.0, 1.0)\n}";
+        let src = "enum Mode { Red, Green, Blue }\nparam mode: Mode = Red;\nswitch mode {\ncase Mode.Red => rgb(1.0, 0.0, 0.0)\ncase Mode.Green => rgb(0.0, 1.0, 0.0)\ndefault => rgb(0.0, 0.0, 1.0)\n}";
         let tokens = lex(src).unwrap();
         let script = parse(tokens).unwrap();
         let typed = type_check(&script).unwrap();
@@ -1486,47 +1486,47 @@ if phase < duty_cycle {
     #[test]
     fn ease_in_endpoints() {
         // ease_in(0) = 0, ease_in(1) = 1
-        let c0 = run_with_ctx("let x = ease_in(t)\nrgb(x, x, x)", 0.0, 0, 1);
+        let c0 = run_with_ctx("let x = ease_in(t); rgb(x, x, x)", 0.0, 0, 1);
         assert_eq!(c0.r, 0);
-        let c1 = run_with_ctx("let x = ease_in(t)\nrgb(x, x, x)", 1.0, 0, 1);
+        let c1 = run_with_ctx("let x = ease_in(t); rgb(x, x, x)", 1.0, 0, 1);
         assert_eq!(c1.r, 255);
     }
 
     #[test]
     fn ease_out_endpoints() {
-        let c0 = run_with_ctx("let x = ease_out(t)\nrgb(x, x, x)", 0.0, 0, 1);
+        let c0 = run_with_ctx("let x = ease_out(t); rgb(x, x, x)", 0.0, 0, 1);
         assert_eq!(c0.r, 0);
-        let c1 = run_with_ctx("let x = ease_out(t)\nrgb(x, x, x)", 1.0, 0, 1);
+        let c1 = run_with_ctx("let x = ease_out(t); rgb(x, x, x)", 1.0, 0, 1);
         assert_eq!(c1.r, 255);
     }
 
     #[test]
     fn ease_in_out_endpoints() {
-        let c0 = run_with_ctx("let x = ease_in_out(t)\nrgb(x, x, x)", 0.0, 0, 1);
+        let c0 = run_with_ctx("let x = ease_in_out(t); rgb(x, x, x)", 0.0, 0, 1);
         assert_eq!(c0.r, 0);
-        let c1 = run_with_ctx("let x = ease_in_out(t)\nrgb(x, x, x)", 1.0, 0, 1);
+        let c1 = run_with_ctx("let x = ease_in_out(t); rgb(x, x, x)", 1.0, 0, 1);
         assert_eq!(c1.r, 255);
     }
 
     #[test]
     fn ease_in_cubic_midpoint() {
         // ease_in_cubic(0.5) = 0.125
-        let c = run_with_ctx("let x = ease_in_cubic(t)\nrgb(x, x, x)", 0.5, 0, 1);
+        let c = run_with_ctx("let x = ease_in_cubic(t); rgb(x, x, x)", 0.5, 0, 1);
         assert_eq!(c.r, 32, "ease_in_cubic(0.5) ≈ 0.125 → 32, got {}", c.r);
     }
 
     #[test]
     fn ease_out_cubic_midpoint() {
         // ease_out_cubic(0.5) = (0.5-1)^3 + 1 = -0.125 + 1 = 0.875
-        let c = run_with_ctx("let x = ease_out_cubic(t)\nrgb(x, x, x)", 0.5, 0, 1);
+        let c = run_with_ctx("let x = ease_out_cubic(t); rgb(x, x, x)", 0.5, 0, 1);
         assert_eq!(c.r, 223, "ease_out_cubic(0.5) ≈ 0.875 → 223, got {}", c.r);
     }
 
     #[test]
     fn ease_in_out_cubic_symmetry() {
         // ease_in_out_cubic should be symmetric: f(0.25) + f(0.75) ≈ 1.0
-        let c_lo = run_with_ctx("let x = ease_in_out_cubic(t)\nrgb(x, x, x)", 0.25, 0, 1);
-        let c_hi = run_with_ctx("let x = ease_in_out_cubic(t)\nrgb(x, x, x)", 0.75, 0, 1);
+        let c_lo = run_with_ctx("let x = ease_in_out_cubic(t); rgb(x, x, x)", 0.25, 0, 1);
+        let c_hi = run_with_ctx("let x = ease_in_out_cubic(t); rgb(x, x, x)", 0.75, 0, 1);
         let sum = c_lo.r as u16 + c_hi.r as u16;
         assert!((sum as i16 - 255).abs() <= 1, "symmetry: {} + {} should ≈ 255", c_lo.r, c_hi.r);
     }
@@ -1535,25 +1535,25 @@ if phase < duty_cycle {
 
     #[test]
     fn hash3_deterministic() {
-        let c1 = run("let h = hash3(1.0, 2.0, 3.0)\nrgb(h, h, h)");
-        let c2 = run("let h = hash3(1.0, 2.0, 3.0)\nrgb(h, h, h)");
+        let c1 = run("let h = hash3(1.0, 2.0, 3.0); rgb(h, h, h)");
+        let c2 = run("let h = hash3(1.0, 2.0, 3.0); rgb(h, h, h)");
         assert_eq!(c1.r, c2.r);
         // Different inputs should give different output
-        let c3 = run("let h = hash3(1.0, 2.0, 4.0)\nrgb(h, h, h)");
+        let c3 = run("let h = hash3(1.0, 2.0, 4.0); rgb(h, h, h)");
         assert_ne!(c1.r, c3.r, "Different seed should give different value");
     }
 
     #[test]
     fn random_in_unit_range() {
         // random returns hash(x, 0) which is in [0, 1]
-        let c = run("let r = random(42.0)\nrgb(r, r, r)");
+        let c = run("let r = random(42.0); rgb(r, r, r)");
         assert!(c.r > 0 && c.r < 255, "random should produce value in (0, 1), got {}", c.r);
     }
 
     #[test]
     fn random_range_within_bounds() {
         // random_range(0.2, 0.8, x) should be in [0.2, 0.8] → pixel [51, 204]
-        let c = run("let r = random_range(0.2, 0.8, 42.0)\nrgb(r, r, r)");
+        let c = run("let r = random_range(0.2, 0.8, 42.0); rgb(r, r, r)");
         assert!(c.r >= 51 && c.r <= 204, "random_range(0.2, 0.8, x) should be in [51, 204], got {}", c.r);
     }
 
@@ -1561,32 +1561,32 @@ if phase < duty_cycle {
 
     #[test]
     fn noise1_deterministic() {
-        let c1 = run("let n = abs(noise(5.5))\nrgb(n, n, n)");
-        let c2 = run("let n = abs(noise(5.5))\nrgb(n, n, n)");
+        let c1 = run("let n = abs(noise(5.5)); rgb(n, n, n)");
+        let c2 = run("let n = abs(noise(5.5)); rgb(n, n, n)");
         assert_eq!(c1.r, c2.r);
     }
 
     #[test]
     fn noise2_varies_with_input() {
         // Use non-integer coordinates to avoid zero crossings
-        let c1 = run("let n = abs(noise2(1.3, 2.7))\nrgb(n, n, n)");
-        let c2 = run("let n = abs(noise2(4.6, 8.1))\nrgb(n, n, n)");
+        let c1 = run("let n = abs(noise2(1.3, 2.7)); rgb(n, n, n)");
+        let c2 = run("let n = abs(noise2(4.6, 8.1)); rgb(n, n, n)");
         // Different inputs should produce different outputs
         assert_ne!(c1.r, c2.r, "noise2 with different inputs should differ");
     }
 
     #[test]
     fn noise3_deterministic() {
-        let c1 = run("let n = abs(noise3(1.0, 2.0, 3.0))\nrgb(n, n, n)");
-        let c2 = run("let n = abs(noise3(1.0, 2.0, 3.0))\nrgb(n, n, n)");
+        let c1 = run("let n = abs(noise3(1.0, 2.0, 3.0)); rgb(n, n, n)");
+        let c2 = run("let n = abs(noise3(1.0, 2.0, 3.0)); rgb(n, n, n)");
         assert_eq!(c1.r, c2.r);
     }
 
     #[test]
     fn fbm_more_detail_than_single_octave() {
         // FBM with 1 octave is just perlin2; more octaves add detail
-        let c1 = run("let n = abs(fbm(3.5, 7.2, 1.0))\nrgb(n, n, n)");
-        let c4 = run("let n = abs(fbm(3.5, 7.2, 4.0))\nrgb(n, n, n)");
+        let c1 = run("let n = abs(fbm(3.5, 7.2, 1.0)); rgb(n, n, n)");
+        let c4 = run("let n = abs(fbm(3.5, 7.2, 4.0)); rgb(n, n, n)");
         // With different octave counts, results should differ
         assert_ne!(c1.r, c4.r, "fbm with 1 vs 4 octaves should differ");
     }
@@ -1594,22 +1594,22 @@ if phase < duty_cycle {
     #[test]
     fn worley2_in_unit_range() {
         // worley2 returns [0, 1], so the color channel should be a valid value
-        let c = run("let n = worley2(5.5, 3.2)\nrgb(n, n, n)");
+        let c = run("let n = worley2(5.5, 3.2); rgb(n, n, n)");
         // Value should be non-zero (not at a cell center) and less than 1.0
         assert!(c.r > 0, "worley2 should return non-zero for most inputs");
     }
 
     #[test]
     fn worley2_deterministic() {
-        let c1 = run("let n = worley2(5.5, 3.2)\nrgb(n, n, n)");
-        let c2 = run("let n = worley2(5.5, 3.2)\nrgb(n, n, n)");
+        let c1 = run("let n = worley2(5.5, 3.2); rgb(n, n, n)");
+        let c2 = run("let n = worley2(5.5, 3.2); rgb(n, n, n)");
         assert_eq!(c1.r, c2.r);
     }
 
     #[test]
     fn noise_at_integer_boundaries() {
         // Perlin noise at integer coordinates should be 0 (or very close)
-        let c = run("let n = noise(0.0)\nlet v = abs(n)\nrgb(v, v, v)");
+        let c = run("let n = noise(0.0); let v = abs(n); rgb(v, v, v)");
         assert!(c.r <= 1, "noise at integer boundary should be ~0, got {}", c.r);
     }
 }
