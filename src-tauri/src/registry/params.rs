@@ -6,6 +6,37 @@ use crate::model::{
     FixtureGroup, Layout, Patch, ParamKey, ParamValue,
 };
 use crate::model::AnalysisFeatures;
+
+/// Represents a field update that distinguishes "absent" from "null" from "value".
+/// Use as `Option<FieldUpdate<T>>` with `#[serde(default, deserialize_with = "field_update_opt::deserialize")]`.
+///
+/// - `None` (field absent via `#[serde(default)]`) → skip / unchanged
+/// - `Some(FieldUpdate::Clear)` (JSON `null`) → clear the field
+/// - `Some(FieldUpdate::Set(v))` (JSON value) → set the field
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+#[serde(untagged)]
+pub enum FieldUpdate<T> {
+    Clear,
+    Set(T),
+}
+
+/// Serde helper for `Option<FieldUpdate<T>>` fields.
+/// Prevents `Option` from swallowing JSON `null` — instead maps it to `Some(FieldUpdate::Clear)`.
+pub mod field_update_opt {
+    use super::FieldUpdate;
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, T, D>(deserializer: D) -> Result<Option<FieldUpdate<T>>, D::Error>
+    where
+        T: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        FieldUpdate::<T>::deserialize(deserializer).map(Some)
+    }
+}
+
 fn default_blend_mode() -> BlendMode {
     BlendMode::Override
 }
@@ -200,8 +231,8 @@ pub struct MoveEffectToTrackParams {
 pub struct UpdateSequenceSettingsParams {
     #[serde(default)]
     pub name: Option<String>,
-    #[serde(default)]
-    pub audio_file: Option<Option<String>>,
+    #[serde(default, deserialize_with = "field_update_opt::deserialize")]
+    pub audio_file: Option<FieldUpdate<String>>,
     #[serde(default)]
     pub duration: Option<f64>,
     #[serde(default)]
@@ -358,6 +389,18 @@ pub struct SetRegionParams {
 #[cfg_attr(feature = "tauri-app", ts(export))]
 pub struct SetLoopingParams {
     pub looping: bool,
+}
+
+// ── Help params ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tauri-app", derive(ts_rs::TS))]
+#[cfg_attr(feature = "tauri-app", ts(export))]
+pub struct HelpParams {
+    /// Category name or command name to get details for (e.g. "edit", "add_effect").
+    /// Omit to see all categories.
+    #[serde(default)]
+    pub topic: Option<String>,
 }
 
 // ── Query extended params ──────────────────────────────────────

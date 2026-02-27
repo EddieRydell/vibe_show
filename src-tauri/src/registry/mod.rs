@@ -13,7 +13,7 @@ use params::{
     CancelOperationParams, CheckVixenPreviewFileParams,
     CompileScriptPreviewParams, ConversationIdParams, CreateSequenceParams, CreateSetupParams,
     DeleteEffectsParams, DeleteTrackParams, GetAnalysisDetailParams, GetBeatsInRangeParams,
-    GetEffectDetailParams, GetFrameFilteredParams, GetFrameParams, ImportMediaParams,
+    GetEffectDetailParams, GetFrameFilteredParams, GetFrameParams, HelpParams, ImportMediaParams,
     ImportVixenParams, ImportVixenSequenceParams, ImportVixenSetupParams, InitializeDataDirParams,
     MoveEffectToTrackParams, NameParams, PreviewScriptFrameParams, PreviewScriptParams,
     RenameParams, RenderEffectThumbnailParams, ScanVixenDirectoryParams, SeekParams,
@@ -459,10 +459,14 @@ define_commands! {
         SetLooping(SetLoopingParams)
         => playback::set_looping, "set_looping": "Enable or disable playback looping.";
 
-        // ── Query (1) ───────────────────────────────────────────
+        // ── Query (2) ───────────────────────────────────────────
         [CommandCategory::Query]
         GetEffectDetail(GetEffectDetailParams) -> EffectDetail
         => query::get_effect_detail, "get_effect_detail": "Get schema and current params for a placed effect.";
+
+        [CommandCategory::Query]
+        Help(HelpParams) -> String
+        => query::help, "help": "Discover available commands and categories. Call with no args for all categories, or with a topic for details.";
 
         // ── Analysis (2) ────────────────────────────────────────
         [CommandCategory::Analysis]

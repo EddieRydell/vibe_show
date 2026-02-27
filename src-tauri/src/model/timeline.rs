@@ -605,7 +605,7 @@ struct SequenceRaw {
 impl<'de> Deserialize<'de> for Sequence {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = SequenceRaw::deserialize(deserializer)?;
-        Ok(Sequence {
+        Sequence {
             name: raw.name,
             duration: raw.duration,
             frame_rate: raw.frame_rate,
@@ -613,26 +613,28 @@ impl<'de> Deserialize<'de> for Sequence {
             tracks: raw.tracks,
             motion_paths: raw.motion_paths,
         }
-        .validated())
+        .validated()
+        .map_err(serde::de::Error::custom)
     }
 }
 
 impl Sequence {
-    /// Validates and clamps sequence parameters to safe ranges.
-    /// Duration and frame rate are forced to positive, finite values;
-    /// NaN and non-positive values fall back to sensible defaults.
-    ///
-    /// Callers loading or creating sequences should chain `.validated()` to
-    /// guarantee the invariants the evaluator depends on.
-    #[must_use]
-    pub fn validated(mut self) -> Self {
+    /// Validates sequence parameters, returning an error for invalid values.
+    /// Duration and frame rate must be positive and finite.
+    pub fn validated(self) -> Result<Self, String> {
         if !self.duration.is_finite() || self.duration <= 0.0 {
-            self.duration = 30.0;
+            return Err(format!(
+                "Invalid sequence duration: {} (must be positive and finite)",
+                self.duration
+            ));
         }
         if !self.frame_rate.is_finite() || self.frame_rate <= 0.0 {
-            self.frame_rate = 30.0;
+            return Err(format!(
+                "Invalid sequence frame_rate: {} (must be positive and finite)",
+                self.frame_rate
+            ));
         }
-        self
+        Ok(self)
     }
 }
 
@@ -910,25 +912,26 @@ mod tests {
     // ── Sequence deserialization validation ──────────────────────
 
     #[test]
-    fn sequence_deser_nan_duration_clamps_to_default() {
-        // NaN can't be represented in JSON; use a negative value to test the clamp.
+    fn sequence_deser_negative_duration_is_error() {
         let json = r#"{"name":"test","duration":-5.0,"frame_rate":60.0,"audio_file":null,"tracks":[]}"#;
-        let seq: Sequence = serde_json::from_str(json).expect("deserialize");
-        assert_eq!(seq.duration, 30.0);
-        assert_eq!(seq.frame_rate, 60.0);
+        let result = serde_json::from_str::<Sequence>(json);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("duration"), "error should mention duration: {err}");
     }
 
     #[test]
-    fn sequence_deser_negative_frame_rate_clamps_to_default() {
+    fn sequence_deser_negative_frame_rate_is_error() {
         let json = r#"{"name":"test","duration":10.0,"frame_rate":-1.0,"audio_file":null,"tracks":[]}"#;
-        let seq: Sequence = serde_json::from_str(json).expect("deserialize");
-        assert_eq!(seq.duration, 10.0);
-        assert_eq!(seq.frame_rate, 30.0);
+        let result = serde_json::from_str::<Sequence>(json);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("frame_rate"), "error should mention frame_rate: {err}");
     }
 
     #[test]
-    fn sequence_validated_handles_infinity() {
-        let seq = Sequence {
+    fn sequence_validated_rejects_infinity() {
+        let result = Sequence {
             name: "test".to_string(),
             duration: f64::INFINITY,
             frame_rate: f64::NEG_INFINITY,
@@ -936,7 +939,22 @@ mod tests {
             tracks: vec![],
             motion_paths: HashMap::new(),
         }.validated();
-        assert_eq!(seq.duration, 30.0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn sequence_validated_accepts_valid() {
+        let result = Sequence {
+            name: "test".to_string(),
+            duration: 60.0,
+            frame_rate: 30.0,
+            audio_file: None,
+            tracks: vec![],
+            motion_paths: HashMap::new(),
+        }.validated();
+        assert!(result.is_ok());
+        let seq = result.unwrap();
+        assert_eq!(seq.duration, 60.0);
         assert_eq!(seq.frame_rate, 30.0);
     }
 }

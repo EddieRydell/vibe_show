@@ -125,6 +125,37 @@ pub enum TypedExprKind {
     LoadColor(u16),
     /// Int to float conversion.
     IntToFloat(Box<TypedExpr>),
+    /// color + color (saturating add)
+    ColorAdd {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    /// color - color (saturating subtract)
+    ColorSub {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    /// vec2 + vec2 (component-wise add)
+    Vec2Add {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    /// vec2 - vec2 (component-wise subtract)
+    Vec2Sub {
+        left: Box<TypedExpr>,
+        right: Box<TypedExpr>,
+    },
+    /// vec2 * float (component-wise scale)
+    Vec2Scale {
+        vec: Box<TypedExpr>,
+        factor: Box<TypedExpr>,
+    },
+    /// mix(color, color, float) → per-channel lerp
+    ColorMix {
+        a: Box<TypedExpr>,
+        b: Box<TypedExpr>,
+        t: Box<TypedExpr>,
+    },
 }
 
 pub fn type_check(script: &Script) -> Result<TypedScript, Vec<CompileError>> {
@@ -312,12 +343,114 @@ impl TypeContext {
                     typed_right = Self::coerce_to_float(typed_right);
                 }
 
+                // ── Color/Vec2 arithmetic: handle before the generic numeric check ──
+
+                // Mul: Color * Float / Float * Color / Vec2 * Float / Float * Vec2
+                if matches!(op, BinOp::Mul) {
+                    // Color scaling
+                    let (is_color_scale, color_expr, factor_expr) = match (&typed_left.ty, &typed_right.ty) {
+                        (TypeName::Color, TypeName::Float) => (true, typed_left, typed_right),
+                        (TypeName::Float, TypeName::Color) => (true, typed_right, typed_left),
+                        (TypeName::Color, TypeName::Int) => (true, typed_left, Self::coerce_to_float(typed_right)),
+                        (TypeName::Int, TypeName::Color) => (true, Self::coerce_to_float(typed_left), typed_right),
+                        _ => (false, typed_left, typed_right),
+                    };
+                    if is_color_scale {
+                        return Ok(TypedExpr {
+                            kind: TypedExprKind::ColorScale {
+                                color: Box::new(color_expr),
+                                factor: Box::new(factor_expr),
+                            },
+                            ty: TypeName::Color,
+                            span: expr.span,
+                        });
+                    }
+                    // Restore bindings
+                    typed_left = color_expr;
+                    typed_right = factor_expr;
+
+                    // Vec2 scaling
+                    let (is_vec_scale, vec_expr, fac_expr) = match (&typed_left.ty, &typed_right.ty) {
+                        (TypeName::Vec2, TypeName::Float) => (true, typed_left, typed_right),
+                        (TypeName::Float, TypeName::Vec2) => (true, typed_right, typed_left),
+                        (TypeName::Vec2, TypeName::Int) => (true, typed_left, Self::coerce_to_float(typed_right)),
+                        (TypeName::Int, TypeName::Vec2) => (true, Self::coerce_to_float(typed_left), typed_right),
+                        _ => (false, typed_left, typed_right),
+                    };
+                    if is_vec_scale {
+                        return Ok(TypedExpr {
+                            kind: TypedExprKind::Vec2Scale {
+                                vec: Box::new(vec_expr),
+                                factor: Box::new(fac_expr),
+                            },
+                            ty: TypeName::Vec2,
+                            span: expr.span,
+                        });
+                    }
+                    // Restore bindings
+                    typed_left = vec_expr;
+                    typed_right = fac_expr;
+                }
+
+                // Add: Color + Color, Vec2 + Vec2
+                if matches!(op, BinOp::Add) {
+                    if typed_left.ty == TypeName::Color && typed_right.ty == TypeName::Color {
+                        return Ok(TypedExpr {
+                            kind: TypedExprKind::ColorAdd {
+                                left: Box::new(typed_left),
+                                right: Box::new(typed_right),
+                            },
+                            ty: TypeName::Color,
+                            span: expr.span,
+                        });
+                    }
+                    if typed_left.ty == TypeName::Vec2 && typed_right.ty == TypeName::Vec2 {
+                        return Ok(TypedExpr {
+                            kind: TypedExprKind::Vec2Add {
+                                left: Box::new(typed_left),
+                                right: Box::new(typed_right),
+                            },
+                            ty: TypeName::Vec2,
+                            span: expr.span,
+                        });
+                    }
+                }
+
+                // Sub: Color - Color, Vec2 - Vec2
+                if matches!(op, BinOp::Sub) {
+                    if typed_left.ty == TypeName::Color && typed_right.ty == TypeName::Color {
+                        return Ok(TypedExpr {
+                            kind: TypedExprKind::ColorSub {
+                                left: Box::new(typed_left),
+                                right: Box::new(typed_right),
+                            },
+                            ty: TypeName::Color,
+                            span: expr.span,
+                        });
+                    }
+                    if typed_left.ty == TypeName::Vec2 && typed_right.ty == TypeName::Vec2 {
+                        return Ok(TypedExpr {
+                            kind: TypedExprKind::Vec2Sub {
+                                left: Box::new(typed_left),
+                                right: Box::new(typed_right),
+                            },
+                            ty: TypeName::Vec2,
+                            span: expr.span,
+                        });
+                    }
+                }
+
                 let result_ty = match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow
                     | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
                         if typed_left.ty != TypeName::Float && typed_left.ty != TypeName::Int {
+                            let hint = match typed_left.ty {
+                                TypeName::Color => "For colors use: `color * float` (scale), `color + color` (add), `color - color` (subtract)",
+                                TypeName::Vec2 => "For vectors use: `vec2 * float` (scale), `vec2 + vec2` (add), `vec2 - vec2` (subtract)",
+                                _ => "Only numeric types support arithmetic",
+                            };
                             return Err(CompileError::type_error(
-                                format!("Arithmetic on non-numeric type {:?}", typed_left.ty),
+                                format!("Arithmetic on {:?} type. {hint}", typed_left.ty),
                                 expr.span,
                             ));
                         }
@@ -450,6 +583,84 @@ impl TypeContext {
                     }
                 }
 
+                // Handle float(x) and int(x) type casts
+                if name == "float" && args.len() == 1 {
+                    let typed_arg = self.check_expr(&args[0])?;
+                    return match typed_arg.ty {
+                        TypeName::Int => Ok(Self::coerce_to_float(typed_arg)),
+                        TypeName::Float => Ok(typed_arg),
+                        TypeName::Bool => {
+                            // Desugar float(bool) → if bool { 1.0 } else { 0.0 }
+                            Ok(TypedExpr {
+                                kind: TypedExprKind::If {
+                                    condition: Box::new(typed_arg),
+                                    then_body: vec![TypedStmt {
+                                        kind: TypedStmtKind::Expr(TypedExpr {
+                                            kind: TypedExprKind::FloatLit(1.0),
+                                            ty: TypeName::Float,
+                                            span: expr.span,
+                                        }),
+                                        span: expr.span,
+                                    }],
+                                    else_body: Some(vec![TypedStmt {
+                                        kind: TypedStmtKind::Expr(TypedExpr {
+                                            kind: TypedExprKind::FloatLit(0.0),
+                                            ty: TypeName::Float,
+                                            span: expr.span,
+                                        }),
+                                        span: expr.span,
+                                    }]),
+                                },
+                                ty: TypeName::Float,
+                                span: expr.span,
+                            })
+                        }
+                        _ => Err(CompileError::type_error(
+                            format!("Cannot cast {:?} to float", typed_arg.ty),
+                            expr.span,
+                        )),
+                    };
+                }
+                if name == "int" && args.len() == 1 {
+                    let typed_arg = self.check_expr(&args[0])?;
+                    return match typed_arg.ty {
+                        // float→int is identity in our f64-based VM
+                        TypeName::Int | TypeName::Float => Ok(typed_arg),
+                        _ => Err(CompileError::type_error(
+                            format!("Cannot cast {:?} to int", typed_arg.ty),
+                            expr.span,
+                        )),
+                    };
+                }
+
+                // mix(color, color, float) → color interpolation
+                if name == "mix" && args.len() == 3 {
+                    let a = self.check_expr(&args[0])?;
+                    let b = self.check_expr(&args[1])?;
+                    if a.ty == TypeName::Color && b.ty == TypeName::Color {
+                        let mut t = self.check_expr(&args[2])?;
+                        if t.ty == TypeName::Int {
+                            t = Self::coerce_to_float(t);
+                        }
+                        if t.ty != TypeName::Float {
+                            return Err(CompileError::type_error(
+                                format!("mix() interpolation factor must be float, got {:?}", t.ty),
+                                expr.span,
+                            ));
+                        }
+                        return Ok(TypedExpr {
+                            kind: TypedExprKind::ColorMix {
+                                a: Box::new(a),
+                                b: Box::new(b),
+                                t: Box::new(t),
+                            },
+                            ty: TypeName::Color,
+                            span: expr.span,
+                        });
+                    }
+                    // Fall through to standard mix(float, float, float) handling below
+                }
+
                 // Check built-in functions
                 let builtin = builtins::lookup_builtin(name).ok_or_else(|| {
                     CompileError::type_error(format!("Unknown function: '{name}'"), expr.span)
@@ -505,6 +716,53 @@ impl TypeContext {
                         span: expr.span,
                     });
                 }
+                if typed_obj.ty == TypeName::Color && method == "lerp" {
+                    if args.len() != 2 {
+                        return Err(CompileError::type_error(
+                            "color.lerp() takes exactly 2 arguments (other, t)",
+                            expr.span,
+                        ));
+                    }
+                    let other = self.check_expr(&args[0])?;
+                    if other.ty != TypeName::Color {
+                        return Err(CompileError::type_error(
+                            format!("color.lerp() first argument must be a color, got {:?}", other.ty),
+                            expr.span,
+                        ));
+                    }
+                    let mut t = self.check_expr(&args[1])?;
+                    if t.ty == TypeName::Int {
+                        t = Self::coerce_to_float(t);
+                    }
+                    return Ok(TypedExpr {
+                        kind: TypedExprKind::ColorMix {
+                            a: Box::new(typed_obj),
+                            b: Box::new(other),
+                            t: Box::new(t),
+                        },
+                        ty: TypeName::Color,
+                        span: expr.span,
+                    });
+                }
+                // Provide helpful error messages for common mistakes
+                if method == "scale" {
+                    return Err(CompileError::type_error(
+                        format!(
+                            "'.scale()' is a Color method, but this is {:?}. To scale a color's brightness, use `color * float`",
+                            typed_obj.ty
+                        ),
+                        expr.span,
+                    ));
+                }
+                if matches!(method.as_str(), "r" | "g" | "b" | "a") && typed_obj.ty != TypeName::Color {
+                    return Err(CompileError::type_error(
+                        format!(
+                            "'.{method}' is a Color field, but this is {:?}. Color channel access (.r, .g, .b, .a) is only available on Color values",
+                            typed_obj.ty
+                        ),
+                        expr.span,
+                    ));
+                }
                 Err(CompileError::type_error(
                     format!("Unknown method '{method}' on type {:?}", typed_obj.ty),
                     expr.span,
@@ -514,7 +772,7 @@ impl TypeContext {
             ExprKind::Field { object, field } => {
                 let typed_obj = self.check_expr(object)?;
                 let result_ty = match (&typed_obj.ty, field.as_str()) {
-                    (TypeName::Color, "r" | "g" | "b" | "a")
+                    (TypeName::Color, "r" | "g" | "b" | "a" | "hue" | "saturation" | "value")
                     | (TypeName::Vec2, "x" | "y") => TypeName::Float,
                     _ => {
                         // Check if this is a flags field access (opts.Mirror)
@@ -1138,7 +1396,7 @@ mod tests {
     #[test]
     fn bitwise_on_non_numeric_error() {
         let errors = check_err("let x = true & false; rgb(0.0, 0.0, 0.0)");
-        assert!(errors.iter().any(|e| e.message.contains("non-numeric")));
+        assert!(errors.iter().any(|e| e.message.contains("Arithmetic on")));
     }
 
     // ── Issue #72: Power operator ───────────────────────────────

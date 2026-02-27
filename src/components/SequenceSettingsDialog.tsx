@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { MediaFile, Sequence } from "../types";
 import { cmd } from "../commands";
+import { useToast } from "../hooks/useToast";
 
 interface Props {
   sequence: Sequence;
@@ -13,6 +14,7 @@ interface Props {
 const FRAME_RATE_PRESETS = [20, 30, 40, 60];
 
 export function SequenceSettingsDialog({ sequence, sequenceIndex, onSaved, onCancel }: Props) {
+  const { showError } = useToast();
   const [name, setName] = useState(sequence.name);
   const [audioFile, setAudioFile] = useState<string | null>(sequence.audio_file);
   const [duration, setDuration] = useState(String(sequence.duration));
@@ -21,8 +23,8 @@ export function SequenceSettingsDialog({ sequence, sequenceIndex, onSaved, onCan
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    cmd.listMedia().then(setMediaFiles).catch(console.error);
-  }, []);
+    cmd.listMedia().then(setMediaFiles).catch(showError);
+  }, [showError]);
 
   const handleMatchAudio = useCallback(() => {
     if (!audioFile) return;
@@ -37,8 +39,8 @@ export function SequenceSettingsDialog({ sequence, sequenceIndex, onSaved, onCan
           }
         });
       })
-      .catch(console.error);
-  }, [audioFile]);
+      .catch(showError);
+  }, [audioFile, showError]);
 
   const handleSave = useCallback(async () => {
     const dur = parseFloat(duration);

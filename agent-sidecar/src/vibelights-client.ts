@@ -1,3 +1,6 @@
+export type { CommandResponse } from "../../src-tauri/bindings/CommandResponse";
+import type { CommandResponse } from "../../src-tauri/bindings/CommandResponse";
+
 /** Simplified HTTP client for the VibeLights API. Accepts port directly. */
 export class VibeLightsClient {
   private baseUrl: string;
@@ -24,7 +27,6 @@ export class VibeLightsClient {
       ok: boolean;
       data?: T;
       error?: string;
-      description?: string;
     };
     if (!json.ok) {
       throw new Error(json.error || "Unknown API error");
@@ -36,7 +38,7 @@ export class VibeLightsClient {
   async executeTool(
     name: string,
     params: Record<string, unknown>,
-  ): Promise<unknown> {
+  ): Promise<CommandResponse> {
     return this.request(
       "POST",
       `/api/tools/${encodeURIComponent(name)}`,
@@ -50,22 +52,22 @@ export class VibeLightsClient {
   }
 
   /** Batch edit via the batch endpoint. */
-  async batchEdit(commands: unknown): Promise<unknown> {
+  async batchEdit(commands: unknown): Promise<CommandResponse> {
     return this.request("POST", "/api/batch", commands);
   }
 
   /** Get show state. */
-  async getShow(): Promise<unknown> {
+  async getShow(): Promise<CommandResponse> {
     return this.request("GET", "/api/show");
   }
 
   /** Get playback state. */
-  async getPlayback(): Promise<unknown> {
+  async getPlayback(): Promise<CommandResponse> {
     return this.request("GET", "/api/playback");
   }
 
   /** Get analysis summary. */
-  async getAnalysisSummary(): Promise<unknown> {
+  async getAnalysisSummary(): Promise<CommandResponse> {
     return this.request("GET", "/api/analysis/summary");
   }
 }

@@ -3,6 +3,7 @@ import { cmd } from "../commands";
 import { Sun, Moon, Monitor, RotateCcw, Key, Eye, EyeOff } from "lucide-react";
 import { useUISettings, type ThemeMode } from "../hooks/useUISettings";
 import { ScreenShell } from "../components/ScreenShell";
+import { useToast } from "../hooks/useToast";
 
 interface Props {
   onBack: () => void;
@@ -25,6 +26,7 @@ const ACCENT_PRESETS = [
 
 export function SettingsScreen({ onBack }: Props) {
   const { settings, update, reset, defaults } = useUISettings();
+  const { showError } = useToast();
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -35,8 +37,8 @@ export function SettingsScreen({ onBack }: Props) {
     cmd.getLlmConfig().then((config) => {
       if (config.has_api_key) setApiKey("********");
       setModel(config.model ?? "");
-    }).catch(console.warn);
-  }, []);
+    }).catch(showError);
+  }, [showError]);
 
   const handleSaveLlmConfig = useCallback(async () => {
     const keyToSave = apiKey === "********" ? "" : apiKey;

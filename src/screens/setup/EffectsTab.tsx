@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { cmd } from "../../commands";
 import type { EffectInfo } from "../../types";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { useToast } from "../../hooks/useToast";
 
 interface Props {
   setError: (e: string | null) => void;
@@ -9,13 +10,14 @@ interface Props {
 }
 
 export function EffectsTab({ setError, onOpenScript }: Props) {
+  const { showError } = useToast();
   const [effects, setEffects] = useState<EffectInfo[]>([]);
   const [scripts, setScripts] = useState<[string, string][]>([]);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const refreshEffects = useCallback(() => {
-    cmd.listEffects().then(setEffects).catch(console.error);
-  }, []);
+    cmd.listEffects().then(setEffects).catch(showError);
+  }, [showError]);
 
   const refreshScripts = useCallback(() => {
     cmd.listGlobalScripts()

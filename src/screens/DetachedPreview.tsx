@@ -54,6 +54,7 @@ export function DetachedPreview() {
   const [selectedEffects, setSelectedEffects] = useState<[number, number][]>([]);
   const [mainPlaying, setMainPlaying] = useState(false);
   const [selectionFrame, setSelectionFrame] = useState<Frame | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const { settings, update: updateSettings, reset: resetSettings } = usePreviewSettings();
   const { camera, resetView, handlers: cameraHandlers } = usePreviewCamera();
@@ -61,8 +62,8 @@ export function DetachedPreview() {
   // Fetch show data
   const fetchShow = useCallback(() => {
     cmd.getShow()
-      .then((s) => setShow(s))
-      .catch((e: unknown) => console.error("[Preview] get_show failed:", e));
+      .then((s) => { setShow(s); setError(null); })
+      .catch((e: unknown) => setError(String(e)));
   }, []);
 
   useEffect(() => {
@@ -106,6 +107,7 @@ export function DetachedPreview() {
       cmd.tick(0)
         .then((result) => {
           if (cancelled) return;
+          setError(null);
           if (result) {
             setMainPlaying(result.playing);
             setFrame(result.frame);
@@ -120,7 +122,7 @@ export function DetachedPreview() {
             if (f && !cancelled) setFrame(f);
           });
         })
-        .catch(() => {})
+        .catch((e: unknown) => setError(String(e)))
         .finally(() => {
           if (!cancelled) rafId = requestAnimationFrame(loop);
         });
@@ -171,9 +173,9 @@ export function DetachedPreview() {
 
       cmd.getFrameFiltered(t, selectionEffectsRef.current)
         .then((f) => {
-          if (!cancelled) setSelectionFrame(f);
+          if (!cancelled) { setSelectionFrame(f); setError(null); }
         })
-        .catch(() => {})
+        .catch((e: unknown) => setError(String(e)))
         .finally(() => {
           if (!cancelled) rafId = requestAnimationFrame(loop);
         });
@@ -203,6 +205,12 @@ export function DetachedPreview() {
   return (
     <div className="bg-bg text-text flex h-full flex-col">
       <AppBar onClose={handleClose} />
+
+      {error && (
+        <div className="bg-red-600/90 px-3 py-1.5 text-center text-sm text-white">
+          {error}
+        </div>
+      )}
 
       <PreviewToolbar
         settings={settings}

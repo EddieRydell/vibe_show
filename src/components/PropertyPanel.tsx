@@ -109,11 +109,11 @@ export function PropertyPanel({
   useEffect(() => {
     cmd.listGlobalGradients()
       .then((items) => setGradientNames(items.map(([n]) => n)))
-      .catch(console.warn);
+      .catch(showError);
     cmd.listGlobalCurves()
       .then((items) => setCurveNames(items.map(([n]) => n)))
-      .catch(console.warn);
-  }, [selectedEffect]);
+      .catch(showError);
+  }, [selectedEffect, showError]);
 
   // Load effect detail when selection changes or after undo/redo (refreshKey)
   useEffect(() => {
@@ -135,9 +135,9 @@ export function PropertyPanel({
           setDetail(d);
         }
       })
-      .catch((e: unknown) => console.error("[VibeLights] Failed to get effect detail:", e))
+      .catch(showError)
       .finally(() => setLoading(false));
-  }, [selectedEffect, sequenceIndex, showVersion]);
+  }, [selectedEffect, sequenceIndex, showVersion, showError]);
 
   const debouncedIpc = useDebouncedCallback(
     (trackIndex: number, effectIndex: number, key: ParamKey, value: ParamValue) => {

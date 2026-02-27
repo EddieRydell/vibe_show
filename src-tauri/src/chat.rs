@@ -13,10 +13,11 @@ use crate::state::AppState;
 /// Abstraction over event emission so agent/chat works without Tauri.
 pub trait ChatEmitter: Send + Sync {
     fn emit_token(&self, text: &str);
-    fn emit_tool_call(&self, tool: &str);
-    fn emit_tool_result(&self, tool: &str, result: &str);
+    fn emit_tool_call(&self, id: &str, tool: &str);
+    fn emit_tool_result(&self, id: &str, tool: &str, result: &str);
     fn emit_complete(&self);
     fn emit_thinking(&self, thinking: bool);
+    fn emit_error(&self, message: &str);
 }
 
 /// Tauri-specific emitter: forwards events to the frontend via `AppHandle`.
@@ -28,23 +29,42 @@ pub struct TauriChatEmitter {
 #[cfg(feature = "tauri-app")]
 impl ChatEmitter for TauriChatEmitter {
     fn emit_token(&self, text: &str) {
-        let _ = tauri::Emitter::emit(&self.app_handle, crate::events::CHAT_TOKEN, text);
+        if let Err(e) = tauri::Emitter::emit(&self.app_handle, crate::events::CHAT_TOKEN, text) {
+            eprintln!("[VibeLights] Failed to emit chat token: {e}");
+        }
     }
-    fn emit_tool_call(&self, tool: &str) {
-        let _ = tauri::Emitter::emit(&self.app_handle, crate::events::CHAT_TOOL_CALL, tool);
+    fn emit_tool_call(&self, id: &str, tool: &str) {
+        if let Err(e) = tauri::Emitter::emit(
+            &self.app_handle,
+            crate::events::CHAT_TOOL_CALL,
+            serde_json::json!({ "id": id, "tool": tool }),
+        ) {
+            eprintln!("[VibeLights] Failed to emit tool call: {e}");
+        }
     }
-    fn emit_tool_result(&self, tool: &str, result: &str) {
-        let _ = tauri::Emitter::emit(
+    fn emit_tool_result(&self, id: &str, tool: &str, result: &str) {
+        if let Err(e) = tauri::Emitter::emit(
             &self.app_handle,
             crate::events::CHAT_TOOL_RESULT,
-            serde_json::json!({ "tool": tool, "result": result }),
-        );
+            serde_json::json!({ "id": id, "tool": tool, "result": result }),
+        ) {
+            eprintln!("[VibeLights] Failed to emit tool result: {e}");
+        }
     }
     fn emit_complete(&self) {
-        let _ = tauri::Emitter::emit(&self.app_handle, crate::events::CHAT_COMPLETE, true);
+        if let Err(e) = tauri::Emitter::emit(&self.app_handle, crate::events::CHAT_COMPLETE, true) {
+            eprintln!("[VibeLights] Failed to emit chat complete: {e}");
+        }
     }
     fn emit_thinking(&self, thinking: bool) {
-        let _ = tauri::Emitter::emit(&self.app_handle, crate::events::CHAT_THINKING, thinking);
+        if let Err(e) = tauri::Emitter::emit(&self.app_handle, crate::events::CHAT_THINKING, thinking) {
+            eprintln!("[VibeLights] Failed to emit chat thinking: {e}");
+        }
+    }
+    fn emit_error(&self, message: &str) {
+        if let Err(e) = tauri::Emitter::emit(&self.app_handle, crate::events::CHAT_ERROR, message) {
+            eprintln!("[VibeLights] Failed to emit chat error: {e}");
+        }
     }
 }
 
@@ -69,34 +89,15 @@ pub struct ChatHistoryEntry {
 
 // ── Tool execution ───────────────────────────────────────────────
 
-/// Result from tool execution, including an optional path to a scratch file
-/// containing the full data for large results.
-pub struct ToolResult {
-    pub message: String,
-    pub data_file: Option<String>,
-}
-
-/// Write a JSON value to a scratch file for agent file-based exploration.
-/// Returns the absolute path to the written file, or `None` on failure.
-fn write_scratch_file(state: &Arc<AppState>, filename: &str, data: &Value) -> Option<String> {
-    let data_dir = crate::state::get_data_dir(state).ok()?;
-    let dir = crate::paths::scratch_dir(&data_dir);
-    std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join(filename);
-    let json = serde_json::to_string_pretty(data).ok()?;
-    crate::project::atomic_write(&path, json.as_bytes()).ok()?;
-    Some(path.to_string_lossy().to_string())
-}
-
-/// Threshold in bytes — data larger than this gets written to a scratch file.
-const SCRATCH_THRESHOLD: usize = 500;
-
 /// Execute a registry command by name. Used by the agent sidecar.
-/// Handles the `help` meta-tool directly, then dispatches to the registry.
-/// Returns a `ToolResult` with the message and an optional scratch file path.
+/// Returns the full typed `CommandOutput` (message + `CommandResult`).
 ///
 /// Wraps the actual execution with timing + audit logging.
-pub fn execute_tool_api(state: &Arc<AppState>, name: &str, input: &Value) -> Result<ToolResult, String> {
+pub fn execute_tool_api(
+    state: &Arc<AppState>,
+    name: &str,
+    input: &Value,
+) -> Result<registry::CommandOutput, String> {
     let start = Instant::now();
     let conversation_id = state.agent_chats.lock().active_id.clone();
 
@@ -107,7 +108,7 @@ pub fn execute_tool_api(state: &Arc<AppState>, name: &str, input: &Value) -> Res
         conversation_id.as_deref(),
         name,
         input,
-        result.as_ref().map_err(String::as_str),
+        result.as_ref().map(|o| o.message.as_str()).map_err(String::as_str),
         start.elapsed(),
     );
 
@@ -115,38 +116,13 @@ pub fn execute_tool_api(state: &Arc<AppState>, name: &str, input: &Value) -> Res
 }
 
 /// Inner implementation of tool execution (no logging).
-fn execute_tool_api_inner(state: &Arc<AppState>, name: &str, input: &Value) -> Result<ToolResult, String> {
-    if name == "help" {
-        let topic = input.get("topic").and_then(Value::as_str);
-        return Ok(ToolResult {
-            message: registry::catalog::help_text(topic),
-            data_file: None,
-        });
-    }
+fn execute_tool_api_inner(
+    state: &Arc<AppState>,
+    name: &str,
+    input: &Value,
+) -> Result<registry::CommandOutput, String> {
     let cmd = registry::catalog::deserialize_from_tool_call(name, input)?;
-    let output = registry::execute::execute(state, cmd).map_err(|e| e.to_string())?;
-
-    // If the command produced structured data, write large payloads to a scratch file.
-    let data_file = {
-        let result_json = serde_json::to_value(&output.result).unwrap_or(Value::Null);
-        let data_value = result_json.get("data").cloned().unwrap_or(Value::Null);
-        if data_value.is_null() {
-            None
-        } else {
-            let serialized = serde_json::to_string(&data_value).unwrap_or_default();
-            if serialized.len() > SCRATCH_THRESHOLD {
-                let filename = format!("{name}.json");
-                write_scratch_file(state, &filename, &data_value)
-            } else {
-                None
-            }
-        }
-    };
-
-    Ok(ToolResult {
-        message: output.message,
-        data_file,
-    })
+    registry::execute::execute(state, cmd).map_err(|e| e.to_string())
 }
 
 // ── Agent chat persistence (multi-conversation) ────────────────
@@ -182,19 +158,38 @@ pub struct ConversationSummary {
 const MAX_CONVERSATIONS: usize = 20;
 
 
+#[allow(clippy::expect_used)] // system clock before Unix epoch is unrecoverable
 fn iso_now() -> String {
-    let now = std::time::SystemTime::now()
+    let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
+        .expect("system clock before Unix epoch")
         .as_secs();
-    format!("{now}")
+    // Convert Unix timestamp to ISO 8601 UTC (YYYY-MM-DDTHH:MM:SSZ)
+    let days = secs / 86400;
+    let time = secs % 86400;
+    let h = time / 3600;
+    let m = (time % 3600) / 60;
+    let s = time % 60;
+    // Civil date from days since epoch (Euclidean affine algorithm)
+    let z = days as i64 + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if mo <= 2 { y + 1 } else { y };
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
+#[allow(clippy::expect_used)] // system clock before Unix epoch is unrecoverable
 fn generate_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
+        .expect("system clock before Unix epoch")
         .as_nanos();
     format!("{ts:x}")
 }
@@ -351,9 +346,10 @@ pub fn switch_agent_conversation(state: &Arc<AppState>, id: &str) -> Result<(), 
     let chats_clone = chats.clone();
     drop(chats);
     let path = crate::paths::agent_chats_file_path(&state.app_config_dir);
-    if let Ok(json) = serde_json::to_string_pretty(&chats_clone) {
-        let _ = std::fs::write(&path, json);
-    }
+    let json = serde_json::to_string_pretty(&chats_clone)
+        .map_err(|e| format!("Failed to serialize agent chats: {e}"))?;
+    crate::project::atomic_write(&path, json.as_bytes())
+        .map_err(|e| format!("Failed to save agent chats: {e}"))?;
 
     Ok(())
 }
@@ -376,9 +372,13 @@ pub fn delete_agent_conversation(state: &Arc<AppState>, id: &str) -> Result<(), 
 
     let path = crate::paths::agent_chats_file_path(&state.app_config_dir);
     if chats_clone.conversations.is_empty() {
-        let _ = std::fs::remove_file(&path);
-    } else if let Ok(json) = serde_json::to_string_pretty(&chats_clone) {
-        let _ = std::fs::write(&path, json);
+        std::fs::remove_file(&path)
+            .map_err(|e| format!("Failed to remove agent chats file: {e}"))?;
+    } else {
+        let json = serde_json::to_string_pretty(&chats_clone)
+            .map_err(|e| format!("Failed to serialize agent chats: {e}"))?;
+        crate::project::atomic_write(&path, json.as_bytes())
+            .map_err(|e| format!("Failed to save agent chats: {e}"))?;
     }
 
     Ok(())

@@ -5,8 +5,8 @@ use std::sync::Arc;
 use crate::describe;
 use crate::effects::resolve_effect;
 use crate::error::AppError;
-use crate::registry::params::GetEffectDetailParams;
-use crate::registry::reference;
+use crate::registry::params::{GetEffectDetailParams, HelpParams};
+use crate::registry::{catalog, reference};
 use crate::registry::{CommandOutput, CommandResult};
 use crate::state::{AppState, EffectDetail, EffectInfo};
 
@@ -94,4 +94,9 @@ pub fn get_effect_detail(
         track.name, p.track_index, p.effect_index, effect_desc
     );
     Ok(CommandOutput::new(message, CommandResult::GetEffectDetail(detail)))
+}
+
+pub fn help(_state: &Arc<AppState>, p: HelpParams) -> Result<CommandOutput, AppError> {
+    let text = catalog::help_text(p.topic.as_deref());
+    Ok(CommandOutput::new(text.clone(), CommandResult::Help(text)))
 }

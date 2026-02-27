@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus, Trash2, Copy, Pencil } from "lucide-react";
 import { cmd } from "../../commands";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { useToast } from "../../hooks/useToast";
 
 interface Props {
   currentScript: string | null;
@@ -16,6 +17,7 @@ export function ScriptBrowser({
   onNewScript,
   refreshKey,
 }: Props) {
+  const { showError } = useToast();
   const [scripts, setScripts] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [renamingScript, setRenamingScript] = useState<string | null>(null);
@@ -28,8 +30,8 @@ export function ScriptBrowser({
   const refresh = useCallback(() => {
     cmd.listGlobalScripts()
       .then((pairs) => setScripts(pairs.map(([name]) => name)))
-      .catch(console.warn);
-  }, []);
+      .catch(showError);
+  }, [showError]);
 
   useEffect(() => {
     refresh();

@@ -40,6 +40,13 @@ impl Value {
             _ => Color::BLACK,
         }
     }
+
+    fn as_vec2(self) -> (f64, f64) {
+        match self {
+            Self::Vec2(x, y) => (x, y),
+            _ => (0.0, 0.0),
+        }
+    }
 }
 
 /// Reusable VM working memory. Create once per batch, reuse across pixels
@@ -317,6 +324,132 @@ pub fn execute_reuse(script: &CompiledScript, ctx: &VmContext<'_>, buffers: &mut
                     let factor = stack.pop().map_or(0.0, Value::as_float);
                     let color = stack.pop().map_or(Color::BLACK, Value::as_color);
                     stack.push(Value::Color(color.scale(factor)));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::ColorAdd => {
+                if stack.len() >= 2 {
+                    let b = stack.pop().map_or(Color::BLACK, Value::as_color);
+                    let a = stack.pop().map_or(Color::BLACK, Value::as_color);
+                    stack.push(Value::Color(a + b));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::ColorSub => {
+                if stack.len() >= 2 {
+                    let b = stack.pop().map_or(Color::BLACK, Value::as_color);
+                    let a = stack.pop().map_or(Color::BLACK, Value::as_color);
+                    stack.push(Value::Color(a.subtract(b)));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::Vec2Add => {
+                if stack.len() >= 2 {
+                    let (bx, by) = stack.pop().map_or((0.0, 0.0), Value::as_vec2);
+                    let (ax, ay) = stack.pop().map_or((0.0, 0.0), Value::as_vec2);
+                    stack.push(Value::Vec2(ax + bx, ay + by));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::Vec2Sub => {
+                if stack.len() >= 2 {
+                    let (bx, by) = stack.pop().map_or((0.0, 0.0), Value::as_vec2);
+                    let (ax, ay) = stack.pop().map_or((0.0, 0.0), Value::as_vec2);
+                    stack.push(Value::Vec2(ax - bx, ay - by));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::Vec2Scale => {
+                if stack.len() >= 2 {
+                    let factor = stack.pop().map_or(0.0, Value::as_float);
+                    let (vx, vy) = stack.pop().map_or((0.0, 0.0), Value::as_vec2);
+                    stack.push(Value::Vec2(vx * factor, vy * factor));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::ColorMix => {
+                if stack.len() >= 3 {
+                    let t = stack.pop().map_or(0.0, Value::as_float);
+                    let b = stack.pop().map_or(Color::BLACK, Value::as_color);
+                    let a = stack.pop().map_or(Color::BLACK, Value::as_color);
+                    stack.push(Value::Color(a.lerp(b, t)));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::ColorHue => {
+                if let Some(val) = stack.pop() {
+                    let c = val.as_color();
+                    let (h, _, _) = c.to_hsv();
+                    stack.push(Value::Float(h));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::ColorSaturation => {
+                if let Some(val) = stack.pop() {
+                    let c = val.as_color();
+                    let (_, s, _) = c.to_hsv();
+                    stack.push(Value::Float(s));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::ColorValue => {
+                if let Some(val) = stack.pop() {
+                    let c = val.as_color();
+                    let (_, _, v) = c.to_hsv();
+                    stack.push(Value::Float(v));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::Angle => {
+                if let Some(val) = stack.pop() {
+                    let (x, y) = val.as_vec2();
+                    stack.push(Value::Float(y.atan2(x)));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::FromAngle => {
+                if let Some(val) = stack.pop() {
+                    let r = val.as_float();
+                    stack.push(Value::Vec2(r.cos(), r.sin()));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::Rotate => {
+                if stack.len() >= 2 {
+                    let angle = stack.pop().map_or(0.0, Value::as_float);
+                    let (x, y) = stack.pop().map_or((0.0, 0.0), Value::as_vec2);
+                    let cos_a = angle.cos();
+                    let sin_a = angle.sin();
+                    stack.push(Value::Vec2(x * cos_a - y * sin_a, x * sin_a + y * cos_a));
+                } else {
+                    underflow = true;
+                }
+            }
+            Op::Map => {
+                if stack.len() >= 5 {
+                    let out_max = stack.pop().map_or(0.0, Value::as_float);
+                    let out_min = stack.pop().map_or(0.0, Value::as_float);
+                    let in_max = stack.pop().map_or(0.0, Value::as_float);
+                    let in_min = stack.pop().map_or(0.0, Value::as_float);
+                    let x = stack.pop().map_or(0.0, Value::as_float);
+                    let range = in_max - in_min;
+                    if range == 0.0 {
+                        stack.push(Value::Float(out_min));
+                    } else {
+                        stack.push(Value::Float(out_min + (x - in_min) / range * (out_max - out_min)));
+                    }
                 } else {
                     underflow = true;
                 }
@@ -1611,5 +1744,364 @@ if phase < duty_cycle {
         // Perlin noise at integer coordinates should be 0 (or very close)
         let c = run("let n = noise(0.0); let v = abs(n); rgb(v, v, v)");
         assert!(c.r <= 1, "noise at integer boundary should be ~0, got {}", c.r);
+    }
+
+    // ── Color arithmetic operators ──────────────────────────────
+
+    #[test]
+    fn color_mul_float() {
+        // #ff8000 * 0.5 → half-brightness orange
+        let color = run("#ff8000 * 0.5");
+        assert_eq!(color.r, 128);
+        assert_eq!(color.g, 64);
+        assert_eq!(color.b, 0);
+    }
+
+    #[test]
+    fn float_mul_color() {
+        // 0.5 * #ff8000 → same result (commutative)
+        let color = run("0.5 * #ff8000");
+        assert_eq!(color.r, 128);
+        assert_eq!(color.g, 64);
+        assert_eq!(color.b, 0);
+    }
+
+    #[test]
+    fn color_add_color() {
+        // #ff0000 + #00ff00 → yellow
+        let color = run("#ff0000 + #00ff00");
+        assert_eq!(color.r, 255);
+        assert_eq!(color.g, 255);
+        assert_eq!(color.b, 0);
+    }
+
+    #[test]
+    fn color_sub_color() {
+        // #ff0000 - #000100 → saturating subtract
+        let color = run("#ff0000 - #000100");
+        assert_eq!(color.r, 255);
+        assert_eq!(color.g, 0); // max(0, 0 - 1) = 0
+        assert_eq!(color.b, 0);
+    }
+
+    #[test]
+    fn color_add_saturates() {
+        // #ff8080 + #ff8080 → saturating add (255, 255, 255 capped)
+        let color = run("#ff8080 + #ff8080");
+        assert_eq!(color.r, 255);
+        assert_eq!(color.g, 255); // 128+128=256 → 255
+        assert_eq!(color.b, 255);
+    }
+
+    #[test]
+    fn float_cast() {
+        // float(3) should compile and equal 3.0
+        let color = run("let x = float(3); let n = x / 3.0; rgb(n, n, n)");
+        assert_eq!(color.r, 255);
+    }
+
+    #[test]
+    fn gradient_mul_brightness_pattern() {
+        // The pattern that kept failing: gradient(pos) * brightness
+        // Simulate with a color variable instead of gradient param
+        let color = run("let c = #ff8000; let brightness = 0.5; c * brightness");
+        assert_eq!(color.r, 128);
+        assert_eq!(color.g, 64);
+        assert_eq!(color.b, 0);
+    }
+
+    #[test]
+    fn color_mul_int() {
+        // color * int should auto-coerce
+        let color = run("#808080 * 1");
+        assert_eq!(color.r, 128);
+        assert_eq!(color.g, 128);
+        assert_eq!(color.b, 128);
+    }
+
+    // ── Vec2 arithmetic operators ───────────────────────────────
+
+    #[test]
+    fn vec2_add() {
+        // vec2(0.2, 0.3) + vec2(0.1, 0.2) → (0.3, 0.5) → use as color channels
+        let color = run("let v = vec2(0.2, 0.3) + vec2(0.1, 0.2); rgb(v.x, v.y, 0.0)");
+        assert!((color.r as i16 - 77).abs() <= 1); // 0.3 * 255 ≈ 77
+        assert_eq!(color.g, 128); // 0.5 * 255 = 128 (rounded)
+    }
+
+    #[test]
+    fn vec2_sub() {
+        let color = run("let v = vec2(0.5, 0.8) - vec2(0.2, 0.3); rgb(v.x, v.y, 0.0)");
+        assert!((color.r as i16 - 77).abs() <= 1); // 0.3 * 255 ≈ 77
+        assert_eq!(color.g, 128); // 0.5 * 255 = 128
+    }
+
+    #[test]
+    fn vec2_mul_float() {
+        let color = run("let v = vec2(0.4, 0.6) * 0.5; rgb(v.x, v.y, 0.0)");
+        assert_eq!(color.r, 51); // 0.2 * 255 = 51
+        assert!((color.g as i16 - 77).abs() <= 1); // 0.3 * 255 ≈ 77
+    }
+
+    #[test]
+    fn float_mul_vec2() {
+        // Commutative: 0.5 * vec2 should equal vec2 * 0.5
+        let color = run("let v = 0.5 * vec2(0.4, 0.6); rgb(v.x, v.y, 0.0)");
+        assert_eq!(color.r, 51);
+        assert!((color.g as i16 - 77).abs() <= 1);
+    }
+
+    #[test]
+    fn vec2_spatial_pattern() {
+        // Common spatial pattern: offset = pos2d - center, then scale
+        let color = run_with_ctx(
+            "@spatial true\nlet center = vec2(0.5, 0.5); let offset = pos2d - center; let d = length(offset * 2.0); rgb(d, d, d)",
+            0.0, 0, 10,
+        );
+        // pixel 0, pos2d = (0.0, 0.0), offset = (-0.5, -0.5), *2 = (-1, -1), length ≈ 1.414
+        assert!(color.r > 250); // clamped to 1.0 → 255
+    }
+
+    #[test]
+    fn vec2_mul_int() {
+        // vec2 * int should auto-coerce
+        let color = run("let v = vec2(0.3, 0.5) * 1; rgb(v.x, v.y, 0.0)");
+        assert!((color.r as i16 - 77).abs() <= 1);
+        assert_eq!(color.g, 128);
+    }
+
+    // ── Color mix() ─────────────────────────────────────────────
+
+    #[test]
+    fn color_mix_midpoint() {
+        // mix(red, blue, 0.5) → purple-ish
+        let color = run("mix(#ff0000, #0000ff, 0.5)");
+        assert!((color.r as i16 - 128).abs() <= 1, "expected ~128 r, got {}", color.r);
+        assert_eq!(color.g, 0);
+        assert!((color.b as i16 - 128).abs() <= 1, "expected ~128 b, got {}", color.b);
+    }
+
+    #[test]
+    fn color_mix_at_zero() {
+        // mix(red, blue, 0.0) → red
+        let color = run("mix(#ff0000, #0000ff, 0.0)");
+        assert_eq!(color.r, 255);
+        assert_eq!(color.g, 0);
+        assert_eq!(color.b, 0);
+    }
+
+    #[test]
+    fn color_mix_at_one() {
+        // mix(red, blue, 1.0) → blue
+        let color = run("mix(#ff0000, #0000ff, 1.0)");
+        assert_eq!(color.r, 0);
+        assert_eq!(color.g, 0);
+        assert_eq!(color.b, 255);
+    }
+
+    #[test]
+    fn float_mix_still_works() {
+        // Ensure standard mix(float, float, float) still works
+        let color = run("let x = mix(0.0, 1.0, 0.5); rgb(x, x, x)");
+        assert_eq!(color.r, 128);
+    }
+
+    // ── color.lerp() method ─────────────────────────────────────
+
+    #[test]
+    fn color_lerp_midpoint() {
+        let color = run("#ff0000.lerp(#0000ff, 0.5)");
+        assert!((color.r as i16 - 128).abs() <= 1, "expected ~128 r, got {}", color.r);
+        assert_eq!(color.g, 0);
+        assert!((color.b as i16 - 128).abs() <= 1, "expected ~128 b, got {}", color.b);
+    }
+
+    #[test]
+    fn color_lerp_at_zero() {
+        let color = run("#ff0000.lerp(#00ff00, 0.0)");
+        assert_eq!(color.r, 255);
+        assert_eq!(color.g, 0);
+    }
+
+    #[test]
+    fn color_lerp_at_one() {
+        let color = run("#ff0000.lerp(#00ff00, 1.0)");
+        assert_eq!(color.r, 0);
+        assert_eq!(color.g, 255);
+    }
+
+    // ── HSV field accessors ─────────────────────────────────────
+
+    #[test]
+    fn color_hue_red() {
+        // Pure red: hue = 0
+        let color = run("let h = #ff0000.hue / 360.0; rgb(h, h, h)");
+        assert_eq!(color.r, 0, "red hue should be 0, got {}", color.r);
+    }
+
+    #[test]
+    fn color_hue_green() {
+        // Pure green: hue = 120
+        let color = run("let h = #00ff00.hue / 360.0; rgb(h, h, h)");
+        // 120/360 = 0.333 → 85
+        assert!((color.r as i16 - 85).abs() <= 1, "green hue/360 ≈ 0.333 → 85, got {}", color.r);
+    }
+
+    #[test]
+    fn color_saturation_pure() {
+        // Pure red: saturation = 1.0
+        let color = run("let s = #ff0000.saturation; rgb(s, s, s)");
+        assert_eq!(color.r, 255, "pure red saturation should be 1.0, got {}", color.r);
+    }
+
+    #[test]
+    fn color_saturation_gray() {
+        // Gray: saturation = 0.0
+        let color = run("let s = #808080.saturation; rgb(s, s, s)");
+        assert_eq!(color.r, 0, "gray saturation should be 0.0, got {}", color.r);
+    }
+
+    #[test]
+    fn color_value_full() {
+        // Pure red: value = 1.0
+        let color = run("let v = #ff0000.value; rgb(v, v, v)");
+        assert_eq!(color.r, 255, "pure red value should be 1.0, got {}", color.r);
+    }
+
+    #[test]
+    fn color_value_half() {
+        // Half-brightness red: value = 0.5
+        let color = run("let v = #800000.value; rgb(v, v, v)");
+        assert!((color.r as i16 - 128).abs() <= 1, "#800000 value ≈ 0.502 → 128, got {}", color.r);
+    }
+
+    // ── float(bool) coercion ────────────────────────────────────
+
+    #[test]
+    fn float_bool_true() {
+        let color = run("let x = float(true); rgb(x, x, x)");
+        assert_eq!(color.r, 255, "float(true) should be 1.0");
+    }
+
+    #[test]
+    fn float_bool_false() {
+        let color = run("let x = float(false); rgb(x, x, x)");
+        assert_eq!(color.r, 0, "float(false) should be 0.0");
+    }
+
+    #[test]
+    fn float_bool_expression() {
+        // float(t > 0.3) with t=0.5 → true → 1.0
+        let color = run("let x = float(t > 0.3); rgb(x, x, x)");
+        assert_eq!(color.r, 255, "float(t > 0.3) with t=0.5 should be 1.0");
+    }
+
+    #[test]
+    fn float_bool_mask_pattern() {
+        // Common pattern: use float(bool) as a multiplier mask
+        let _color = run("let mask = float(pos > 0.5); rgb(mask, 0.0, 0.0)");
+        // pixel 0, pos=0.0 → false → 0.0
+        let c0 = run_with_ctx("let mask = float(pos > 0.5); rgb(mask, 0.0, 0.0)", 0.0, 0, 10);
+        assert_eq!(c0.r, 0);
+        // pixel 9, pos=1.0 → true → 1.0
+        let c9 = run_with_ctx("let mask = float(pos > 0.5); rgb(mask, 0.0, 0.0)", 0.0, 9, 10);
+        assert_eq!(c9.r, 255);
+    }
+
+    // ── map() function ──────────────────────────────────────────
+
+    #[test]
+    fn map_linear() {
+        // map(0.5, 0.0, 1.0, 0.0, 255.0) / 255.0 → 0.5
+        let color = run("let x = map(0.5, 0.0, 1.0, 0.0, 1.0); rgb(x, x, x)");
+        assert_eq!(color.r, 128, "map identity should preserve value");
+    }
+
+    #[test]
+    fn map_remap_range() {
+        // map(5.0, 0.0, 10.0, 0.0, 1.0) → 0.5
+        let color = run("let x = map(5.0, 0.0, 10.0, 0.0, 1.0); rgb(x, x, x)");
+        assert_eq!(color.r, 128, "map(5, 0-10, 0-1) should be 0.5 → 128");
+    }
+
+    #[test]
+    fn map_zero_range() {
+        // map(x, 5.0, 5.0, 0.0, 1.0) → out_min when in_min == in_max
+        let color = run("let x = map(5.0, 5.0, 5.0, 0.0, 1.0); rgb(x, x, x)");
+        assert_eq!(color.r, 0, "map with zero input range should return out_min");
+    }
+
+    #[test]
+    fn map_inverted() {
+        // map(0.0, 0.0, 1.0, 1.0, 0.0) → 1.0 (inverted output)
+        let color = run("let x = map(0.0, 0.0, 1.0, 1.0, 0.0); rgb(x, x, x)");
+        assert_eq!(color.r, 255, "map(0, 0-1, 1-0) should be 1.0");
+    }
+
+    // ── angle() and from_angle() ────────────────────────────────
+
+    #[test]
+    fn angle_basic() {
+        // angle(vec2(1, 0)) = 0 radians
+        let color = run("let a = angle(vec2(1.0, 0.0)); let n = abs(a); rgb(n, n, n)");
+        assert_eq!(color.r, 0, "angle of (1,0) should be 0 radians");
+    }
+
+    #[test]
+    fn angle_90_degrees() {
+        // angle(vec2(0, 1)) = PI/2 ≈ 1.5708
+        let color = run("let a = angle(vec2(0.0, 1.0)); let n = a / PI; rgb(n, n, n)");
+        // PI/2 / PI = 0.5 → 128
+        assert_eq!(color.r, 128, "angle(0,1)/PI should be 0.5 → 128, got {}", color.r);
+    }
+
+    #[test]
+    fn from_angle_zero() {
+        // from_angle(0) = vec2(1, 0)
+        let color = run("let v = from_angle(0.0); rgb(v.x, abs(v.y), 0.0)");
+        assert_eq!(color.r, 255, "from_angle(0).x should be 1.0");
+        assert_eq!(color.g, 0, "from_angle(0).y should be ~0.0");
+    }
+
+    #[test]
+    fn from_angle_pi_half() {
+        // from_angle(PI/2) = vec2(0, 1)
+        let color = run("let v = from_angle(PI / 2.0); rgb(abs(v.x), v.y, 0.0)");
+        assert!(color.r <= 1, "from_angle(PI/2).x should be ~0, got {}", color.r);
+        assert_eq!(color.g, 255, "from_angle(PI/2).y should be 1.0");
+    }
+
+    #[test]
+    fn angle_from_angle_roundtrip() {
+        // from_angle(angle(v)) should return unit vector in same direction
+        let color = run("let v = vec2(3.0, 4.0); let a = angle(v); let u = from_angle(a); let d = length(u); rgb(d, d, d)");
+        assert_eq!(color.r, 255, "from_angle(angle(v)) should have length 1.0");
+    }
+
+    // ── rotate() ────────────────────────────────────────────────
+
+    #[test]
+    fn rotate_zero() {
+        // rotate(v, 0) = v
+        let color = run("let v = rotate(vec2(0.5, 0.3), 0.0); rgb(v.x, v.y, 0.0)");
+        assert_eq!(color.r, 128, "rotate by 0 should preserve x");
+        assert!((color.g as i16 - 77).abs() <= 1, "rotate by 0 should preserve y");
+    }
+
+    #[test]
+    fn rotate_90_degrees() {
+        // rotate(vec2(1, 0), PI/2) ≈ vec2(0, 1)
+        let color = run("let v = rotate(vec2(1.0, 0.0), PI / 2.0); rgb(abs(v.x), v.y, 0.0)");
+        assert!(color.r <= 1, "rotate(1,0) by PI/2: x should be ~0, got {}", color.r);
+        assert_eq!(color.g, 255, "rotate(1,0) by PI/2: y should be 1.0, got {}", color.g);
+    }
+
+    #[test]
+    fn rotate_180_degrees() {
+        // rotate(vec2(1, 0), PI) ≈ vec2(-1, 0)
+        let color = run("let v = rotate(vec2(1.0, 0.0), PI); let x = abs(v.x + 1.0); rgb(x, abs(v.y), 0.0)");
+        // v.x ≈ -1, so v.x + 1 ≈ 0, abs ≈ 0
+        assert!(color.r <= 1, "rotate by PI: x should be ~-1.0");
+        assert!(color.g <= 1, "rotate by PI: y should be ~0.0");
     }
 }

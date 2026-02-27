@@ -1,3 +1,5 @@
+import type { AnalysisSummary } from "../../src-tauri/bindings/AnalysisSummary";
+import type { Show } from "../../src-tauri/bindings/Show";
 import { VibeLightsClient } from "./vibelights-client.js";
 
 /** Build the system prompt with show context. */
@@ -84,25 +86,19 @@ export async function buildSystemPrompt(
 
   // Current state (best-effort)
   try {
-    const show = (await client.getShow()) as Record<string, unknown>;
-    lines.push("## Current state");
-    if (show) {
-      const fixtures = show.fixtures as unknown[];
-      lines.push(`Fixtures: ${fixtures?.length ?? 0}`);
+    const resp = await client.getShow();
+    if (resp.result.command === "GetShow") {
+      const show: Show = resp.result.data;
+      lines.push("## Current state");
+      lines.push(`Fixtures: ${show.fixtures.length}`);
 
-      const sequences = show.sequences as Array<Record<string, unknown>>;
-      if (sequences?.length) {
-        const seq = sequences[0];
-        const tracks = seq.tracks as unknown[];
-        const trackCount = tracks?.length ?? 0;
-        const effectCount = Array.isArray(tracks)
-          ? tracks.reduce(
-              (sum: number, t: unknown) =>
-                sum +
-                (((t as Record<string, unknown>).effects as unknown[])?.length ?? 0),
-              0,
-            )
-          : 0;
+      if (show.sequences.length > 0) {
+        const seq = show.sequences[0];
+        const trackCount = seq.tracks.length;
+        const effectCount = seq.tracks.reduce(
+          (sum, t) => sum + t.effects.length,
+          0,
+        );
         lines.push(
           `Sequence: ${seq.name} (${seq.duration}s, ${trackCount} tracks, ${effectCount} effects)`,
         );
@@ -116,15 +112,19 @@ export async function buildSystemPrompt(
 
     // Check for analysis availability
     try {
-      const analysis = await client.getAnalysisSummary() as Record<string, unknown> | null;
-      if (analysis) {
+      const analysisResp = await client.getAnalysisSummary();
+      if (analysisResp.result.command === "GetAnalysisSummary") {
+        const analysis: AnalysisSummary = analysisResp.result.data;
         const parts: string[] = [];
         if (analysis.tempo) parts.push(`tempo: ${analysis.tempo} BPM`);
         if (analysis.key) parts.push(`key: ${analysis.key}`);
-        if (analysis.sections) parts.push(`${(analysis.sections as unknown[]).length} sections`);
+        if (analysis.sections)
+          parts.push(`${analysis.sections.length} sections`);
         if (parts.length > 0) {
           lines.push(`Audio analysis available: ${parts.join(", ")}`);
-          lines.push("Use get_beats_in_range, get_sections, get_analysis_detail for detailed data.");
+          lines.push(
+            "Use get_beats_in_range, get_sections, get_analysis_detail for detailed data.",
+          );
         }
       }
     } catch {

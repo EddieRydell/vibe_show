@@ -188,14 +188,28 @@ if mode == Mode.Pulse {
     out.push_str(r#"### Color Operations
 | Operation | Description |
 |-----------|-------------|
-| `c.r`, `c.g`, `c.b`, `c.a` | Channel access (0.0-1.0) |
+| `c.r`, `c.g`, `c.b`, `c.a` | RGBA channel access (0.0-1.0) |
+| `c.hue` | HSV hue (0-360 degrees) |
+| `c.saturation` | HSV saturation (0.0-1.0) |
+| `c.value` | HSV value/brightness (0.0-1.0) |
 | `c.scale(f)` | Multiply RGB by float, returns new color |
+| `c.lerp(other, t)` | Per-channel interpolation toward other color |
+| `color * float` | Scale brightness (same as `.scale()`) |
+| `float * color` | Scale brightness (same as `.scale()`) |
+| `color + color` | Additive blend (saturating) |
+| `color - color` | Subtractive blend (saturating) |
+| `mix(color, color, t)` | Per-channel linear interpolation (same as `.lerp()`) |
+| `float(bool)` | Convert bool to float: true → 1.0, false → 0.0 |
 | Gradient call: `grad(0.5)` | Evaluate gradient at position [0.0, 1.0] |
 
 ### Vec2 Operations
 | Operation | Description |
 |-----------|-------------|
 | `v.x`, `v.y` | Component access |
+| `vec2 + vec2` | Component-wise addition |
+| `vec2 - vec2` | Component-wise subtraction |
+| `vec2 * float` | Scale both components |
+| `float * vec2` | Scale both components (commutative) |
 
 ## Control Flow
 

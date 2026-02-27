@@ -232,6 +232,80 @@ fn fold_expr(expr: TypedExpr) -> TypedExpr {
         }
 
         // Recurse into subexpressions for other nodes
+        TypedExprKind::ColorAdd { left, right } => {
+            let l = fold_expr(*left);
+            let r = fold_expr(*right);
+            TypedExpr {
+                kind: TypedExprKind::ColorAdd {
+                    left: Box::new(l),
+                    right: Box::new(r),
+                },
+                ty,
+                span,
+            }
+        }
+        TypedExprKind::ColorSub { left, right } => {
+            let l = fold_expr(*left);
+            let r = fold_expr(*right);
+            TypedExpr {
+                kind: TypedExprKind::ColorSub {
+                    left: Box::new(l),
+                    right: Box::new(r),
+                },
+                ty,
+                span,
+            }
+        }
+        TypedExprKind::Vec2Add { left, right } => {
+            let l = fold_expr(*left);
+            let r = fold_expr(*right);
+            TypedExpr {
+                kind: TypedExprKind::Vec2Add {
+                    left: Box::new(l),
+                    right: Box::new(r),
+                },
+                ty,
+                span,
+            }
+        }
+        TypedExprKind::Vec2Sub { left, right } => {
+            let l = fold_expr(*left);
+            let r = fold_expr(*right);
+            TypedExpr {
+                kind: TypedExprKind::Vec2Sub {
+                    left: Box::new(l),
+                    right: Box::new(r),
+                },
+                ty,
+                span,
+            }
+        }
+        TypedExprKind::Vec2Scale { vec, factor } => {
+            let v = fold_expr(*vec);
+            let f = fold_expr(*factor);
+            TypedExpr {
+                kind: TypedExprKind::Vec2Scale {
+                    vec: Box::new(v),
+                    factor: Box::new(f),
+                },
+                ty,
+                span,
+            }
+        }
+        TypedExprKind::ColorMix { a, b, t } => {
+            let fa = fold_expr(*a);
+            let fb = fold_expr(*b);
+            let ft = fold_expr(*t);
+            TypedExpr {
+                kind: TypedExprKind::ColorMix {
+                    a: Box::new(fa),
+                    b: Box::new(fb),
+                    t: Box::new(ft),
+                },
+                ty,
+                span,
+            }
+        }
         TypedExprKind::ColorScale { color, factor } => {
             let c = fold_expr(*color);
             let f = fold_expr(*factor);
@@ -491,6 +565,16 @@ fn eval_builtin(name: &str, args: &[f64]) -> Option<f64> {
             let dot = seed * 12.9898;
             let h = (dot.sin() * 43758.5453).fract().abs();
             Some(min + (max - min) * h)
+        }
+
+        // 5-arg math
+        ("map", [x, in_min, in_max, out_min, out_max]) => {
+            let range = in_max - in_min;
+            if range == 0.0 {
+                Some(*out_min)
+            } else {
+                Some(out_min + (x - in_min) / range * (out_max - out_min))
+            }
         }
 
         // Skip noise/fbm/worley — they work but are expensive at compile time

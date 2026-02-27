@@ -11,6 +11,7 @@ import { EffectPicker } from "../components/EffectPicker";
 import { SequenceSettingsDialog } from "../components/SequenceSettingsDialog";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { LibraryPanel } from "../components/LibraryPanel";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { PythonSetupWizard } from "../components/PythonSetupWizard";
 import { AnalysisWizard } from "../components/AnalysisWizard";
 import { ScreenShell, useAppShell } from "../components/ScreenShell";
@@ -115,7 +116,11 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
   useEffect(() => {
     if (!previewOpen) return;
     const effects = deduplicateEffectKeys(selectedEffects);
-    emitTo("preview", SELECTION_CHANGED, { effects }).catch(console.warn);
+    emitTo("preview", SELECTION_CHANGED, { effects }).catch(() => {
+      // Preview window is gone — mark it as closed
+      previewWindowRef.current = null;
+      setPreviewOpen(false);
+    });
   }, [selectedEffects, previewOpen]);
 
   // ── Composed transport controls ────────────────────────────────────
@@ -301,7 +306,9 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
   useEffect(() => {
     return () => {
       if (previewWindowRef.current) {
-        previewWindowRef.current.destroy().catch(() => {});
+        previewWindowRef.current.destroy().catch(() => {
+          // Window already gone — nothing to clean up
+        });
         previewWindowRef.current = null;
       }
     };
@@ -501,6 +508,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
 
       {/* Main area */}
       <div className="flex flex-1 overflow-hidden">
+        <ErrorBoundary>
         <Timeline
           show={show}
           playback={playback}
@@ -519,6 +527,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
           onRegionChange={handleRegionChange}
           analysis={analysis}
         />
+        </ErrorBoundary>
         {libraryOpen && (
           <LibraryPanel
             onClose={() => setLibraryOpen(false)}

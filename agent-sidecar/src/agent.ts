@@ -134,8 +134,11 @@ export async function runAgentQuery(
     });
 
     let streamed = false;
-    // Track tool_use id -> name so we can label tool_result events correctly
+    // Track tool_use id -> name so we can label tool_result events correctly.
+    // Also serves as dedup: only emit tool_call once per ID.
     const toolUseNames = new Map<string, string>();
+    // Track which tool results we've already emitted (dedup for includePartialMessages)
+    const emittedResults = new Set<string>();
 
     for await (const msg of stream) {
       if (abort.signal.aborted) break;
@@ -150,15 +153,19 @@ export async function runAgentQuery(
         }
 
         case "assistant": {
-          // Full assistant message — extract tool_use blocks and track their IDs.
-          // Text is already streamed via stream_event tokens.
+          // Full assistant message — emit tool_call for any new tool_use blocks.
+          // This is the single source of truth for tool calls (reliable id + name).
           const apiMsg = msg.message;
           if (apiMsg.content && Array.isArray(apiMsg.content)) {
             for (const block of apiMsg.content) {
               if (block.type === "tool_use") {
-                toolUseNames.set(block.id as string, block.name as string);
-                sendEvent("tool_call", block.name);
-                sendEvent("thinking", true);
+                if (typeof block.id !== "string" || typeof block.name !== "string") continue;
+                const toolId = block.id;
+                const toolName = block.name;
+                if (toolId && !toolUseNames.has(toolId)) {
+                  toolUseNames.set(toolId, toolName);
+                  sendEvent("tool_call", { id: toolId, tool: toolName });
+                }
               }
             }
           }
@@ -166,45 +173,47 @@ export async function runAgentQuery(
         }
 
         case "stream_event": {
-          // Partial streaming events
+          // Only handle text streaming — tool events come from "assistant" messages.
           const event = msg.event;
           if (event.type === "content_block_delta") {
-            const delta = (event as Record<string, unknown>).delta as Record<string, unknown> | undefined;
-            if (delta?.type === "text_delta" && typeof delta.text === "string") {
-              sendEvent("token", delta.text);
-              streamed = true;
-            }
-          } else if (event.type === "content_block_start") {
-            const block = (event as Record<string, unknown>).content_block as Record<string, unknown> | undefined;
-            if (block?.type === "tool_use") {
-              if (block.id && block.name) {
-                toolUseNames.set(block.id as string, block.name as string);
+            if ("delta" in event && event.delta && typeof event.delta === "object") {
+              const delta = event.delta as Record<string, unknown>;
+              if (delta.type === "text_delta" && typeof delta.text === "string") {
+                sendEvent("token", delta.text);
+                streamed = true;
               }
-              sendEvent("tool_call", block.name ?? "");
-              sendEvent("thinking", true);
             }
           }
           break;
         }
 
         case "user": {
-          // User messages include tool results
           const apiMsg = msg.message;
           if (apiMsg.content && Array.isArray(apiMsg.content)) {
             for (const block of apiMsg.content) {
               if (block.type === "tool_result") {
-                const toolName = toolUseNames.get(block.tool_use_id as string) ?? "tool";
+                if (typeof block.tool_use_id !== "string") continue;
+                const toolId = block.tool_use_id;
+                if (!toolId || emittedResults.has(toolId)) continue;
+                emittedResults.add(toolId);
+                const toolName = toolUseNames.get(toolId);
+                if (!toolName) {
+                  console.warn(`[VibeLights] tool_result for unknown tool_use_id: ${toolId}`);
+                }
                 const resultText =
                   typeof block.content === "string"
                     ? block.content
                     : Array.isArray(block.content)
-                      ? block.content
-                          .filter((c: Record<string, unknown>) => c.type === "text")
-                          .map((c: Record<string, unknown>) => c.text)
+                      ? (block.content as unknown[])
+                          .filter((c: unknown): c is { type: string; text: string } =>
+                            c != null && typeof c === "object" && "type" in c && (c as Record<string, unknown>).type === "text" && "text" in c && typeof (c as Record<string, unknown>).text === "string"
+                          )
+                          .map((c) => c.text)
                           .join("")
                       : JSON.stringify(block.content);
                 sendEvent("tool_result", {
-                  tool: toolName,
+                  id: toolId,
+                  tool: toolName ?? "unknown",
                   result: resultText.slice(0, 2000),
                 });
               }
@@ -215,15 +224,13 @@ export async function runAgentQuery(
 
         case "result": {
           if (msg.subtype === "success") {
-            // Only send result text if we didn't stream it already
             if (!streamed && msg.result) {
               sendEvent("token", msg.result);
             }
           } else {
-            // Error result
-            const errors = (msg as Record<string, unknown>).errors as string[] | undefined;
-            if (errors?.length) {
-              sendEvent("error", errors.join("; "));
+            if ("errors" in msg && Array.isArray(msg.errors)) {
+              const errors = msg.errors as string[];
+              if (errors.length) sendEvent("error", errors.join("; "));
             }
           }
           break;

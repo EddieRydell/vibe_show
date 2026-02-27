@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { EffectInfo, EffectKind } from "../types";
 import { cmd } from "../commands";
+import { useToast } from "../hooks/useToast";
 
 interface EffectPickerProps {
   position: { x: number; y: number };
@@ -12,11 +13,12 @@ export function EffectPicker({ position, onSelect, onCancel }: EffectPickerProps
   const [effects, setEffects] = useState<EffectInfo[]>([]);
   const [scripts, setScripts] = useState<string[]>([]);
   const ref = useRef<HTMLDivElement>(null);
+  const { showError } = useToast();
 
   useEffect(() => {
-    cmd.listEffects().then(setEffects).catch(console.error);
-    cmd.listGlobalScripts().then((pairs) => setScripts(pairs.map(([n]) => n))).catch(console.warn);
-  }, []);
+    cmd.listEffects().then(setEffects).catch(showError);
+    cmd.listGlobalScripts().then((pairs) => setScripts(pairs.map(([n]) => n))).catch(showError);
+  }, [showError]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {

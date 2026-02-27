@@ -12,8 +12,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::chat::ToolResult;
-
 #[derive(Serialize)]
 struct ToolAuditEntry<'a> {
     ts: u64,
@@ -23,7 +21,6 @@ struct ToolAuditEntry<'a> {
     ok: bool,
     message: &'a str,
     duration_ms: u64,
-    data_file: Option<&'a str>,
 }
 
 /// Log a single tool execution to today's JSONL audit file.
@@ -35,7 +32,7 @@ pub fn log_tool_call(
     conversation_id: Option<&str>,
     tool: &str,
     input: &Value,
-    result: Result<&ToolResult, &str>,
+    result: Result<&str, &str>,
     duration: Duration,
 ) {
     let now = SystemTime::now()
@@ -43,9 +40,9 @@ pub fn log_tool_call(
         .unwrap_or_default()
         .as_secs();
 
-    let (ok, message, data_file) = match result {
-        Ok(r) => (true, r.message.as_str(), r.data_file.as_deref()),
-        Err(e) => (false, e, None),
+    let (ok, message) = match result {
+        Ok(msg) => (true, msg),
+        Err(e) => (false, e),
     };
 
     let entry = ToolAuditEntry {
@@ -56,7 +53,6 @@ pub fn log_tool_call(
         ok,
         message,
         duration_ms: u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
-        data_file,
     };
 
     let dir = crate::paths::agent_logs_dir(app_config_dir);
@@ -112,16 +108,12 @@ mod tests {
         // Logging to a non-existent dir should silently fail, not panic
         let bogus = Path::new("/tmp/vibelights-test-nonexistent-1234567890");
         let input = serde_json::json!({"key": "value"});
-        let result = ToolResult {
-            message: "ok".to_string(),
-            data_file: None,
-        };
         log_tool_call(
             bogus,
             Some("conv-1"),
             "test_tool",
             &input,
-            Ok(&result),
+            Ok("ok"),
             Duration::from_millis(5),
         );
         // No panic = pass

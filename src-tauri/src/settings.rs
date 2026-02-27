@@ -50,10 +50,6 @@ pub struct AppSettings {
     pub version: u32,
     pub data_dir: PathBuf,
     pub last_setup: Option<String>,
-    /// Legacy field — read during deserialization for backward compat, never written.
-    #[serde(default, skip_serializing)]
-    #[ts(skip)]
-    claude_api_key: Option<String>,
     #[serde(default)]
     pub llm: LlmProviderConfig,
     /// Whether to attempt GPU acceleration for audio analysis (requires NVIDIA CUDA).
@@ -72,7 +68,6 @@ impl AppSettings {
             version: SETTINGS_VERSION,
             data_dir,
             last_setup: None,
-            claude_api_key: None,
             llm: LlmProviderConfig::default(),
             use_gpu: false,
             default_analysis_features: None,
@@ -102,26 +97,12 @@ pub fn save_api_key(app_config_dir: &Path, key: &str) -> Result<(), ProjectError
 }
 
 /// Load settings from the app config directory. Returns None if no settings file exists.
-///
-/// Handles backward compat: if the old `claude_api_key` field is present, migrates
-/// it into `llm.api_key` with provider=Anthropic and saves it to the credentials file.
 pub fn load_settings(app_config_dir: &Path) -> Option<AppSettings> {
     let path = crate::paths::settings_path(app_config_dir);
     if !path.exists() {
         return None;
     }
     let mut settings = read_json::<AppSettings>(&path).ok()?;
-
-    // Migrate legacy claude_api_key → llm.api_key + credentials file
-    if let Some(ref key) = settings.claude_api_key {
-        if !key.is_empty() && settings.llm.api_key.is_none() {
-            settings.llm.api_key = Some(key.clone());
-            // Persist to credentials file and re-save settings (drops claude_api_key)
-            let _ = save_api_key(app_config_dir, key);
-            let _ = save_settings(app_config_dir, &settings);
-        }
-        settings.claude_api_key = None;
-    }
 
     // Load API key from credentials file
     if settings.llm.api_key.is_none() {
@@ -158,29 +139,6 @@ mod tests {
         assert_eq!(loaded.data_dir, PathBuf::from("/some/data/dir"));
         assert_eq!(loaded.last_setup, None);
         assert!(loaded.llm.api_key.is_none());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_legacy_claude_api_key_migration() {
-        let dir = std::env::temp_dir().join("vibelights_test_migration");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-
-        // Write old-format settings with claude_api_key
-        let old_json = serde_json::json!({
-            "version": 1,
-            "data_dir": "/some/dir",
-            "claude_api_key": "sk-ant-test-key"
-        });
-        std::fs::write(crate::paths::settings_path(&dir), serde_json::to_string_pretty(&old_json).unwrap()).unwrap();
-
-        let loaded = load_settings(&dir).expect("should load");
-        // Key should be migrated into llm config
-        assert_eq!(loaded.llm.api_key.as_deref(), Some("sk-ant-test-key"));
-        // And saved to credentials file
-        assert_eq!(load_api_key(&dir).as_deref(), Some("sk-ant-test-key"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

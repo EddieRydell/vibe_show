@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { cmd } from "../commands";
+import { useToast } from "./useToast";
 
 export interface WaveformData {
   peaks: Float32Array;
@@ -47,6 +48,7 @@ export function useAudio(): AudioState {
   const [waveform, setWaveform] = useState<WaveformData | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const onEndedRef = useRef<(() => void) | null>(null);
+  const { showError } = useToast();
 
   const cleanup = useCallback(() => {
     if (audioRef.current) {
@@ -115,8 +117,8 @@ export function useAudio(): AudioState {
   );
 
   const play = useCallback(() => {
-    audioRef.current?.play().catch(() => {});
-  }, []);
+    audioRef.current?.play().catch(showError);
+  }, [showError]);
 
   const pause = useCallback(() => {
     audioRef.current?.pause();

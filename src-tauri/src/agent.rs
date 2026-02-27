@@ -35,16 +35,43 @@ async fn find_runtime() -> Option<&'static str> {
 fn resolve_sidecar(
     app: &AppHandle,
 ) -> Result<(String, Vec<String>, Option<std::path::PathBuf>), AppError> {
-    // 1. Check for compiled binary in resources
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-
     #[cfg(target_os = "windows")]
     let binary_name = "agent-sidecar.exe";
     #[cfg(not(target_os = "windows"))]
     let binary_name = "agent-sidecar";
+
+    // Dev builds: always run TS source via bun — no stale binaries.
+    if cfg!(debug_assertions) {
+        let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .ok_or_else(|| AppError::AgentError {
+                message: "Cannot determine project root from CARGO_MANIFEST_DIR".into(),
+            })?;
+        let sidecar_dir = project_root.join("agent-sidecar");
+        let src_entry = sidecar_dir.join("src").join("index.ts");
+
+        if src_entry.exists() {
+            return Ok((
+                "runtime".to_string(),
+                vec![src_entry.to_string_lossy().to_string()],
+                Some(sidecar_dir),
+            ));
+        }
+
+        return Err(AppError::AgentError {
+            message: format!(
+                "Agent sidecar source not found: {}",
+                src_entry.display()
+            ),
+        });
+    }
+
+    // Production: use compiled binary from Tauri resources
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     let binary_path = resource_dir
         .join("resources")
@@ -59,50 +86,10 @@ fn resolve_sidecar(
         ));
     }
 
-    // 2. Dev fallback: look for agent-sidecar relative to project root
-    let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_default();
-
-    let sidecar_dir = project_root.join("agent-sidecar");
-
-    // Prefer compiled binary (no runtime needed)
-    let dev_binary = sidecar_dir.join("dist").join(binary_name);
-    if dev_binary.exists() {
-        return Ok((
-            dev_binary.to_string_lossy().to_string(),
-            vec![],
-            Some(sidecar_dir.join("dist")),
-        ));
-    }
-
-    // Fall back to TS source (requires bun) or esbuild bundle (requires bun/node)
-    let src_entry = sidecar_dir.join("src").join("index.ts");
-    let dist_entry = sidecar_dir.join("dist").join("index.mjs");
-
-    if src_entry.exists() {
-        return Ok((
-            "runtime".to_string(),
-            vec![src_entry.to_string_lossy().to_string()],
-            Some(sidecar_dir),
-        ));
-    }
-
-    if dist_entry.exists() {
-        return Ok((
-            "runtime".to_string(),
-            vec![dist_entry.to_string_lossy().to_string()],
-            Some(sidecar_dir),
-        ));
-    }
-
     Err(AppError::AgentError {
         message: format!(
-            "Agent sidecar not found. Tried:\n  {}\n  {}\n  {}",
+            "Agent sidecar not found: {}",
             binary_path.display(),
-            src_entry.display(),
-            dist_entry.display()
         ),
     })
 }
@@ -143,8 +130,7 @@ pub async fn start_agent_sidecar(
         .settings
         .lock()
         .as_ref()
-        .and_then(|s| s.llm.api_key.clone())
-        .unwrap_or_default();
+        .and_then(|s| s.llm.api_key.clone());
 
     let data_dir = crate::state::get_data_dir(state)
         .map_err(|e| AppError::AgentError {
@@ -157,8 +143,7 @@ pub async fn start_agent_sidecar(
         .settings
         .lock()
         .as_ref()
-        .and_then(|s| s.llm.model.clone())
-        .unwrap_or_default();
+        .and_then(|s| s.llm.model.clone());
 
     let mut cmd = tokio::process::Command::new(&command);
     for arg in &args {
@@ -172,13 +157,15 @@ pub async fn start_agent_sidecar(
 
     cmd.env("AGENT_PORT", "0") // Let OS pick a free port
         .env("VIBELIGHTS_PORT", api_port.to_string())
-        .env("VIBELIGHTS_DATA_DIR", &data_dir)
-        .env("VIBELIGHTS_MODEL", &model);
+        .env("VIBELIGHTS_DATA_DIR", &data_dir);
 
-    // Only pass API key if one is configured; otherwise let the SDK
-    // use the user's existing Claude Code OAuth credentials from ~/.claude/
-    if !api_key.is_empty() {
-        cmd.env("ANTHROPIC_API_KEY", &api_key);
+    // Only pass API key / model if explicitly configured; otherwise let the
+    // SDK use the user's existing Claude Code OAuth credentials from ~/.claude/
+    if let Some(ref key) = api_key {
+        cmd.env("ANTHROPIC_API_KEY", key);
+    }
+    if let Some(ref m) = model {
+        cmd.env("VIBELIGHTS_MODEL", m);
     }
 
     let mut child = cmd
@@ -509,12 +496,15 @@ fn process_sse_event(
             }
         }
         "tool_call" => {
-            if let Ok(tool) = serde_json::from_str::<String>(data) {
-                emitter.emit_tool_call(&tool);
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                let id = val.get("id").and_then(serde_json::Value::as_str).unwrap_or("");
+                let tool = val.get("tool").and_then(serde_json::Value::as_str).unwrap_or("tool");
+                emitter.emit_tool_call(id, tool);
             }
         }
         "tool_result" => {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                let id = val.get("id").and_then(serde_json::Value::as_str).unwrap_or("");
                 let tool = val
                     .get("tool")
                     .and_then(serde_json::Value::as_str)
@@ -523,7 +513,7 @@ fn process_sse_event(
                     .get("result")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("");
-                emitter.emit_tool_result(tool, result);
+                emitter.emit_tool_result(id, tool, result);
             }
         }
         "thinking" => {
@@ -541,9 +531,7 @@ fn process_sse_event(
         }
         "error" => {
             if let Ok(msg) = serde_json::from_str::<String>(data) {
-                let err_text = format!("\n\nError: {msg}");
-                emitter.emit_token(&err_text);
-                assistant_text.push_str(&err_text);
+                emitter.emit_error(&msg);
             }
             emitter.emit_complete();
         }

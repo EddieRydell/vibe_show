@@ -100,6 +100,11 @@ impl Parser {
         matches!(self.peek(), Token::Eof)
     }
 
+    /// Check if the next token (after current) is LParen without consuming anything.
+    fn lookahead_is_lparen(&self) -> bool {
+        self.tokens.get(self.pos + 1).is_some_and(|t| matches!(t.token, Token::LParen))
+    }
+
     fn advance(&mut self) -> &SpannedToken {
         let tok = &self.tokens[self.pos];
         if self.pos < self.tokens.len() - 1 {
@@ -913,6 +918,29 @@ impl Parser {
                 let expr = self.parse_expr()?;
                 self.expect(&Token::RParen)?;
                 Ok(expr)
+            }
+            // float(expr) and int(expr) type casts — parse as synthetic function calls
+            Token::FloatTy if self.lookahead_is_lparen() => {
+                self.advance();
+                self.expect(&Token::LParen)?;
+                let arg = self.parse_expr()?;
+                let end = self.span();
+                self.expect(&Token::RParen)?;
+                Ok(Expr {
+                    kind: ExprKind::Call { name: "float".into(), args: vec![arg] },
+                    span: span.merge(end),
+                })
+            }
+            Token::IntTy if self.lookahead_is_lparen() => {
+                self.advance();
+                self.expect(&Token::LParen)?;
+                let arg = self.parse_expr()?;
+                let end = self.span();
+                self.expect(&Token::RParen)?;
+                Ok(Expr {
+                    kind: ExprKind::Call { name: "int".into(), args: vec![arg] },
+                    span: span.merge(end),
+                })
             }
             Token::If => {
                 self.parse_if_expr()

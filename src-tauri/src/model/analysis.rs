@@ -33,31 +33,18 @@ pub struct AudioAnalysis {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[cfg_attr(feature = "tauri-app", derive(TS))]
 #[cfg_attr(feature = "tauri-app", ts(export))]
+#[serde(default)]
 pub struct AnalysisFeatures {
-    #[serde(default = "default_true")]
     pub beats: bool,
-    #[serde(default = "default_true")]
     pub structure: bool,
-    #[serde(default = "default_true")]
     pub stems: bool,
-    #[serde(default = "default_true")]
     pub lyrics: bool,
-    #[serde(default = "default_true")]
     pub mood: bool,
-    #[serde(default = "default_true")]
     pub harmony: bool,
-    #[serde(default = "default_true")]
     pub low_level: bool,
-    #[serde(default = "default_true")]
     pub pitch: bool,
-    #[serde(default = "default_true")]
     pub drums: bool,
-    #[serde(default = "default_true")]
     pub vocal_presence: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl Default for AnalysisFeatures {

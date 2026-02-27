@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cmd } from "../commands";
 import type { Frame, PlaybackInfo, Show, UndoState } from "../types";
+import { useToast } from "./useToast";
 
 export interface EngineState {
   show: Show | null;
@@ -39,10 +40,11 @@ export function useEngine(
   audioSeekRef.current = audioSeek;
   const audioPauseRef = useRef(audioPause);
   audioPauseRef.current = audioPause;
+  const { showError } = useToast();
 
   /** Refresh show + playback + frame + undo state from backend after a state change. */
   const refreshAll = useCallback(() => {
-    cmd.getShow().then(setShow).catch(console.error);
+    cmd.getShow().then(setShow).catch(showError);
     cmd
       .getPlayback()
       .then((pb) => {
@@ -50,11 +52,11 @@ export function useEngine(
         playbackRef.current = pb;
         playingRef.current = pb.playing;
       })
-      .catch(console.error);
+      .catch(showError);
     const time = playbackRef.current?.current_time ?? 0.0;
-    cmd.getFrame(time).then(setFrame).catch(console.error);
-    cmd.getUndoState().then(setUndoState).catch(console.error);
-  }, []);
+    cmd.getFrame(time).then(setFrame).catch(showError);
+    cmd.getUndoState().then(setUndoState).catch(showError);
+  }, [showError]);
 
   // Animation loop: tick the engine and receive frames.
   // Only schedules the next frame AFTER the current IPC completes to prevent
@@ -204,14 +206,22 @@ export function useEngine(
   }, []);
 
   const setRegion = useCallback((region: [number, number] | null) => {
-    cmd.setRegion(region).catch(console.error);
-    setPlayback((prev) => (prev ? { ...prev, region } : prev));
-  }, []);
+    cmd
+      .setRegion(region)
+      .then(() => {
+        setPlayback((prev) => (prev ? { ...prev, region } : prev));
+      })
+      .catch(showError);
+  }, [showError]);
 
   const setLooping = useCallback((looping: boolean) => {
-    cmd.setLooping(looping).catch(console.error);
-    setPlayback((prev) => (prev ? { ...prev, looping } : prev));
-  }, []);
+    cmd
+      .setLooping(looping)
+      .then(() => {
+        setPlayback((prev) => (prev ? { ...prev, looping } : prev));
+      })
+      .catch(showError);
+  }, [showError]);
 
   const undo = useCallback(async () => {
     setError(null);

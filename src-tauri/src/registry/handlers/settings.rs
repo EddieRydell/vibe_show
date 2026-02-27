@@ -36,27 +36,26 @@ pub fn set_llm_config(
     p: SetLlmConfigParams,
 ) -> Result<CommandOutput, AppError> {
     let mut settings_guard = state.settings.lock();
-    if let Some(ref mut s) = *settings_guard {
-        s.llm = LlmProviderConfig {
-            api_key: if p.api_key.is_empty() {
-                None
-            } else {
-                Some(p.api_key.clone())
-            },
-            model: p.model,
-        };
-        settings::save_settings(&state.app_config_dir, s)
-            .map_err(|e| AppError::SettingsSaveError {
-                message: e.to_string(),
-            })?;
-        settings::save_api_key(&state.app_config_dir, &p.api_key)
-            .map_err(|e| AppError::SettingsSaveError {
-                message: e.to_string(),
-            })?;
-        // Kill agent sidecar when API key changes so it restarts with the new key
-        if !p.api_key.is_empty() {
-            state.agent_port.store(0, std::sync::atomic::Ordering::Relaxed);
-        }
+    let s = settings_guard.as_mut().ok_or(AppError::NoSettings)?;
+    s.llm = LlmProviderConfig {
+        api_key: if p.api_key.is_empty() {
+            None
+        } else {
+            Some(p.api_key.clone())
+        },
+        model: p.model,
+    };
+    settings::save_settings(&state.app_config_dir, s)
+        .map_err(|e| AppError::SettingsSaveError {
+            message: e.to_string(),
+        })?;
+    settings::save_api_key(&state.app_config_dir, &p.api_key)
+        .map_err(|e| AppError::SettingsSaveError {
+            message: e.to_string(),
+        })?;
+    // Kill agent sidecar when API key changes so it restarts with the new key
+    if !p.api_key.is_empty() {
+        state.agent_port.store(0, std::sync::atomic::Ordering::Relaxed);
     }
     Ok(CommandOutput::new("LLM config updated.", CommandResult::SetLlmConfig))
 }

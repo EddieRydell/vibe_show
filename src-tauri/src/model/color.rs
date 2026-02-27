@@ -107,6 +107,32 @@ impl Color {
         }
     }
 
+    /// Convert to HSV. Returns (hue: 0-360, saturation: 0-1, value: 0-1).
+    #[must_use]
+    #[allow(clippy::float_cmp)] // exact comparison is correct for max/min of same values
+    pub fn to_hsv(self) -> (f64, f64, f64) {
+        let r = f64::from(self.r) / 255.0;
+        let g = f64::from(self.g) / 255.0;
+        let b = f64::from(self.b) / 255.0;
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let delta = max - min;
+
+        let h = if delta == 0.0 {
+            0.0
+        } else if max == r {
+            60.0 * (((g - b) / delta) % 6.0)
+        } else if max == g {
+            60.0 * (((b - r) / delta) + 2.0)
+        } else {
+            60.0 * (((r - g) / delta) + 4.0)
+        };
+        let h = if h < 0.0 { h + 360.0 } else { h };
+
+        let s = if max == 0.0 { 0.0 } else { delta / max };
+        (h, s, max)
+    }
+
     /// Saturating subtraction per channel.
     #[must_use]
     pub fn subtract(self, other: Self) -> Self {

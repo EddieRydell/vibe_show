@@ -5,6 +5,7 @@ import { cmd } from "../../commands";
 import { vibelightsLanguage } from "../../editor/vibelights-lang";
 import type { ScriptCompileResult } from "../../types";
 import { useDebouncedEffect } from "../../hooks/useDebounce";
+import { useToast } from "../../hooks/useToast";
 
 interface Props {
   scriptName: string | null;
@@ -23,6 +24,7 @@ export function ScriptEditor({
   onCompileResult,
   onSave,
 }: Props) {
+  const { showError } = useToast();
   const [compiling, setCompiling] = useState(false);
 
   // Auto-compile on source change (debounced)
@@ -36,7 +38,7 @@ export function ScriptEditor({
 
       compilePromise
         .then(onCompileResult)
-        .catch(console.error)
+        .catch(showError)
         .finally(() => setCompiling(false));
     },
     400,

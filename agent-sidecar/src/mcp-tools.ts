@@ -26,16 +26,9 @@ export function createVibeLightsMcpServer(client: VibeLightsClient) {
           args.command,
           args.params ?? {},
         );
-        // The API returns { message, data_file? } for tool dispatch
-        let text: string;
-        if (result && typeof result === "object" && "message" in (result as Record<string, unknown>)) {
-          const r = result as { message: string; data_file?: string };
-          text = r.message;
-          if (r.data_file) {
-            text += `\n\nFull data written to: ${r.data_file}\nUse Read or Grep to explore the file.`;
-          }
-        } else {
-          text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+        let text = result.message;
+        if (result.data_file) {
+          text += `\n\nFull data written to: ${result.data_file}\nUse Read or Grep to explore the file.`;
         }
         return {
           content: [{ type: "text" as const, text }],
@@ -71,15 +64,7 @@ export function createVibeLightsMcpServer(client: VibeLightsClient) {
           topic: args.topic,
         });
         return {
-          content: [
-            {
-              type: "text" as const,
-              text:
-                typeof result === "string"
-                  ? result
-                  : JSON.stringify(result, null, 2),
-            },
-          ],
+          content: [{ type: "text" as const, text: result.message }],
         };
       } catch (err) {
         return {
@@ -121,15 +106,7 @@ export function createVibeLightsMcpServer(client: VibeLightsClient) {
           })),
         });
         return {
-          content: [
-            {
-              type: "text" as const,
-              text:
-                typeof result === "string"
-                  ? result
-                  : JSON.stringify(result, null, 2),
-            },
-          ],
+          content: [{ type: "text" as const, text: result.message }],
         };
       } catch (err) {
         return {

@@ -14,6 +14,7 @@ import type {
   ScriptParams,
   ScriptParamInfo,
 } from "../types";
+import { useToast } from "../hooks/useToast";
 
 interface Props {
   initialScriptName: string | null;
@@ -26,6 +27,7 @@ export function ScriptScreen({
   onBack,
 }: Props) {
   const { chatOpen, toggleChat, refreshRef } = useAppShell();
+  const { showError } = useToast();
 
   const [currentScript, setCurrentScript] = useState<string | null>(
     initialScriptName,
@@ -78,15 +80,15 @@ export function ScriptScreen({
           setDirty(false);
         }
       })
-      .catch(console.warn);
+      .catch(showError);
     // Also load params from cache
     cmd.getScriptParams(currentScript)
       .then((p) => {
         setParams(p);
         setParamValues(buildDefaults(p));
       })
-      .catch(console.warn);
-  }, [currentScript]);
+      .catch(showError);
+  }, [currentScript, showError]);
 
   // Listen for chat tool_result events — refresh script list & current source
   useEffect(() => {
@@ -105,13 +107,13 @@ export function ScriptScreen({
               setDirty(false);
             }
           })
-          .catch(console.warn);
+          .catch(showError);
         cmd.getScriptParams(currentScript)
           .then((p) => {
             setParams(p);
             setParamValues(buildDefaults(p));
           })
-          .catch(console.warn);
+          .catch(showError);
       }
     }).then((fn) => {
       if (cancelled) fn();
@@ -140,7 +142,7 @@ export function ScriptScreen({
               setCurrentScript(lastScript[0]);
             }
           })
-          .catch(console.warn);
+          .catch(showError);
       }
     }).then((fn) => {
       if (cancelled) fn();
@@ -150,7 +152,7 @@ export function ScriptScreen({
       cancelled = true;
       unlisten?.();
     };
-  }, [currentScript]);
+  }, [currentScript, showError]);
 
   const handleSourceChange = useCallback((newSource: string) => {
     setSource(newSource);

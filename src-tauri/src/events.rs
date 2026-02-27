@@ -6,6 +6,7 @@ pub const CHAT_TOOL_CALL: &str = "chat:tool_call";
 pub const CHAT_TOOL_RESULT: &str = "chat:tool_result";
 pub const CHAT_COMPLETE: &str = "chat:complete";
 pub const CHAT_THINKING: &str = "chat:thinking";
+pub const CHAT_ERROR: &str = "chat:error";
 pub const PROGRESS: &str = "progress";
 pub const SHOW_REFRESHED: &str = "show-refreshed";
 pub const SELECTION_CHANGED: &str = "selection-changed";
@@ -32,6 +33,7 @@ mod tests {
             ("CHAT_TOOL_RESULT", CHAT_TOOL_RESULT),
             ("CHAT_COMPLETE", CHAT_COMPLETE),
             ("CHAT_THINKING", CHAT_THINKING),
+            ("CHAT_ERROR", CHAT_ERROR),
             ("PROGRESS", PROGRESS),
             ("SHOW_REFRESHED", SHOW_REFRESHED),
             ("SELECTION_CHANGED", SELECTION_CHANGED),

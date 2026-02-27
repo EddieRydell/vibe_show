@@ -5,7 +5,7 @@ use super::Effect;
 const DEFAULT_OFFSET: f64 = 0.0;
 
 /// Batch evaluate: extract params once, loop over pixels.
-#[allow(clippy::too_many_arguments, clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[allow(clippy::too_many_arguments, clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::indexing_slicing)]
 pub fn evaluate_pixels_batch(
     t: f64,
     dest: &mut [Color],
@@ -26,7 +26,7 @@ pub fn evaluate_pixels_batch(
         return;
     }
     if colors.len() == 1 {
-        let c = colors.first().copied().unwrap_or(Color::BLACK);
+        let c = colors[0];
         for pixel in dest.iter_mut() {
             *pixel = pixel.blend(c, blend_mode);
         }
@@ -64,7 +64,7 @@ pub struct GradientEffect;
 static DEFAULT_COLORS: [Color; 2] = [Color::rgb(255, 0, 0), Color::rgb(0, 0, 255)];
 
 impl Effect for GradientEffect {
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::indexing_slicing)]
     fn evaluate(
         &self,
         t: f64,
@@ -79,7 +79,7 @@ impl Effect for GradientEffect {
             return Color::BLACK;
         }
         if colors.len() == 1 {
-            return colors.first().copied().unwrap_or(Color::BLACK);
+            return colors[0];
         }
 
         let divisor = (pixel_count.saturating_sub(1)).max(1) as f64;

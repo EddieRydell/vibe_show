@@ -121,6 +121,32 @@ pub enum Op {
     Rgba,
     /// Pop color, pop float → push scaled color
     ColorScale,
+    /// Pop two colors → push saturating add
+    ColorAdd,
+    /// Pop two colors → push saturating subtract (a - b)
+    ColorSub,
+    /// Pop two Vec2 → push component-wise add
+    Vec2Add,
+    /// Pop two Vec2 → push component-wise subtract (a - b)
+    Vec2Sub,
+    /// Pop Vec2, pop float → push scaled Vec2
+    Vec2Scale,
+    /// Pop color_a, color_b, float_t → push lerp(a, b, t)
+    ColorMix,
+    /// Pop color → push float (hue 0-360)
+    ColorHue,
+    /// Pop color → push float (saturation 0-1)
+    ColorSaturation,
+    /// Pop color → push float (value 0-1)
+    ColorValue,
+    /// Pop Vec2 → push float (angle in radians)
+    Angle,
+    /// Pop float (radians) → push Vec2 (unit vector)
+    FromAngle,
+    /// Pop Vec2, float (angle) → push rotated Vec2
+    Rotate,
+    /// Pop x, in_min, in_max, out_min, out_max → push mapped float
+    Map,
     /// Pop color → push float (r channel)
     ColorR,
     /// Pop color → push float (g channel)
@@ -445,6 +471,37 @@ impl Compiler {
                 self.compile_expr(factor)?;
                 self.emit(Op::ColorScale);
             }
+            TypedExprKind::ColorAdd { left, right } => {
+                self.compile_expr(left)?;
+                self.compile_expr(right)?;
+                self.emit(Op::ColorAdd);
+            }
+            TypedExprKind::ColorSub { left, right } => {
+                self.compile_expr(left)?;
+                self.compile_expr(right)?;
+                self.emit(Op::ColorSub);
+            }
+            TypedExprKind::Vec2Add { left, right } => {
+                self.compile_expr(left)?;
+                self.compile_expr(right)?;
+                self.emit(Op::Vec2Add);
+            }
+            TypedExprKind::Vec2Sub { left, right } => {
+                self.compile_expr(left)?;
+                self.compile_expr(right)?;
+                self.emit(Op::Vec2Sub);
+            }
+            TypedExprKind::Vec2Scale { vec, factor } => {
+                self.compile_expr(vec)?;
+                self.compile_expr(factor)?;
+                self.emit(Op::Vec2Scale);
+            }
+            TypedExprKind::ColorMix { a, b, t } => {
+                self.compile_expr(a)?;
+                self.compile_expr(b)?;
+                self.compile_expr(t)?;
+                self.emit(Op::ColorMix);
+            }
             TypedExprKind::Field { object, field } => {
                 self.compile_expr(object)?;
                 self.emit(match field.as_str() {
@@ -452,6 +509,9 @@ impl Compiler {
                     "g" => Op::ColorG,
                     "b" => Op::ColorB,
                     "a" => Op::ColorA,
+                    "hue" => Op::ColorHue,
+                    "saturation" => Op::ColorSaturation,
+                    "value" => Op::ColorValue,
                     "x" => Op::Vec2X,
                     "y" => Op::Vec2Y,
                     _ => {

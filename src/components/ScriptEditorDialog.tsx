@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ScriptCompileResult } from "../types";
 import { cmd } from "../commands";
 import { useDebouncedEffect } from "../hooks/useDebounce";
+import { useToast } from "../hooks/useToast";
 
 interface Props {
   scriptName: string | null; // null = new script
@@ -16,6 +17,7 @@ export function ScriptEditorDialog({
   onSaved,
   onCancel,
 }: Props) {
+  const { showError } = useToast();
   const [name, setName] = useState(scriptName ?? "");
   const [source, setSource] = useState(initialSource);
   const [compileResult, setCompileResult] = useState<ScriptCompileResult | null>(null);
@@ -31,8 +33,8 @@ export function ScriptEditorDialog({
       let idx = 1;
       while (names.includes(`script_${idx}`)) idx++;
       setName(`script_${idx}`);
-    }).catch(console.error);
-  }, [scriptName]);
+    }).catch(showError);
+  }, [scriptName, showError]);
 
   // Auto-compile on change (debounced)
   useDebouncedEffect(
@@ -45,7 +47,7 @@ export function ScriptEditorDialog({
           setCompileResult(result);
           if (result.success) setModified(false);
         })
-        .catch(console.error)
+        .catch(showError)
         .finally(() => setCompiling(false));
     },
     500,

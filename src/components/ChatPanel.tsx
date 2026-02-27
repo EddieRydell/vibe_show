@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cmd } from "../commands";
-import { CHAT_TOKEN, CHAT_TOOL_CALL, CHAT_TOOL_RESULT, CHAT_COMPLETE, CHAT_THINKING } from "../events";
+import { CHAT_TOKEN, CHAT_TOOL_CALL, CHAT_TOOL_RESULT, CHAT_COMPLETE, CHAT_THINKING, CHAT_ERROR } from "../events";
 import { useTauriListener } from "../hooks/useTauriListener";
 import type { ChatHistoryEntry, ConversationSummary } from "../types";
 import { MessageSquare, Send, X, Trash2, Loader2, Check, History, Plus } from "lucide-react";
@@ -9,13 +9,20 @@ import type { AppScreen } from "../screens";
 import { parseChatEntries } from "../utils/validators";
 import { useToast } from "../hooks/useToast";
 
-/** Display message: backend chat entries plus frontend-only "error" role. */
-type DisplayMessage = ChatHistoryEntry | { role: "error"; text: string };
+/** Display message: backend chat entries plus frontend-only roles. */
+type DisplayMessage =
+  | ChatHistoryEntry
+  | { role: "error"; text: string }
+  | { role: "tool_call"; id: string; tool: string; status: "running" | "done"; result?: string };
 
-interface ToolActivity {
-  tool: string;
-  status: "running" | "done";
-  result?: string;
+type KeyedMessage = DisplayMessage & { key: string };
+
+let msgKeyCounter = 0;
+function withKey(msg: DisplayMessage): KeyedMessage {
+  return { ...msg, key: `msg-${++msgKeyCounter}` };
+}
+function withKeys(msgs: DisplayMessage[]): KeyedMessage[] {
+  return msgs.map(withKey);
 }
 
 interface ChatPanelProps {
@@ -44,66 +51,73 @@ function buildScreenContext(screen: AppScreen): string {
 }
 
 export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) {
-  const [messages, setMessages] = useState<DisplayMessage[]>([]);
+  const [messages, setMessages] = useState<KeyedMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [streaming, setStreaming] = useState("");
-  const [toolActivity, setToolActivity] = useState<ToolActivity[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { showError } = useToast();
 
+  // Derived: any tool still running?
+  const hasRunningTools = messages.some((m) => m.role === "tool_call" && m.status === "running");
+
   const refreshConversations = useCallback(() => {
-    cmd.listAgentConversations().then(setConversations).catch(console.warn);
-  }, []);
+    cmd.listAgentConversations().then(setConversations).catch(showError);
+  }, [showError]);
 
   // Load persisted chat history on mount.
   useEffect(() => {
     refreshConversations();
     cmd.getAgentChatHistory().then((entries) => {
-      setMessages(parseChatEntries(entries));
-    }).catch(console.warn);
+      setMessages(withKeys(parseChatEntries(entries)));
+    }).catch(showError);
     setStreaming("");
     setSending(false);
-  }, [refreshConversations]);
+  }, [refreshConversations, showError]);
 
   // Listen for chat events
   useTauriListener<string>(CHAT_TOKEN, (text) => {
     setStreaming((prev) => prev + text);
   });
 
-  useTauriListener<string>(CHAT_TOOL_CALL, (tool) => {
-    setToolActivity((prev) => [...prev, { tool, status: "running" }]);
+  // Tool call: flush any accumulated text as a message, then add the tool inline
+  useTauriListener<{ id: string; tool: string }>(CHAT_TOOL_CALL, (payload) => {
+    setStreaming((prev) => {
+      if (prev.trim()) {
+        setMessages((msgs) => [...msgs, withKey({ role: "assistant", text: prev })]);
+      }
+      return "";
+    });
+    setMessages((msgs) => [...msgs, withKey({
+      role: "tool_call", id: payload.id, tool: payload.tool, status: "running",
+    })]);
   });
 
-  useTauriListener<{ tool: string; result: string }>(CHAT_TOOL_RESULT, (payload) => {
-    setToolActivity((prev) => {
-      let idx = -1;
-      for (let i = prev.length - 1; i >= 0; i--) {
-        if (prev[i]!.status === "running") { idx = i; break; }
-      }
-      if (idx === -1) return prev;
-      const updated = [...prev];
-      updated[idx] = { tool: updated[idx]!.tool, status: "done", result: payload.result };
+  // Tool result: update the matching tool message in-place
+  useTauriListener<{ id: string; tool: string; result: string }>(CHAT_TOOL_RESULT, (payload) => {
+    setMessages((msgs) => {
+      const idx = msgs.findIndex((m) => m.role === "tool_call" && m.id === payload.id);
+      if (idx === -1) return msgs;
+      const updated = [...msgs];
+      const prev = updated[idx]! as KeyedMessage & { role: "tool_call" };
+      updated[idx] = { ...prev, status: "done", result: payload.result };
       return updated;
     });
     onRefresh();
   }, [onRefresh]);
 
+  // Complete: flush remaining text
   useTauriListener<boolean>(CHAT_COMPLETE, () => {
     setSending(false);
-    setToolActivity([]);
     setStreaming((prev) => {
       if (prev.trim()) {
-        setMessages((msgs) => [...msgs, { role: "assistant", text: prev }]);
+        setMessages((msgs) => [...msgs, withKey({ role: "assistant", text: prev })]);
       }
       return "";
     });
-    cmd.getAgentChatHistory().then((entries) => {
-      const parsed = parseChatEntries(entries);
-      if (parsed.length > 0) setMessages(parsed);
-    }).catch(console.warn);
     onRefresh();
   }, [onRefresh]);
 
@@ -111,17 +125,42 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
     // Don't clear streaming — let text accumulate
   });
 
-  // Auto-scroll
+  useTauriListener<string>(CHAT_ERROR, (text) => {
+    setMessages((prev) => [...prev, withKey({ role: "error", text })]);
+  });
+
+  // Auto-scroll only when already near the bottom
+  const isNearBottom = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streaming]);
+    if (isNearBottom()) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, isNearBottom]);
+
+  // Debounced scroll for streaming tokens
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    if (!streaming) return;
+    clearTimeout(scrollTimerRef.current);
+    scrollTimerRef.current = setTimeout(() => {
+      if (isNearBottom()) {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
+    }, 100);
+    return () => clearTimeout(scrollTimerRef.current);
+  }, [streaming, isNearBottom]);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || sending) return;
     const msg = input.trim();
     setInput("");
     setSending(true);
-    setMessages((prev) => [...prev, { role: "user", text: msg }]);
+    setMessages((prev) => [...prev, withKey({ role: "user", text: msg })]);
 
     const context = buildScreenContext(screen);
 
@@ -136,7 +175,7 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
             : JSON.stringify(e);
       setMessages((prev) => [
         ...prev,
-        { role: "error", text },
+        withKey({ role: "error", text }),
       ]);
       setSending(false);
     }
@@ -148,23 +187,30 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
     refreshConversations();
     setMessages([]);
     setStreaming("");
-    setToolActivity([]);
   }, [refreshConversations]);
 
   const handleStop = useCallback(async () => {
-    await cmd.cancelAgentMessage().catch(console.warn);
+    await cmd.cancelAgentMessage().catch(showError);
     setSending(false);
-  }, []);
+  }, [showError]);
 
   const handleSwitchConversation = useCallback(async (id: string) => {
+    // Cancel any in-flight query before switching
+    if (sending) {
+      await cmd.cancelAgentMessage().catch(showError);
+    }
     await cmd.switchAgentConversation(id).catch(showError);
-    const entries = await cmd.getAgentChatHistory().catch(() => []);
-    setMessages(parseChatEntries(entries));
+    try {
+      const entries = await cmd.getAgentChatHistory();
+      setMessages(withKeys(parseChatEntries(entries)));
+    } catch (e) {
+      showError(e);
+    }
     setStreaming("");
-    setToolActivity([]);
+    setSending(false);
     setShowHistory(false);
     refreshConversations();
-  }, [refreshConversations]);
+  }, [sending, showError, refreshConversations]);
 
   const handleDeleteConversation = useCallback(async (id: string) => {
     await cmd.deleteAgentConversation(id).catch(showError);
@@ -251,9 +297,9 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2" aria-live="polite">
-        {messages.map((msg, i) => (
-          <div key={i} className={`text-xs ${msg.role === "user" ? "text-right" : ""}`}>
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-2" aria-live="polite">
+        {messages.map((msg) => (
+          <div key={msg.key} className={`text-xs ${msg.role === "user" ? "text-right" : ""}`}>
             {msg.role === "user" ? (
               <div className="bg-primary/10 text-text inline-block max-w-[90%] rounded-lg px-3 py-2 text-left">
                 {msg.text}
@@ -261,6 +307,18 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
             ) : msg.role === "error" ? (
               <div className="bg-error/10 text-error rounded-lg px-3 py-2">
                 {msg.text}
+              </div>
+            ) : msg.role === "tool_call" ? (
+              <div className="text-text-2 flex items-center gap-1.5 text-[11px] py-0.5">
+                {msg.status === "running" ? (
+                  <Loader2 size={10} className="animate-spin shrink-0" />
+                ) : (
+                  <Check size={10} className="shrink-0" />
+                )}
+                <span className="font-mono">{msg.tool}</span>
+                {msg.status === "done" && msg.result && (
+                  <span className="truncate opacity-60">— {msg.result.slice(0, 80)}</span>
+                )}
               </div>
             ) : (
               <div className="bg-surface-2 text-text max-w-[90%] rounded-lg px-3 py-2 prose-chat">
@@ -277,28 +335,10 @@ export function ChatPanel({ open, onClose, onRefresh, screen }: ChatPanelProps) 
           </div>
         )}
 
-        {sending && !streaming && toolActivity.length === 0 && (
+        {sending && !streaming && !hasRunningTools && (
           <div className="text-text-2 flex items-center gap-2 py-1 text-xs">
             <Loader2 size={12} className="animate-spin" />
             Thinking...
-          </div>
-        )}
-
-        {toolActivity.length > 0 && (
-          <div className="space-y-0.5 py-1">
-            {toolActivity.map((activity, i) => (
-              <div key={i} className="text-text-2 flex items-center gap-1.5 text-[11px] py-0.5">
-                {activity.status === "running" ? (
-                  <Loader2 size={10} className="animate-spin shrink-0" />
-                ) : (
-                  <Check size={10} className="shrink-0" />
-                )}
-                <span className="font-mono">{activity.tool}</span>
-                {activity.status === "done" && activity.result && (
-                  <span className="truncate opacity-60">— {activity.result.slice(0, 80)}</span>
-                )}
-              </div>
-            ))}
           </div>
         )}
 

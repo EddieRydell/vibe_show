@@ -6,6 +6,7 @@ import { ScreenShell } from "../components/ScreenShell";
 import { PythonSetupWizard } from "../components/PythonSetupWizard";
 import { AnalysisWizard } from "../components/AnalysisWizard";
 import { AnalysisWorkspace } from "../components/AnalysisWorkspace";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import type { ManualBeat } from "../components/AnalysisWorkspace";
 import { useAudio } from "../hooks/useAudio";
 
@@ -266,6 +267,7 @@ export function AnalysisScreen({ filename, onBack }: Props) {
     <ScreenShell title={filename} onBack={onBack} toolbar={toolbar}>
       {/* Workspace */}
       {audio.ready ? (
+        <ErrorBoundary>
         <AnalysisWorkspace
           duration={duration}
           currentTime={currentTime}
@@ -279,6 +281,7 @@ export function AnalysisScreen({ filename, onBack }: Props) {
           onSelectBeat={setSelectedBeatId}
           onDeleteBeat={handleDeleteBeat}
         />
+        </ErrorBoundary>
       ) : (
         <div className="flex flex-1 items-center justify-center">
           <p className="text-text-2 text-sm">Loading audio...</p>

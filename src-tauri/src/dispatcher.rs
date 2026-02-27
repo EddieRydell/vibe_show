@@ -8,6 +8,7 @@ use crate::model::{
     BlendMode, EffectInstance, EffectKind, EffectParams, EffectTarget,
     ParamKey, ParamValue, Sequence, TimeRange,
 };
+use crate::registry::params::FieldUpdate;
 
 /// An undoable editing command. Each variant corresponds to one user action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,7 +58,7 @@ pub enum EditCommand {
     UpdateSequenceSettings {
         sequence_index: usize,
         name: Option<String>,
-        audio_file: Option<Option<String>>,
+        audio_file: Option<FieldUpdate<String>>,
         duration: Option<f64>,
         frame_rate: Option<f64>,
     },
@@ -555,7 +556,10 @@ impl CommandDispatcher {
                     sequence.name.clone_from(n);
                 }
                 if let Some(af) = audio_file {
-                    sequence.audio_file.clone_from(af);
+                    match af {
+                        FieldUpdate::Set(path) => sequence.audio_file = Some(path.clone()),
+                        FieldUpdate::Clear => sequence.audio_file = None,
+                    }
                 }
                 if let Some(d) = duration {
                     if *d <= 0.0 {

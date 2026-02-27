@@ -8,6 +8,7 @@ export const CHAT_TOOL_CALL = "chat:tool_call" as const;
 export const CHAT_TOOL_RESULT = "chat:tool_result" as const;
 export const CHAT_COMPLETE = "chat:complete" as const;
 export const CHAT_THINKING = "chat:thinking" as const;
+export const CHAT_ERROR = "chat:error" as const;
 export const PROGRESS = "progress" as const;
 export const SHOW_REFRESHED = "show-refreshed" as const;
 export const SELECTION_CHANGED = "selection-changed" as const;

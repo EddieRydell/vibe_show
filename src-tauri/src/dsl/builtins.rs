@@ -103,6 +103,10 @@ pub static BUILTINS: &[BuiltinFn] = &[
         name: "smoothstep", params: &[("e0", TypeName::Float), ("e1", TypeName::Float), ("x", TypeName::Float)], ret: TypeName::Float,
         op: Op::Smoothstep, category: "math", description: "Smooth Hermite interpolation. Requires e0 < e1; returns 0 if e0 >= e1",
     },
+    BuiltinFn {
+        name: "map", params: &[("x", TypeName::Float), ("in_min", TypeName::Float), ("in_max", TypeName::Float), ("out_min", TypeName::Float), ("out_max", TypeName::Float)], ret: TypeName::Float,
+        op: Op::Map, category: "math", description: "Remap x from [in_min, in_max] to [out_min, out_max]. Returns out_min if in_min == in_max",
+    },
     // ── Color constructors ──────────────────────────────────────
     BuiltinFn {
         name: "rgb", params: &[("r", TypeName::Float), ("g", TypeName::Float), ("b", TypeName::Float)], ret: TypeName::Color,
@@ -136,6 +140,18 @@ pub static BUILTINS: &[BuiltinFn] = &[
     BuiltinFn {
         name: "normalize", params: &[("v", TypeName::Vec2)], ret: TypeName::Vec2,
         op: Op::Normalize, category: "vec2", description: "Normalize vec2 to unit length",
+    },
+    BuiltinFn {
+        name: "angle", params: &[("v", TypeName::Vec2)], ret: TypeName::Float,
+        op: Op::Angle, category: "vec2", description: "Angle of vec2 in radians (atan2(y, x))",
+    },
+    BuiltinFn {
+        name: "from_angle", params: &[("radians", TypeName::Float)], ret: TypeName::Vec2,
+        op: Op::FromAngle, category: "vec2", description: "Unit vec2 from angle: vec2(cos(r), sin(r))",
+    },
+    BuiltinFn {
+        name: "rotate", params: &[("v", TypeName::Vec2), ("angle", TypeName::Float)], ret: TypeName::Vec2,
+        op: Op::Rotate, category: "vec2", description: "Rotate vec2 by angle in radians",
     },
     // ── Hash / Random ───────────────────────────────────────────
     BuiltinFn {
