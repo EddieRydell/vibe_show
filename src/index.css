@@ -180,7 +180,7 @@ button:focus-visible {
 
 /* ── Dockview: invisible headers, drag-handle only ── */
 
-/* Thin drag-handle bar with centered grip line */
+/* Thin drag-handle strip */
 .dv-tabs-and-actions-container {
   --dv-tabs-and-actions-container-height: 14px;
   --dv-tabs-and-actions-container-font-size: 9px;
@@ -188,7 +188,7 @@ button:focus-visible {
   position: relative;
 }
 
-/* Grip indicator — subtle centered line */
+/* Grip indicator — subtle centered line, brightens on hover */
 .dv-tabs-and-actions-container::after {
   content: "";
   position: absolute;
@@ -204,42 +204,23 @@ button:focus-visible {
   transition: opacity 150ms;
 }
 
-/* Hide grip when hovering (labels + actions take over) */
 .dv-tabs-and-actions-container:hover::after {
-  opacity: 0;
+  opacity: 0.4;
 }
 
-/* Tab labels hidden by default */
+/* Tab labels always hidden */
 .dv-tabs-container .dv-tab {
   opacity: 0;
-  padding: 0 6px;
-  min-width: unset;
-  transition: opacity 150ms;
-}
-
-/* Reveal tab labels on hover */
-.dv-tabs-and-actions-container:hover .dv-tabs-container .dv-tab {
-  opacity: 0.5;
-}
-
-.dv-tabs-and-actions-container:hover .dv-tabs-container .dv-tab:hover,
-.dv-tabs-and-actions-container:hover .dv-tabs-container .dv-tab.dv-active-tab {
-  opacity: 0.8;
+  pointer-events: none;
+  padding: 0;
+  min-width: 0;
+  width: 0;
+  overflow: hidden;
 }
 
 /* No focus outline on active group */
 .dv-groupview.dv-active-group {
   outline: none !important;
-}
-
-/* Pop-out button: appear on hover */
-.dv-right-actions-container {
-  opacity: 0;
-  transition: opacity 150ms;
-}
-
-.dv-tabs-and-actions-container:hover .dv-right-actions-container {
-  opacity: 1;
 }
 
 /* Hide watermark (empty group placeholder) */

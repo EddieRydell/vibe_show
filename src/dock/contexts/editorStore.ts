@@ -75,7 +75,7 @@ export interface EditorState {
 
   // UI
   loading: boolean;
-  libraryOpen: boolean;
+  panelVisibility: Record<string, boolean>;
   previewOpen: boolean;
 
   // Dialogs
@@ -132,8 +132,8 @@ export interface EditorState {
   // Preview
   handleTogglePreview: () => Promise<void>;
 
-  // Library
-  setLibraryOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+  // Panel visibility
+  setPanelVisible: (panelId: string, visible: boolean) => void;
 
   // Dialogs
   setShowSequenceSettings: (show: boolean) => void;
@@ -218,7 +218,7 @@ export function createEditorStore(
     refreshKey: 0,
     addEffectState: null,
     loading: true,
-    libraryOpen: false,
+    panelVisibility: {} as Record<string, boolean>,
     previewOpen: false,
     showSequenceSettings: false,
     showLeaveConfirm: false,
@@ -576,14 +576,10 @@ export function createEditorStore(
       });
     },
 
-    // ── Library ─────────────────────────────────────────────────
+    // ── Panel visibility ──────────────────────────────────────────
 
-    setLibraryOpen: (open) => {
-      if (typeof open === "function") {
-        set((s) => ({ libraryOpen: open(s.libraryOpen) }));
-      } else {
-        set({ libraryOpen: open });
-      }
+    setPanelVisible: (panelId, visible) => {
+      set((s) => ({ panelVisibility: { ...s.panelVisibility, [panelId]: visible } }));
     },
 
     // ── Dialogs ─────────────────────────────────────────────────

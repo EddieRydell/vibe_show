@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useRef } from "react";
 import type { DockviewApi, DockviewReadyEvent, SerializedDockview } from "dockview-react";
 import { Code, Layers, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import { Toolbar } from "../components/Toolbar";
 import { EffectPicker } from "../components/EffectPicker";
 import { SequenceSettingsDialog } from "../components/SequenceSettingsDialog";
@@ -8,9 +9,10 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PythonSetupWizard } from "../components/PythonSetupWizard";
 import { AnalysisWizard } from "../components/AnalysisWizard";
 import { ScreenShell } from "../components/ScreenShell";
+import { ViewMenu } from "../components/ViewMenu";
 import { DockLayout, type DockLayoutHandle } from "../dock/DockLayout";
 import { PANEL } from "../dock/panelIds";
-import { getPanel } from "../dock/registry";
+import { getPanel, getAllPanels } from "../dock/registry";
 import { registerEditorPanels } from "../dock/panels/registerEditorPanels";
 import { applyDefaultEditorLayout } from "../dock/layouts/editorLayout";
 import { loadLayout, clearLayout, createAutoSave } from "../dock/persistence";
@@ -91,7 +93,7 @@ function EditorLayout() {
   const loading = useEditorStore((s) => s.loading);
   const dirty = useEditorStore((s) => s.dirty);
   const saveState = useEditorStore((s) => s.saveState);
-  const libraryOpen = useEditorStore((s) => s.libraryOpen);
+  const panelVisibility = useEditorStore((s) => s.panelVisibility);
   const addEffectState = useEditorStore((s) => s.addEffectState);
   const showSequenceSettings = useEditorStore((s) => s.showSequenceSettings);
   const showLeaveConfirm = useEditorStore((s) => s.showLeaveConfirm);
@@ -108,7 +110,7 @@ function EditorLayout() {
   const handleSave = useEditorStore((s) => s.handleSave);
   const handleBack = useEditorStore((s) => s.handleBack);
   const onBack = useEditorStore((s) => s.onBack);
-  const setLibraryOpen = useEditorStore((s) => s.setLibraryOpen);
+  const setPanelVisible = useEditorStore((s) => s.setPanelVisible);
   const setShowSequenceSettings = useEditorStore((s) => s.setShowSequenceSettings);
   const setShowLeaveConfirm = useEditorStore((s) => s.setShowLeaveConfirm);
   const setShowPythonSetup = useEditorStore((s) => s.setShowPythonSetup);
@@ -141,15 +143,16 @@ function EditorLayout() {
       applyDefaultEditorLayout(event.api);
     }
 
-    // Sync libraryOpen with dockview's actual panel state
-    setLibraryOpen(event.api.panels.some((p) => p.id === PANEL.LIBRARY));
-    event.api.onDidRemovePanel((e) => {
-      if (e.id === PANEL.LIBRARY) setLibraryOpen(false);
-    });
+    // Sync panelVisibility with dockview's actual panel state
+    for (const panel of getAllPanels()) {
+      setPanelVisible(panel.id, event.api.panels.some((p) => p.id === panel.id));
+    }
+    event.api.onDidAddPanel((e) => setPanelVisible(e.id, true));
+    event.api.onDidRemovePanel((e) => setPanelVisible(e.id, false));
 
     // Set up auto-save
     autoSaveCleanupRef.current = createAutoSave("editor", event.api);
-  }, [setLibraryOpen]);
+  }, [setPanelVisible]);
 
   // Cleanup auto-save on unmount
   useEffect(() => {
@@ -169,30 +172,51 @@ function EditorLayout() {
     applyDefaultEditorLayout(api);
   }, []);
 
-  const handleLibraryToggle = useCallback(() => {
+  const handleTogglePanel = useCallback((panelId: string) => {
     const api = dockApiRef.current;
     if (!api) return;
 
-    const existing = api.panels.find((p) => p.id === PANEL.LIBRARY);
+    const existing = api.panels.find((p) => p.id === panelId);
     if (existing) {
       existing.api.close();
-      setLibraryOpen(false);
     } else {
-      const def = getPanel(PANEL.LIBRARY);
-      const rightGroup = api.groups.find((g) =>
-        g.panels.some((p) => p.id === PANEL.PROPERTY),
-      );
-      api.addPanel({
-        id: PANEL.LIBRARY,
-        component: PANEL.LIBRARY,
-        title: def?.title ?? "Library",
-        position: rightGroup
-          ? { referenceGroup: rightGroup, direction: "within" }
-          : { direction: "right" },
-      });
-      setLibraryOpen(true);
+      const def = getPanel(panelId);
+      if (!def) return;
+      if (def.defaultPosition === "right") {
+        // Place below an existing right-side panel (not "within" — that tabs/stacks them)
+        const ref = api.panels.find(
+          (p) => p.id !== panelId && (p.id === PANEL.PROPERTY || p.id === PANEL.LIBRARY),
+        );
+        api.addPanel({
+          id: panelId,
+          component: panelId,
+          title: def.title,
+          position: ref
+            ? { referencePanel: ref, direction: "below" }
+            : { direction: "right" },
+        });
+      } else {
+        api.addPanel({
+          id: panelId,
+          component: panelId,
+          title: def.title,
+          position: { direction: "below" },
+        });
+      }
     }
-  }, [setLibraryOpen]);
+  }, []);
+
+  // Re-add panel when its popout window is closed
+  useEffect(() => {
+    const promise = listen<{ panelId: string }>("popout-closed", (event) => {
+      const api = dockApiRef.current;
+      if (!api) return;
+      const { panelId } = event.payload;
+      const alreadyExists = api.panels.some((p) => p.id === panelId);
+      if (!alreadyExists) handleTogglePanel(panelId);
+    });
+    return () => { void promise.then((unlisten) => unlisten()); };
+  }, [handleTogglePanel]);
 
   if (loading) {
     const loadTracked = progressOps.get("open_sequence");
@@ -220,6 +244,7 @@ function EditorLayout() {
   const screenToolbar = (
     <div className="border-border bg-surface flex select-none items-center gap-1 border-b px-4 py-1.5">
       <div className="flex items-center gap-1">
+        <ViewMenu onTogglePanel={handleTogglePanel} />
         <button
           onClick={handleResetLayout}
           className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors"
@@ -232,9 +257,9 @@ function EditorLayout() {
       <div className="flex-1" />
       <div className="flex items-center gap-1">
         <button
-          onClick={handleLibraryToggle}
+          onClick={() => handleTogglePanel(PANEL.LIBRARY)}
           className={`flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors ${
-            libraryOpen
+            panelVisibility[PANEL.LIBRARY]
               ? "border-primary/30 bg-primary/10 text-primary"
               : "border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text"
           }`}

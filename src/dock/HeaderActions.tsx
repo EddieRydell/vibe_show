@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { ExternalLink } from "lucide-react";
 import type { IDockviewHeaderActionsProps } from "dockview-react";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { emitTo } from "@tauri-apps/api/event";
 
 export function HeaderActions({ activePanel }: IDockviewHeaderActionsProps) {
   const handlePopout = useCallback(() => {
@@ -20,13 +21,21 @@ export function HeaderActions({ activePanel }: IDockviewHeaderActionsProps) {
         return;
       }
 
-      new WebviewWindow(label, {
+      const popout = new WebviewWindow(label, {
         url: `/?view=panel&panelId=${encodeURIComponent(panelId)}&seq=${encodeURIComponent(seq)}`,
         title: `VibeLights — ${title}`,
         width: 400,
         height: 600,
         decorations: false,
         center: true,
+      });
+
+      // Auto-hide the panel from the dock
+      activePanel.api.close();
+
+      // When popout window closes, notify main to re-add the panel
+      void popout.onCloseRequested(() => {
+        void emitTo("main", "popout-closed", { panelId });
       });
     })();
   }, [activePanel]);

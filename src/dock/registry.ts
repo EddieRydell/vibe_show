@@ -21,3 +21,7 @@ export function getPanel(id: string): PanelDefinition | undefined {
   return panels.get(id);
 }
 
+export function getAllPanels(): PanelDefinition[] {
+  return Array.from(panels.values());
+}
+
