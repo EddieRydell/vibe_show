@@ -9,7 +9,6 @@ import { paramKeyStr, effectKindLabel } from "../types";
 import { parseEffectKey } from "../utils/effectKey";
 import { formatTimeDuration } from "../utils/formatTime";
 import { getParam, getDefault } from "../utils/paramAccess";
-import { useShowVersion } from "../hooks/useShowVersion";
 import {
   FloatSlider,
   IntSlider,
@@ -20,12 +19,12 @@ import {
   GradientEditor,
   SelectInput,
 } from "./controls";
-import { PANEL_WIDTH } from "../utils/layoutConstants";
 import { useToast } from "../hooks/useToast";
 
 interface PropertyPanelProps {
   selectedEffect: string | null;
   sequenceIndex: number;
+  showVersion: number;
   onParamChange: () => void;
 }
 const DEBOUNCE_MS = 50;
@@ -87,9 +86,9 @@ function getDefaultColorMode(schema: ParamSchema): string {
 export function PropertyPanel({
   selectedEffect,
   sequenceIndex,
+  showVersion,
   onParamChange,
 }: PropertyPanelProps) {
-  const showVersion = useShowVersion();
   const { showError } = useToast();
   const [detail, setDetail] = useState<EffectDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -167,10 +166,7 @@ export function PropertyPanel({
 
   if (!selectedEffect) {
     return (
-      <div
-        className="border-border bg-surface flex shrink-0 flex-col items-center justify-center border-l"
-        style={{ width: PANEL_WIDTH }}
-      >
+      <div className="border-border bg-surface flex size-full shrink-0 flex-col items-center justify-center border-l">
         <span className="text-text-2 text-[11px]">Select an effect</span>
       </div>
     );
@@ -178,20 +174,14 @@ export function PropertyPanel({
 
   if (loading || !detail) {
     return (
-      <div
-        className="border-border bg-surface flex shrink-0 flex-col items-center justify-center border-l"
-        style={{ width: PANEL_WIDTH }}
-      >
+      <div className="border-border bg-surface flex size-full shrink-0 flex-col items-center justify-center border-l">
         <span className="text-text-2 text-[11px]">Loading...</span>
       </div>
     );
   }
 
   return (
-    <div
-      className="border-border bg-surface flex shrink-0 flex-col border-l"
-      style={{ width: PANEL_WIDTH }}
-    >
+    <div className="border-border bg-surface flex size-full shrink-0 flex-col border-l">
       {/* Header */}
       <div className="border-border border-b px-3 py-2">
         <div className="text-text text-xs font-semibold">{effectKindLabel(detail.kind)}</div>

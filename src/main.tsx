@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { DetachedPreview } from "./screens/DetachedPreview";
+import { PopoutPanelHost } from "./dock/popout/PopoutPanelHost";
 import { applyUISettings, type UISettings } from "./hooks/useUISettings";
 import "./index.css";
 
@@ -13,14 +14,19 @@ try {
   // Falls back to CSS defaults
 }
 
-const isPreviewWindow =
-  new URLSearchParams(window.location.search).get("view") === "preview";
+const view = new URLSearchParams(window.location.search).get("view");
+
+function RootComponent() {
+  if (view === "preview") return <DetachedPreview />;
+  if (view === "panel") return <PopoutPanelHost />;
+  return <App />;
+}
 
 const root = document.getElementById("root");
 if (root) {
   createRoot(root).render(
     <StrictMode>
-      {isPreviewWindow ? <DetachedPreview /> : <App />}
+      <RootComponent />
     </StrictMode>,
   );
 }

@@ -24,6 +24,19 @@
   --success: #22C55E;
   --warning: #F59E0B;
   --error: #EF4444;
+
+  /* ── Dockview theme bridge ── */
+  --dv-group-view-background-color: var(--bg);
+  --dv-tabs-and-actions-container-background-color: var(--surface);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--surface-2);
+  --dv-activegroup-visiblepanel-tab-color: var(--text);
+  --dv-activegroup-hiddenpanel-tab-color: var(--text-2);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--text-2);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--text-2);
+  --dv-tab-divider-color: var(--border);
+  --dv-separator-border: var(--border);
+  --dv-drag-over-background-color: color-mix(in srgb, var(--primary) 20%, transparent);
+  --dv-drag-over-border-color: var(--primary);
 }
 
 /* ── Dark mode tokens ── */
@@ -163,4 +176,73 @@ button:focus-visible {
   }
   .prose-chat strong { font-weight: 600; }
   .prose-chat a { color: var(--color-primary); text-decoration: underline; }
+}
+
+/* ── Dockview: invisible headers, drag-handle only ── */
+
+/* Thin drag-handle bar with centered grip line */
+.dv-tabs-and-actions-container {
+  --dv-tabs-and-actions-container-height: 14px;
+  --dv-tabs-and-actions-container-font-size: 9px;
+  --dv-tabs-and-actions-container-background-color: var(--surface);
+  position: relative;
+}
+
+/* Grip indicator — subtle centered line */
+.dv-tabs-and-actions-container::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 24px;
+  height: 2px;
+  background: var(--text-2);
+  opacity: 0.15;
+  border-radius: 1px;
+  pointer-events: none;
+  transition: opacity 150ms;
+}
+
+/* Hide grip when hovering (labels + actions take over) */
+.dv-tabs-and-actions-container:hover::after {
+  opacity: 0;
+}
+
+/* Tab labels hidden by default */
+.dv-tabs-container .dv-tab {
+  opacity: 0;
+  padding: 0 6px;
+  min-width: unset;
+  transition: opacity 150ms;
+}
+
+/* Reveal tab labels on hover */
+.dv-tabs-and-actions-container:hover .dv-tabs-container .dv-tab {
+  opacity: 0.5;
+}
+
+.dv-tabs-and-actions-container:hover .dv-tabs-container .dv-tab:hover,
+.dv-tabs-and-actions-container:hover .dv-tabs-container .dv-tab.dv-active-tab {
+  opacity: 0.8;
+}
+
+/* No focus outline on active group */
+.dv-groupview.dv-active-group {
+  outline: none !important;
+}
+
+/* Pop-out button: appear on hover */
+.dv-right-actions-container {
+  opacity: 0;
+  transition: opacity 150ms;
+}
+
+.dv-tabs-and-actions-container:hover .dv-right-actions-container {
+  opacity: 1;
+}
+
+/* Hide watermark (empty group placeholder) */
+.dv-watermark {
+  display: none;
 }

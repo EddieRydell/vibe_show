@@ -1,6 +1,6 @@
 // Standalone waveform canvas drawing function extracted from Timeline.tsx.
 
-import type { WaveformData } from "../hooks/useAudio";
+import type { WaveformData } from "../types";
 
 /**
  * Draw a waveform on a canvas element.

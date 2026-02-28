@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EffectBlock } from "./EffectBlock";
 import type { AudioAnalysis, InteractionMode, PlaybackInfo, Show } from "../types";
-import type { WaveformData } from "../hooks/useAudio";
+import type { WaveformData } from "../types";
 import { getEffectiveZoom } from "../utils/cssZoom";
 import { formatRulerTime } from "../utils/formatTime";
 import { sectionColor } from "../utils/sectionColor";
@@ -396,7 +396,7 @@ export function Timeline({
   const playheadX = currentTime * pxPerSec;
 
   return (
-    <div className="bg-bg flex flex-1 flex-col overflow-hidden">
+    <div className="bg-bg flex h-full flex-col overflow-hidden">
       {/* Mode toggle + Zoom controls bar */}
       <div className="border-border bg-surface flex shrink-0 items-center gap-1 border-b px-3 py-1">
         {/* Mode toggle buttons */}

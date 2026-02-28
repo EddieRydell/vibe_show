@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-interface KeyboardActions {
+export interface KeyboardActions {
   onPlayPause: () => void;
   onPauseInPlace?: () => void;
   onStop: () => void;

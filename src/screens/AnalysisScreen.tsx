@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { AnalysisFeatures, AudioAnalysis, PythonEnvStatus } from "../types";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import type { AnalysisFeatures, AudioAnalysis, PythonEnvStatus, WaveformData } from "../types";
 import { cmd } from "../commands";
 import { formatTimeTransport } from "../utils/formatTime";
+import { WAVEFORM_PEAKS, downsampleToPeaks } from "../utils/waveform";
 import { ScreenShell } from "../components/ScreenShell";
 import { PythonSetupWizard } from "../components/PythonSetupWizard";
 import { AnalysisWizard } from "../components/AnalysisWizard";
 import { AnalysisWorkspace } from "../components/AnalysisWorkspace";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import type { ManualBeat } from "../components/AnalysisWorkspace";
-import { useAudio } from "../hooks/useAudio";
 
 interface Props {
   setupSlug: string;
@@ -17,7 +18,11 @@ interface Props {
 }
 
 export function AnalysisScreen({ filename, onBack }: Props) {
-  const audio = useAudio();
+  // ── Inline audio state ──────────────────────────────────────────────
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [audioReady, setAudioReady] = useState(false);
+  const [waveform, setWaveform] = useState<WaveformData | null>(null);
+
   const [pythonStatus, setPythonStatus] = useState<PythonEnvStatus | null>(null);
   const [showPythonSetup, setShowPythonSetup] = useState(false);
   const [showAnalysisWizard, setShowAnalysisWizard] = useState(false);
@@ -33,11 +38,80 @@ export function AnalysisScreen({ filename, onBack }: Props) {
   const [manualBeats, setManualBeats] = useState<ManualBeat[]>([]);
   const [selectedBeatId, setSelectedBeatId] = useState<string | null>(null);
 
+  // ── Audio helpers ──────────────────────────────────────────────────
+
+  const cleanupAudio = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.removeAttribute("src");
+      audioRef.current.load();
+      audioRef.current = null;
+    }
+    setAudioReady(false);
+    setWaveform(null);
+  }, []);
+
+  useEffect(() => cleanupAudio, [cleanupAudio]);
+
+  const loadAudio = useCallback(
+    (fname: string | null) => {
+      cleanupAudio();
+      if (!fname) return;
+
+      cmd.resolveMediaPath(fname)
+        .then((absolutePath) => {
+          const url = convertFileSrc(absolutePath);
+          const audio = new Audio();
+          audioRef.current = audio;
+
+          audio.addEventListener("loadedmetadata", () => setAudioReady(true));
+          audio.addEventListener("ended", () => setPlaying(false));
+          audio.src = url;
+          audio.load();
+
+          // Waveform extraction in parallel
+          void fetch(url)
+            .then((res) => res.arrayBuffer())
+            .then((buffer) => {
+              const ctx = new AudioContext();
+              return ctx.decodeAudioData(buffer).then((decoded) => {
+                void ctx.close();
+                return decoded;
+              });
+            })
+            .then((decoded) => {
+              const peaks = downsampleToPeaks(decoded.getChannelData(0), WAVEFORM_PEAKS);
+              setWaveform({ peaks, duration: decoded.duration });
+            })
+            .catch((err: unknown) => console.warn("[VibeLights] Waveform extraction failed:", err));
+        })
+        .catch((err: unknown) => console.error("[VibeLights] Failed to resolve media path:", err));
+    },
+    [cleanupAudio],
+  );
+
+  const audioPlay = useCallback(() => {
+    audioRef.current?.play().catch(() => {});
+  }, []);
+
+  const audioPause = useCallback(() => {
+    audioRef.current?.pause();
+  }, []);
+
+  const audioSeek = useCallback((time: number) => {
+    if (audioRef.current) audioRef.current.currentTime = time;
+  }, []);
+
+  const audioGetCurrentTime = useCallback((): number | null => {
+    if (!audioRef.current || !audioReady || audioRef.current.paused) return null;
+    return audioRef.current.currentTime;
+  }, [audioReady]);
+
   // ── Audio loading ─────────────────────────────────────────────────
 
   useEffect(() => {
-    audio.loadAudio(filename);
-  }, [filename, audio.loadAudio]);
+    loadAudio(filename);
+  }, [filename, loadAudio]);
 
   // ── Python check on mount + load cached analysis ──────────────────
 
@@ -73,7 +147,7 @@ export function AnalysisScreen({ filename, onBack }: Props) {
     if (!playing) return;
 
     function tick() {
-      const t = audio.getCurrentTime();
+      const t = audioGetCurrentTime();
       if (t != null) {
         currentTimeRef.current = t;
         setCurrentTime(t);
@@ -83,49 +157,41 @@ export function AnalysisScreen({ filename, onBack }: Props) {
     rafRef.current = requestAnimationFrame(tick);
 
     return () => cancelAnimationFrame(rafRef.current);
-  }, [playing, audio]);
+  }, [playing, audioGetCurrentTime]);
 
   // ── Transport controls ────────────────────────────────────────────
 
   const handlePlay = useCallback(() => {
-    audio.play();
+    audioPlay();
     setPlaying(true);
-  }, [audio]);
+  }, [audioPlay]);
 
   const handlePause = useCallback(() => {
-    audio.pause();
+    audioPause();
     setPlaying(false);
-    // Snap to current audio time
-    const t = audio.getCurrentTime();
+    const t = audioGetCurrentTime();
     if (t != null) {
       currentTimeRef.current = t;
       setCurrentTime(t);
     }
-  }, [audio]);
+  }, [audioPause, audioGetCurrentTime]);
 
   const handleStop = useCallback(() => {
-    audio.pause();
-    audio.seek(0);
+    audioPause();
+    audioSeek(0);
     setPlaying(false);
     currentTimeRef.current = 0;
     setCurrentTime(0);
-  }, [audio]);
+  }, [audioPause, audioSeek]);
 
   const handleSeek = useCallback(
     (time: number) => {
-      audio.seek(time);
+      audioSeek(time);
       currentTimeRef.current = time;
       setCurrentTime(time);
     },
-    [audio],
+    [audioSeek],
   );
-
-  // Handle audio ended
-  useEffect(() => {
-    audio.onEnded.current = () => {
-      setPlaying(false);
-    };
-  }, [audio.onEnded]);
 
   // ── Analysis wizard ───────────────────────────────────────────────
 
@@ -164,7 +230,6 @@ export function AnalysisScreen({ filename, onBack }: Props) {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // Don't handle if in an input or the analysis wizard is open
       if ((e.target as HTMLElement).closest("input, textarea, select")) return;
       if (showAnalysisWizard) return;
 
@@ -181,7 +246,7 @@ export function AnalysisScreen({ filename, onBack }: Props) {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [playing, handlePlay, handlePause, handleAddBeat, showAnalysisWizard]);
 
-  const duration = audio.waveform?.duration ?? 0;
+  const duration = waveform?.duration ?? 0;
 
   const toolbar = (
     <div className="border-border bg-surface flex select-none items-center gap-2 border-b px-3 py-1.5">
@@ -198,7 +263,7 @@ export function AnalysisScreen({ filename, onBack }: Props) {
           </svg>
         </ToolBtn>
       ) : (
-        <ToolBtn onClick={handlePlay} disabled={!audio.ready} title="Play (Space)">
+        <ToolBtn onClick={handlePlay} disabled={!audioReady} title="Play (Space)">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
             <path d="M4 2l10 6-10 6V2z" />
           </svg>
@@ -266,12 +331,12 @@ export function AnalysisScreen({ filename, onBack }: Props) {
   return (
     <ScreenShell title={filename} onBack={onBack} toolbar={toolbar}>
       {/* Workspace */}
-      {audio.ready ? (
+      {audioReady ? (
         <ErrorBoundary>
         <AnalysisWorkspace
           duration={duration}
           currentTime={currentTime}
-          waveform={audio.waveform}
+          waveform={waveform}
           analysis={analysis}
           manualBeats={manualBeats}
           selectedBeatId={selectedBeatId}

@@ -3,18 +3,17 @@ import { ChevronDown, ChevronRight, Maximize2, Plus, Trash2 } from "lucide-react
 import { cmd } from "../commands";
 import type { Color, ColorGradient, ColorStop, Curve, CurvePoint } from "../types";
 import { colorToCSS, lerpColor } from "../utils/colorUtils";
-import { PANEL_WIDTH } from "../utils/layoutConstants";
 import { GradientEditor } from "./controls/GradientEditor";
 import { CurveEditor } from "./controls/CurveEditor";
 import { ScriptEditorDialog } from "./ScriptEditorDialog";
 import { CurveEditorDialog } from "./CurveEditorDialog";
 import { GradientEditorDialog } from "./GradientEditorDialog";
-import { useShowVersion } from "../hooks/useShowVersion";
 import { useToast } from "../hooks/useToast";
 
 interface Props {
-  onClose: () => void;
+  onClose?: () => void;
   onLibraryChange: () => void;
+  showVersion: number;
 }
 
 // ── Gradient preview canvas ──────────────────────────────────────
@@ -150,8 +149,7 @@ function EditableName({
 
 // ── Main LibraryPanel ────────────────────────────────────────────
 
-export function LibraryPanel({ onClose, onLibraryChange }: Props) {
-  const showVersion = useShowVersion();
+export function LibraryPanel({ onLibraryChange, showVersion }: Props) {
   const { showError } = useToast();
   const [gradients, setGradients] = useState<[string, ColorGradient][]>([]);
   const [curves, setCurves] = useState<[string, Curve][]>([]);
@@ -317,18 +315,7 @@ export function LibraryPanel({ onClose, onLibraryChange }: Props) {
 
   return (
     <>
-      <div
-        className="border-border bg-surface flex shrink-0 flex-col border-l"
-        style={{ width: PANEL_WIDTH }}
-      >
-        {/* Header */}
-        <div className="border-border flex items-center justify-between border-b px-3 py-2">
-          <span className="text-text text-xs font-semibold">Library</span>
-          <button onClick={onClose} aria-label="Close library" className="text-text-2 hover:text-text text-[11px]">
-            &times;
-          </button>
-        </div>
-
+      <div className="border-border bg-surface flex size-full shrink-0 flex-col border-l">
         <div className="flex-1 overflow-y-auto">
           {/* Gradients */}
           <Section title="Gradients" count={gradients.length} onAdd={() => { void addGradient(); }}>

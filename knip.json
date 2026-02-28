@@ -2,6 +2,8 @@
   "ignoreExportsUsedInFile": true,
   "ignore": [
     "mcp-server/**",
-    "agent-sidecar/**"
+    "agent-sidecar/**",
+    "scripts/**",
+    "src-tauri/bindings/**"
   ]
 }

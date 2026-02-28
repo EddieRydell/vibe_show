@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PlacedEffect, StackedRow } from "../utils/timelineLayout";
 import type { InteractionMode } from "../types";
-import type { WaveformData } from "./useAudio";
+import type { WaveformData } from "../types";
 import { getEffectiveZoom } from "../utils/cssZoom";
 import {
   DRAG_THRESHOLD,

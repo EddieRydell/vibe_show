@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { WaveformData } from "../hooks/useAudio";
+import type { WaveformData } from "../types";
 import type { AudioAnalysis } from "../types";
 import { formatRulerTime } from "../utils/formatTime";
 import { sectionColor } from "../utils/sectionColor";

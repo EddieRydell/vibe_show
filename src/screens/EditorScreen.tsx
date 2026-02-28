@@ -1,29 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { emitTo } from "@tauri-apps/api/event";
-import { cmd } from "../commands";
-import { SHOW_REFRESHED, SELECTION_CHANGED } from "../events";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { Code, Layers, SlidersHorizontal } from "lucide-react";
-import { Timeline } from "../components/Timeline";
+import { memo, useCallback, useEffect, useRef } from "react";
+import type { DockviewApi, DockviewReadyEvent, SerializedDockview } from "dockview-react";
+import { Code, Layers, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { Toolbar } from "../components/Toolbar";
-import { PropertyPanel } from "../components/PropertyPanel";
 import { EffectPicker } from "../components/EffectPicker";
 import { SequenceSettingsDialog } from "../components/SequenceSettingsDialog";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { LibraryPanel } from "../components/LibraryPanel";
-import { ErrorBoundary } from "../components/ErrorBoundary";
 import { PythonSetupWizard } from "../components/PythonSetupWizard";
 import { AnalysisWizard } from "../components/AnalysisWizard";
-import { ScreenShell, useAppShell } from "../components/ScreenShell";
-import { useEngine } from "../hooks/useEngine";
-import { useAudio } from "../hooks/useAudio";
-import { useAnalysis } from "../hooks/useAnalysis";
-import { useKeyboard } from "../hooks/useKeyboard";
-import { useProgress } from "../hooks/useProgress";
-import { useEffectActions } from "../hooks/useEffectActions";
-import { ShowVersionContext } from "../hooks/useShowVersion";
-import { deduplicateEffectKeys, makeEffectKey } from "../utils/effectKey";
-import type { InteractionMode } from "../types";
+import { ScreenShell } from "../components/ScreenShell";
+import { DockLayout, type DockLayoutHandle } from "../dock/DockLayout";
+import { PANEL } from "../dock/panelIds";
+import { getPanel } from "../dock/registry";
+import { registerEditorPanels } from "../dock/panels/registerEditorPanels";
+import { applyDefaultEditorLayout } from "../dock/layouts/editorLayout";
+import { loadLayout, clearLayout, createAutoSave } from "../dock/persistence";
+import {
+  EditorContextProvider,
+  useEditorStore,
+} from "../dock/contexts/EditorContext";
+
+// Ensure panels are registered before first render
+registerEditorPanels();
 
 interface Props {
   setupSlug: string;
@@ -33,370 +30,169 @@ interface Props {
 }
 
 export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
-  const { refreshRef } = useAppShell();
-  const progressOps = useProgress();
-  const audio = useAudio();
-  const {
-    analysis,
-    pythonStatus,
-    checkPython,
-    setupPython,
-    runAnalysis,
-    refreshAnalysis,
-  } = useAnalysis();
-  const [showPythonSetup, setShowPythonSetup] = useState(false);
-  const [showAnalysisWizard, setShowAnalysisWizard] = useState(false);
-
-  // Audio-master clock: returns audio time when audio is actively playing, null otherwise.
-  // When null, useEngine falls back to its tick(dt) mode.
-  const audioGetCurrentTime = useCallback((): number | null => {
-    return audio.getCurrentTime();
-  }, [audio]);
-
-  const audioSeekCb = useCallback((t: number) => { if (audio.ready) audio.seek(t); }, [audio]);
-  const audioPauseCb = useCallback(() => { if (audio.ready) audio.pause(); }, [audio]);
-
-  const {
-    show,
-    playback,
-    undoState,
-    error,
-    play: enginePlay,
-    pause: enginePause,
-    seek: engineSeek,
-    setRegion: engineSetRegion,
-    setLooping: engineSetLooping,
-    undo: engineUndo,
-    redo: engineRedo,
-    refreshAll,
-  } = useEngine(audioGetCurrentTime, audioSeekCb, audioPauseCb);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const previewWindowRef = useRef<WebviewWindow | null>(null);
-  const [libraryOpen, setLibraryOpen] = useState(false);
-  const [selectedEffects, setSelectedEffects] = useState<Set<string>>(new Set());
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [showSequenceSettings, setShowSequenceSettings] = useState(false);
-  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
-  const [interactionMode, setInteractionMode] = useState<InteractionMode>("select");
-  const savedTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const playFromMarkRef = useRef<number | null>(null);
-
-  // Load the sequence into the engine on mount
-  useEffect(() => {
-    cmd.openSequence(sequenceSlug)
-      .then(() => {
-        refreshAll();
-        setLoading(false);
-      })
-      .catch((e: unknown) => {
-        console.error("[VibeLights] Failed to open sequence:", e);
-        setLoading(false);
-      });
-  }, [sequenceSlug, refreshAll]);
-
-  // Load audio when sequence changes
-  const currentSequence = show?.sequences[playback?.sequence_index ?? 0];
-  useEffect(() => {
-    audio.loadAudio(currentSequence?.audio_file ?? null);
-  }, [currentSequence?.audio_file, audio.loadAudio]);
-
-  // Audio ended handler — stop at end
-  useEffect(() => {
-    audio.onEnded.current = () => {
-      enginePause();
-      audio.pause();
-    };
-  }, [audio, enginePause]);
-
-  // ── Emit selection-changed to preview window ────────────────────────
-
-  useEffect(() => {
-    if (!previewOpen) return;
-    const effects = deduplicateEffectKeys(selectedEffects);
-    emitTo("preview", SELECTION_CHANGED, { effects }).catch(() => {
-      // Preview window is gone — mark it as closed
-      previewWindowRef.current = null;
-      setPreviewOpen(false);
-    });
-  }, [selectedEffects, previewOpen]);
-
-  // ── Composed transport controls ────────────────────────────────────
-
-  const play = useCallback(() => {
-    enginePlay();
-    if (audio.ready) audio.play();
-  }, [enginePlay, audio]);
-
-  const pause = useCallback(() => {
-    enginePause();
-    if (audio.ready) audio.pause();
-  }, [enginePause, audio]);
-
-  const seek = useCallback(
-    (time: number) => {
-      playFromMarkRef.current = null;
-      engineSeek(time);
-      if (audio.ready) audio.seek(time);
-    },
-    [engineSeek, audio],
+  return (
+    <EditorContextProvider
+      sequenceSlug={sequenceSlug}
+      onBack={onBack}
+      onOpenScript={onOpenScript}
+    >
+      <EditorLayout />
+    </EditorContextProvider>
   );
+}
 
-  const handleStop = useCallback(() => {
-    pause();
-    seek(0);
-  }, [pause, seek]);
+// ── Memoized DockLayout wrapper ──────────────────────────────────
+// Prevents DockviewReact from re-rendering when EditorLayout re-renders.
+// DockLayout's props (onReady, className) are stable, so memo is effective.
+const MemoizedDockLayout = memo(DockLayout);
 
-  const handlePlayPause = useCallback(() => {
-    if (playback?.playing) {
-      // Pause and return to the play-from mark
-      pause();
-      if (playFromMarkRef.current != null) {
-        engineSeek(playFromMarkRef.current);
-        if (audio.ready) audio.seek(playFromMarkRef.current);
-      }
-    } else {
-      // Remember current position as the mark, then play
-      playFromMarkRef.current = playback?.current_time ?? 0;
-      // If region is set and current time is outside, seek to region start
-      if (playback?.region) {
-        const [regionStart, regionEnd] = playback.region;
-        const ct = playback.current_time;
-        if (ct < regionStart || ct >= regionEnd) {
-          engineSeek(regionStart);
-          if (audio.ready) audio.seek(regionStart);
-          playFromMarkRef.current = regionStart;
-        }
-      }
-      play();
-    }
-  }, [playback?.playing, playback?.current_time, playback?.region, play, pause, engineSeek, audio]);
+// ── Toolbar wrapper ──────────────────────────────────────────────
+// Subscribes only to playback + the few fields it needs.
+function EditorToolbar() {
+  const playback = useEditorStore((s) => s.playback);
+  const undoState = useEditorStore((s) => s.undoState);
+  const previewOpen = useEditorStore((s) => s.previewOpen);
+  const analysis = useEditorStore((s) => s.analysis);
+  const play = useEditorStore((s) => s.play);
+  const pause = useEditorStore((s) => s.pause);
+  const handleStop = useEditorStore((s) => s.handleStop);
+  const seek = useEditorStore((s) => s.seek);
+  const handleUndo = useEditorStore((s) => s.handleUndo);
+  const handleRedo = useEditorStore((s) => s.handleRedo);
+  const handleTogglePreview = useEditorStore((s) => s.handleTogglePreview);
+  const handleToggleLoop = useEditorStore((s) => s.handleToggleLoop);
+  const handleAnalyze = useEditorStore((s) => s.handleAnalyze);
 
-  const handlePauseInPlace = useCallback(() => {
-    if (playback?.playing) {
-      // Pause where you are — don't return to mark
-      pause();
-      playFromMarkRef.current = null;
-    } else {
-      // Resume from current position — clear mark so next Space starts fresh
-      playFromMarkRef.current = null;
-      play();
-    }
-  }, [playback?.playing, play, pause]);
-
-  const handleSelectAll = useCallback(() => {
-    if (!show || !playback) return;
-    const sequence = show.sequences[playback.sequence_index];
-    if (!sequence) return;
-    const allKeys = new Set<string>();
-    for (let tIdx = 0; tIdx < sequence.tracks.length; tIdx++) {
-      for (let eIdx = 0; eIdx < sequence.tracks[tIdx]!.effects.length; eIdx++) {
-        allKeys.add(makeEffectKey(tIdx, eIdx));
-      }
-    }
-    setSelectedEffects(allKeys);
-  }, [show, playback]);
-
-  /** Mark the show dirty, refresh state from backend, bump thumbnail keys, and notify preview. */
-  const commitChange = useCallback(
-    (opts?: { skipRefreshAll?: boolean; skipDirty?: boolean }) => {
-      if (!opts?.skipDirty) setDirty(true);
-      if (!opts?.skipRefreshAll) refreshAll();
-      setRefreshKey((k) => k + 1);
-      if (previewOpen) void emitTo("preview", SHOW_REFRESHED);
-    },
-    [refreshAll, previewOpen],
+  return (
+    <Toolbar
+      playback={playback}
+      undoState={undoState}
+      previewOpen={previewOpen}
+      looping={playback?.looping ?? false}
+      hasAnalysis={analysis != null}
+      onPlay={play}
+      onPause={pause}
+      onStop={handleStop}
+      onSkipBack={() => seek(0)}
+      onSkipForward={() => seek(playback?.duration ?? 0)}
+      onUndo={() => { void handleUndo(); }}
+      onRedo={() => { void handleRedo(); }}
+      onTogglePreview={() => { void handleTogglePreview(); }}
+      onToggleLoop={handleToggleLoop}
+      onAnalyze={() => { void handleAnalyze(); }}
+    />
   );
+}
 
-  // Register refresh handler for ChatPanel via context
-  const handleRefresh = useCallback(() => {
-    commitChange({ skipDirty: true });
-  }, [commitChange]);
+function EditorLayout() {
+  // Individual selectors — only re-render when specific state changes
+  const show = useEditorStore((s) => s.show);
+  const error = useEditorStore((s) => s.error);
+  const loading = useEditorStore((s) => s.loading);
+  const dirty = useEditorStore((s) => s.dirty);
+  const saveState = useEditorStore((s) => s.saveState);
+  const libraryOpen = useEditorStore((s) => s.libraryOpen);
+  const addEffectState = useEditorStore((s) => s.addEffectState);
+  const showSequenceSettings = useEditorStore((s) => s.showSequenceSettings);
+  const showLeaveConfirm = useEditorStore((s) => s.showLeaveConfirm);
+  const showPythonSetup = useEditorStore((s) => s.showPythonSetup);
+  const showAnalysisWizard = useEditorStore((s) => s.showAnalysisWizard);
+  const currentSequence = useEditorStore((s) => s.currentSequence);
+  const sequenceIndex = useEditorStore((s) => s.sequenceIndex);
+  const pythonStatus = useEditorStore((s) => s.pythonStatus);
+  const onOpenScript = useEditorStore((s) => s.onOpenScript);
+  const progressOps = useEditorStore((s) => s.progressOps);
 
-  useEffect(() => {
-    refreshRef.current = handleRefresh;
-    return () => { refreshRef.current = null; };
-  }, [handleRefresh, refreshRef]);
+  // Actions (stable references)
+  const commitChange = useEditorStore((s) => s.commitChange);
+  const handleSave = useEditorStore((s) => s.handleSave);
+  const handleBack = useEditorStore((s) => s.handleBack);
+  const onBack = useEditorStore((s) => s.onBack);
+  const setLibraryOpen = useEditorStore((s) => s.setLibraryOpen);
+  const setShowSequenceSettings = useEditorStore((s) => s.setShowSequenceSettings);
+  const setShowLeaveConfirm = useEditorStore((s) => s.setShowLeaveConfirm);
+  const setShowPythonSetup = useEditorStore((s) => s.setShowPythonSetup);
+  const setShowAnalysisWizard = useEditorStore((s) => s.setShowAnalysisWizard);
+  const setAddEffectState = useEditorStore((s) => s.setAddEffectState);
+  const handleEffectTypeSelected = useEditorStore((s) => s.handleEffectTypeSelected);
+  const setupPython = useEditorStore((s) => s.setupPython);
+  const checkPython = useEditorStore((s) => s.checkPython);
+  const runAnalysis = useEditorStore((s) => s.runAnalysis);
 
-  const handleDeleteSelected = useCallback(async () => {
-    if (selectedEffects.size === 0 || !playback) return;
-    const targets = deduplicateEffectKeys(selectedEffects);
-    try {
-      await cmd.deleteEffects(targets);
-      setSelectedEffects(new Set());
-      commitChange();
-    } catch (e) {
-      console.error("[VibeLights] Delete failed:", e);
-    }
-  }, [selectedEffects, playback, commitChange]);
+  const dockRef = useRef<DockLayoutHandle>(null);
+  const dockApiRef = useRef<DockviewApi | null>(null);
 
-  const handleParamChange = useCallback(() => {
-    commitChange({ skipRefreshAll: true });
-  }, [commitChange]);
+  const autoSaveCleanupRef = useRef<(() => void) | null>(null);
 
-  const handleSave = useCallback(async () => {
-    if (saveState === "saving") return;
-    setSaveState("saving");
-    try {
-      await cmd.saveCurrentSequence();
-      setDirty(false);
-      setSaveState("saved");
-      clearTimeout(savedTimerRef.current);
-      savedTimerRef.current = setTimeout(() => setSaveState("idle"), 1500);
-    } catch (e) {
-      console.error("[VibeLights] Save failed:", e);
-      setSaveState("idle");
-    }
-  }, [saveState]);
+  const handleDockReady = useCallback((event: DockviewReadyEvent) => {
+    dockApiRef.current = event.api;
 
-  // Cleanup saved timer on unmount
-  useEffect(() => () => clearTimeout(savedTimerRef.current), []);
-
-  // ── Effect actions hook ──────────────────────────────────────────
-
-  const {
-    addEffectState,
-    setAddEffectState,
-    handleAddEffect,
-    handleEffectTypeSelected,
-    handleMoveEffect,
-    handleResizeEffect,
-  } = useEffectActions({
-    show,
-    playback,
-    commitChange,
-    setSelectedEffects,
-  });
-
-  // ── Preview window toggle ──────────────────────────────────────────
-
-  const handleTogglePreview = useCallback(async () => {
-    if (previewWindowRef.current) {
+    // Try restoring saved layout; fall back to default
+    const saved = loadLayout("editor");
+    if (saved) {
       try {
-        await previewWindowRef.current.destroy();
+        event.api.fromJSON(saved as unknown as SerializedDockview);
       } catch {
-        // Already destroyed
+        // Corrupted layout — fall back to default
+        event.api.clear();
+        applyDefaultEditorLayout(event.api);
       }
-      previewWindowRef.current = null;
-      setPreviewOpen(false);
-      return;
+    } else {
+      applyDefaultEditorLayout(event.api);
     }
 
-    const previewWin = new WebviewWindow("preview", {
-      url: "/?view=preview",
-      title: "VibeLights Preview",
-      width: 800,
-      height: 600,
-      decorations: false,
-      center: true,
+    // Sync libraryOpen with dockview's actual panel state
+    setLibraryOpen(event.api.panels.some((p) => p.id === PANEL.LIBRARY));
+    event.api.onDidRemovePanel((e) => {
+      if (e.id === PANEL.LIBRARY) setLibraryOpen(false);
     });
 
-    previewWindowRef.current = previewWin;
-    setPreviewOpen(true);
+    // Set up auto-save
+    autoSaveCleanupRef.current = createAutoSave("editor", event.api);
+  }, [setLibraryOpen]);
 
-    void previewWin.onCloseRequested(() => {
-      previewWindowRef.current = null;
-      setPreviewOpen(false);
-    });
-  }, []);
-
-  // Clean up preview window on unmount
+  // Cleanup auto-save on unmount
   useEffect(() => {
-    return () => {
-      if (previewWindowRef.current) {
-        previewWindowRef.current.destroy().catch(() => {
-          // Window already gone — nothing to clean up
-        });
-        previewWindowRef.current = null;
-      }
-    };
+    return () => autoSaveCleanupRef.current?.();
   }, []);
-
-  const handleBack = useCallback(() => {
-    if (dirty) {
-      setShowLeaveConfirm(true);
-      return;
-    }
-    onBack();
-  }, [dirty, onBack]);
 
   const handleSequenceSettingsSaved = useCallback(() => {
     setShowSequenceSettings(false);
     commitChange();
-  }, [commitChange]);
+  }, [setShowSequenceSettings, commitChange]);
 
-  const handleUndo = useCallback(async () => {
-    await engineUndo();
-    commitChange({ skipRefreshAll: true });
-  }, [engineUndo, commitChange]);
+  const handleResetLayout = useCallback(() => {
+    const api = dockApiRef.current;
+    if (!api) return;
+    clearLayout("editor");
+    api.clear();
+    applyDefaultEditorLayout(api);
+  }, []);
 
-  const handleRedo = useCallback(async () => {
-    await engineRedo();
-    commitChange({ skipRefreshAll: true });
-  }, [engineRedo, commitChange]);
+  const handleLibraryToggle = useCallback(() => {
+    const api = dockApiRef.current;
+    if (!api) return;
 
-  const handleRegionChange = useCallback(
-    (region: [number, number] | null) => {
-      engineSetRegion(region);
-    },
-    [engineSetRegion],
-  );
-
-  const handleToggleLoop = useCallback(() => {
-    engineSetLooping(!(playback?.looping ?? false));
-  }, [engineSetLooping, playback?.looping]);
-
-  const handleAnalyze = useCallback(async () => {
-    // Check if Python is ready; if not, show setup wizard
-    const status = await checkPython();
-    if (!status.deps_installed) {
-      setShowPythonSetup(true);
-      return;
-    }
-    // If analysis already exists, show it; otherwise open analysis wizard
-    if (analysis) {
-      // Could toggle overlays here; for now, re-open wizard
-      setShowAnalysisWizard(true);
+    const existing = api.panels.find((p) => p.id === PANEL.LIBRARY);
+    if (existing) {
+      existing.api.close();
+      setLibraryOpen(false);
     } else {
-      setShowAnalysisWizard(true);
+      const def = getPanel(PANEL.LIBRARY);
+      const rightGroup = api.groups.find((g) =>
+        g.panels.some((p) => p.id === PANEL.PROPERTY),
+      );
+      api.addPanel({
+        id: PANEL.LIBRARY,
+        component: PANEL.LIBRARY,
+        title: def?.title ?? "Library",
+        position: rightGroup
+          ? { referenceGroup: rightGroup, direction: "within" }
+          : { direction: "right" },
+      });
+      setLibraryOpen(true);
     }
-  }, [checkPython, analysis]);
-
-  // Load cached analysis when sequence is opened
-  useEffect(() => {
-    if (!loading && currentSequence?.audio_file) {
-      void refreshAnalysis();
-    }
-  }, [loading, currentSequence?.audio_file, refreshAnalysis]);
-
-  const keyboardActions = useMemo(
-    () => ({
-      onPlayPause: handlePlayPause,
-      onPauseInPlace: handlePauseInPlace,
-      onStop: handleStop,
-      onSeekStart: () => seek(0),
-      onSeekEnd: () => seek(playback?.duration ?? 0),
-      onZoomIn: () => {},
-      onZoomOut: () => {},
-      onZoomFit: () => {},
-      onSelectAll: handleSelectAll,
-      onDeleteSelected: handleDeleteSelected,
-      onToggleLoop: handleToggleLoop,
-      onSave: handleSave,
-      onUndo: handleUndo,
-      onRedo: handleRedo,
-      onSetModeSelect: () => setInteractionMode("select"),
-      onSetModeEdit: () => setInteractionMode("edit"),
-      onSetModeSwipe: () => setInteractionMode("swipe"),
-    }),
-    [handlePlayPause, handlePauseInPlace, handleStop, seek, playback?.duration, handleSelectAll, handleDeleteSelected, handleToggleLoop, handleSave, handleUndo, handleRedo],
-  );
-
-  useKeyboard(keyboardActions);
-
-  const singleSelected = selectedEffects.size === 1 ? [...selectedEffects][0]! : null;
+  }, [setLibraryOpen]);
 
   if (loading) {
     const loadTracked = progressOps.get("open_sequence");
@@ -405,7 +201,7 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
     const indeterminate = !loadProgress || loadProgress.progress < 0;
     return (
       <div className="bg-bg flex h-full flex-col items-center justify-center gap-3">
-        <div className="border-primary size-6  animate-spin rounded-full border-2 border-t-transparent" />
+        <div className="border-primary size-6 animate-spin rounded-full border-2 border-t-transparent" />
         <p className="text-text-2 text-sm">{loadProgress?.phase ?? "Loading sequence..."}</p>
         <div className="bg-border/30 h-1.5 w-48 overflow-hidden rounded-full">
           {indeterminate ? (
@@ -423,10 +219,20 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
 
   const screenToolbar = (
     <div className="border-border bg-surface flex select-none items-center gap-1 border-b px-4 py-1.5">
+      <div className="flex items-center gap-1">
+        <button
+          onClick={handleResetLayout}
+          className="border-border bg-surface text-text-2 hover:bg-surface-2 hover:text-text flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors"
+          title="Reset panel layout"
+        >
+          <RotateCcw size={12} />
+          Reset Layout
+        </button>
+      </div>
       <div className="flex-1" />
       <div className="flex items-center gap-1">
         <button
-          onClick={() => setLibraryOpen((o) => !o)}
+          onClick={handleLibraryToggle}
           className={`flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors ${
             libraryOpen
               ? "border-primary/30 bg-primary/10 text-primary"
@@ -474,30 +280,13 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
   );
 
   return (
-    <ShowVersionContext.Provider value={refreshKey}>
     <ScreenShell
       title={show?.name ?? "Untitled"}
       onBack={handleBack}
       toolbar={screenToolbar}
     >
-      {/* Toolbar */}
-      <Toolbar
-        playback={playback}
-        undoState={undoState}
-        previewOpen={previewOpen}
-        looping={playback?.looping ?? false}
-        hasAnalysis={analysis != null}
-        onPlay={play}
-        onPause={pause}
-        onStop={handleStop}
-        onSkipBack={() => seek(0)}
-        onSkipForward={() => seek(playback?.duration ?? 0)}
-        onUndo={() => { void handleUndo(); }}
-        onRedo={() => { void handleRedo(); }}
-        onTogglePreview={() => { void handleTogglePreview(); }}
-        onToggleLoop={handleToggleLoop}
-        onAnalyze={() => { void handleAnalyze(); }}
-      />
+      {/* Transport Toolbar — subscribes to playback independently */}
+      <EditorToolbar />
 
       {/* Error banner */}
       {error && (
@@ -506,42 +295,14 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
         </div>
       )}
 
-      {/* Main area */}
-      <div className="flex flex-1 overflow-hidden">
-        <ErrorBoundary>
-        <Timeline
-          show={show}
-          playback={playback}
-          onSeek={seek}
-          selectedEffects={selectedEffects}
-          onSelectionChange={setSelectedEffects}
-          refreshKey={refreshKey}
-          onAddEffect={handleAddEffect}
-          onRefresh={handleRefresh}
-          onMoveEffect={handleMoveEffect}
-          onResizeEffect={handleResizeEffect}
-          waveform={audio.waveform}
-          mode={interactionMode}
-          onModeChange={setInteractionMode}
-          region={playback?.region ?? null}
-          onRegionChange={handleRegionChange}
-          analysis={analysis}
-        />
-        </ErrorBoundary>
-        {libraryOpen && (
-          <LibraryPanel
-            onClose={() => setLibraryOpen(false)}
-            onLibraryChange={() => commitChange()}
-          />
-        )}
-        <PropertyPanel
-          selectedEffect={singleSelected ?? null}
-          sequenceIndex={playback?.sequence_index ?? 0}
-          onParamChange={handleParamChange}
-        />
-      </div>
+      {/* Dockview main area — memoized to prevent re-rendering on parent updates */}
+      <MemoizedDockLayout
+        ref={dockRef}
+        onReady={handleDockReady}
+        className="flex-1"
+      />
 
-      {/* Effect Picker popover */}
+      {/* Dialogs — portaled overlays, outside dockview */}
       {addEffectState && (
         <EffectPicker
           position={addEffectState.screenPos}
@@ -550,17 +311,15 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
         />
       )}
 
-      {/* Sequence Settings Dialog */}
       {showSequenceSettings && currentSequence && (
         <SequenceSettingsDialog
           sequence={currentSequence}
-          sequenceIndex={playback?.sequence_index ?? 0}
+          sequenceIndex={sequenceIndex}
           onSaved={handleSequenceSettingsSaved}
           onCancel={() => setShowSequenceSettings(false)}
         />
       )}
 
-      {/* Unsaved changes confirmation */}
       {showLeaveConfirm && (
         <ConfirmDialog
           title="Unsaved changes"
@@ -572,7 +331,6 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
         />
       )}
 
-      {/* Python Setup Wizard */}
       {showPythonSetup && (
         <PythonSetupWizard
           pythonStatus={pythonStatus}
@@ -582,14 +340,12 @@ export function EditorScreen({ sequenceSlug, onBack, onOpenScript }: Props) {
         />
       )}
 
-      {/* Analysis Wizard */}
       {showAnalysisWizard && (
         <AnalysisWizard
-          onAnalyze={runAnalysis}
+          onAnalyze={runAnalysis as (features: Parameters<typeof runAnalysis>[0]) => Promise<NonNullable<Awaited<ReturnType<typeof runAnalysis>>>>}
           onClose={() => setShowAnalysisWizard(false)}
         />
       )}
     </ScreenShell>
-    </ShowVersionContext.Provider>
   );
 }

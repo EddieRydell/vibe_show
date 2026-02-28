@@ -82,7 +82,6 @@ export type { WipeDirection } from "../src-tauri/bindings/WipeDirection";
 
 export type { BatchAction } from "../src-tauri/bindings/BatchAction";
 export type { Command } from "../src-tauri/bindings/Command";
-export type { CommandCategory } from "../src-tauri/bindings/CommandCategory";
 export type { CommandResult } from "../src-tauri/bindings/CommandResult";
 
 // ── Command return types ─────────────────────────────────────────────
@@ -165,6 +164,11 @@ export type { VocalPresence } from "../src-tauri/bindings/VocalPresence";
 export type { VocalSegment } from "../src-tauri/bindings/VocalSegment";
 
 // ── Frontend-only types ─────────────────────────────────────────────
+
+export interface WaveformData {
+  peaks: Float32Array;
+  duration: number;
+}
 
 import type { BulbShape } from "../src-tauri/bindings/BulbShape";
 import type { ParamValue } from "../src-tauri/bindings/ParamValue";
